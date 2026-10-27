@@ -249,7 +249,7 @@ export function createView({ doc, win, container, theme, css }) {
     },
 
     /**
-     * A pending own message was confirmed by its server copy.
+     * An own message was confirmed by its send, or replaced by its server copy.
      * @param {string} pendingId
      * @param {ViewRecord} record
      */

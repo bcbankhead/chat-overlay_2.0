@@ -54,7 +54,7 @@ export function createHistory(db) {
     },
 
     /**
-     * Store an own message's local echo, before its server copy arrives.
+     * Store an own message's local echo, before its send settles.
      * @param {MessageRecord} record carries a provisional id
      */
     async addPending(record) {
@@ -64,7 +64,8 @@ export function createHistory(db) {
     },
 
     /**
-     * Replace a pending record with its server copy, in one transaction.
+     * Replace a pending or send-confirmed record with its confirmed form (the same id) or
+     * its server copy, in one transaction.
      * @param {string} pendingId
      * @param {MessageRecord} server
      */

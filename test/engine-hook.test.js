@@ -11,6 +11,29 @@ function fakeEngine() {
     publicEntry: 'has joined the room ...',
     publicExit: 'has left the room ...',
     receiveMesReq: { readyState: 4, responseXML: null },
+    sendReq: {
+      readyState: 0,
+      status: 0,
+      listeners: [],
+      addEventListener(type, fn) {
+        if (type === 'loadend') this.listeners.push(fn);
+      },
+      finish(status) {
+        this.readyState = 4;
+        this.status = status;
+        const fns = this.listeners;
+        this.listeners = [];
+        fns.forEach((fn) => fn());
+      },
+    },
+    sent: [],
+    // As the engine: a send while the request is busy is dropped (message.js.php sendData).
+    sendData(displayMDiv) {
+      if (win.sendReq.readyState == 4 || win.sendReq.readyState == 0) {
+        win.sendReq.readyState = 1;
+        win.sent.push(displayMDiv);
+      }
+    },
     timers: [],
     setTimeout(fn) {
       this.timers.push(fn);
@@ -97,6 +120,100 @@ test('the own echo is stored pending, then confirmed by the unrendered server co
   calls.length = 0;
   win.timers.forEach((fn) => fn());
   assert.deepEqual(calls, []);
+});
+
+/** As the engine's addMessage: send, then echo the message locally. */
+const sendOwn = (win, text) => {
+  win.sendData('chatContainer');
+  win.createMessageDiv(0, '9', 'chatContainer', 1, `av.gif|#000|12px|verdana|${text}|0|0`, 'beep_high.mp3', 'alice', '', '');
+};
+
+test('an own message is confirmed by a 2xx send response, keeping its local id', () => {
+  const { win, calls } = setup();
+  sendOwn(win, 'sent ok');
+  const pending = calls.find((c) => c[0] === 'addPending')[1];
+  assert.deepEqual(win.sent, ['chatContainer']);
+  assert.ok(!calls.some((c) => c[0] === 'confirmPending'));
+  win.sendReq.finish(200);
+  const confirm = calls.find((c) => c[0] === 'confirmPending');
+  assert.equal(confirm[1], pending.id);
+  assert.equal(confirm[2].id, pending.id);
+  assert.equal(confirm[2].confirm, undefined);
+  assert.equal(confirm[2].text, 'sent ok');
+  const viewConfirm = calls.find((c) => c[0] === 'view.confirm');
+  assert.equal(viewConfirm[1], pending.id);
+  // the expiry timer finds nothing left to mark
+  calls.length = 0;
+  win.timers.forEach((fn) => fn());
+  assert.deepEqual(calls, []);
+});
+
+test('an own message whose send fails is marked unconfirmed at once', () => {
+  const { win, calls } = setup();
+  sendOwn(win, 'server error');
+  const id = calls.find((c) => c[0] === 'addPending')[1].id;
+  win.sendReq.finish(500);
+  assert.ok(calls.some((c) => c[0] === 'markUnconfirmed' && c[1] === id));
+  assert.ok(calls.some((c) => c[0] === 'view.markUnconfirmed' && c[1] === id));
+  assert.ok(!calls.some((c) => c[0] === 'confirmPending'));
+});
+
+test('a send the engine drops while its request is busy is marked unconfirmed; the first still confirms', () => {
+  const { win, calls } = setup();
+  sendOwn(win, 'first');
+  sendOwn(win, 'second'); // sendReq still in flight: the engine drops this send
+  const [first, second] = calls.filter((c) => c[0] === 'addPending').map((c) => c[1].id);
+  assert.deepEqual(win.sent, ['chatContainer']);
+  assert.ok(calls.some((c) => c[0] === 'markUnconfirmed' && c[1] === second));
+  win.sendReq.finish(200);
+  assert.ok(calls.some((c) => c[0] === 'confirmPending' && c[1] === first));
+  assert.ok(!calls.some((c) => c[0] === 'confirmPending' && c[1] === second));
+});
+
+test('a self-whisper confirmed by its send is replaced, not duplicated, by its server copy', () => {
+  const { win, calls, poll } = setup();
+  sendOwn(win, 'note to self');
+  const localId = calls.find((c) => c[0] === 'addPending')[1].id;
+  win.sendReq.finish(200);
+  calls.length = 0;
+  win.lastText = null; // the engine renders the delivered copy
+  poll(um('950', 'alice', 'note to self', '1750', 'alice'));
+  const confirm = calls.find((c) => c[0] === 'confirmPending');
+  assert.equal(confirm[1], localId);
+  assert.equal(confirm[2].id, '950');
+  assert.ok(calls.some((c) => c[0] === 'view.confirm' && c[1] === localId));
+  assert.ok(!calls.some((c) => c[0] === 'put' || c[0] === 'view.append'));
+});
+
+test('after abandon, sendData passes straight through to the engine', () => {
+  const win = fakeEngine();
+  const hook = installEngineHook({ win, roomID: '1' });
+  hook.abandon();
+  win.sendData('chatContainer');
+  assert.deepEqual(win.sent, ['chatContainer']);
+  assert.deepEqual(win.sendReq.listeners, []);
+});
+
+test('an engine without sendData still records own echoes, left to the expiry timer', () => {
+  const win = fakeEngine();
+  delete win.sendData;
+  const calls = [];
+  const history = new Proxy({}, { get: (_, op) => async (...args) => calls.push([op, ...args]) });
+  const view = new Proxy({}, { get: (_, op) => (...args) => calls.push([`view.${op}`, ...args]) });
+  installEngineHook({ win, roomID: '1' }).attach({ history, view });
+  assert.equal(win.sendData, undefined);
+  win.createMessageDiv(0, '9', 'chatContainer', 1, 'av.gif|#000|12px|verdana|no send hook|0|0', 'beep_high.mp3', 'alice', '', '');
+  const id = calls.find((c) => c[0] === 'addPending')[1].id;
+  win.timers.forEach((fn) => fn());
+  assert.ok(calls.some((c) => c[0] === 'markUnconfirmed' && c[1] === id));
+});
+
+test('a send to a private window is not paired with a main-room echo', () => {
+  const { win, calls } = setup();
+  win.sendData('pcontent_7');
+  win.createMessageDiv(0, '9', 'chatContainer', 1, 'av.gif|#000|12px|verdana|unrelated|0|0', 'beep_high.mp3', 'alice', '', '');
+  win.sendReq.finish(200);
+  assert.ok(!calls.some((c) => c[0] === 'confirmPending'));
 });
 
 test('an echo with no server copy is marked unconfirmed by its timer', () => {

@@ -1,8 +1,10 @@
 // Pure reconciliation of own messages (Locked: own messages). The local echo is held as a
-// pending record; the server copy with the same user and text replaces it. A pending record
-// left unconfirmed past PENDING_TTL_MS is kept and marked unconfirmed.
+// pending record until its send settles (engine-hook.js). The live server never returns a
+// sender's own messages in a poll, so a server copy with the same user and text replacing it
+// is a fallback only. A pending record left unconfirmed past PENDING_TTL_MS is kept and
+// marked unconfirmed.
 
-/** How long a pending own message waits for its server copy. */
+/** How long a pending own message waits for its send to settle. */
 export const PENDING_TTL_MS = 60_000;
 
 /**

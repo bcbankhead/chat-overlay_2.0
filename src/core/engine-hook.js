@@ -1,7 +1,8 @@
 // Inbound hook over the engine's page globals. Wraps `handleMessages` to read each poll's
 // server records (which carry the server id, field [0]) and `createMessageDiv` to learn
 // whether the engine actually rendered each message, so the engine's own filters (blocked
-// users, duplicates, commands, PM rules) still decide what is shown and stored.
+// users, duplicates, commands, PM rules) still decide what is shown and stored. Wraps
+// `sendData` to confirm each own message by its sendData.php response.
 
 import { describeError } from './errors.js';
 import { emitInbound } from './events.js';
@@ -15,7 +16,7 @@ import {
   safeDecodeURI,
   whisperTarget,
 } from './parse.js';
-import { PENDING_TTL_MS, findPending, provisionalId } from './reconcile.js';
+import { PENDING_TTL_MS, findPending, isExpired, provisionalId } from './reconcile.js';
 
 /** @typedef {import('./history.js').MessageRecord} MessageRecord */
 /** @typedef {import('./parse.js').ServerMessage} ServerMessage */
@@ -50,6 +51,14 @@ export function engineAvailable(win) {
  * @property {boolean} inPoll
  * @property {boolean} rendered
  * @property {number} at epoch ms of the call
+ * @property {Send | null} send the main-div send the call echoes, when it followed one
+ */
+
+/**
+ * @typedef {object} Send one engine sendData call to the main div
+ * @property {'inflight' | 'sent' | 'failed'} state `failed` when the POST was refused or
+ *   the engine dropped the send because its request was busy
+ * @property {MessageRecord | null} record the own echo paired with it, once observed
  */
 
 /**
@@ -88,8 +97,17 @@ export function installEngineHook({ win, roomID }) {
   let queue = [];
   let inPoll = false;
   let seq = 0;
-  /** @type {MessageRecord[]} pending own messages awaiting their server copy */
+  /** @type {MessageRecord[]} pending own messages awaiting their send's outcome */
   let pendings = [];
+  /**
+   * Own messages their send confirmed, still under their local id. The server returns an
+   * own message only when it is addressed to the sender (a self-whisper); that copy
+   * replaces the local record rather than duplicating it.
+   * @type {MessageRecord[]}
+   */
+  let sentOwn = [];
+  /** @type {Send | null} the send the engine's next own echo belongs to */
+  let lastSend = null;
   /** @type {Observed[] | null} calls awaiting `attach`; null once attached */
   let buffered = [];
   let abandoned = false;
@@ -135,6 +153,53 @@ export function installEngineHook({ win, roomID }) {
     }, Math.max(0, delay));
   };
 
+  /**
+   * Settle a pending own message by its send's outcome, unless already settled.
+   * @param {MessageRecord} record
+   * @param {'sent' | 'failed'} state
+   */
+  const resolveSend = (record, state) => {
+    if (!pendings.includes(record)) return;
+    pendings = pendings.filter((p) => p !== record);
+    if (state === 'sent') {
+      const { confirm: _drop, ...confirmed } = record;
+      report(history.confirmPending(record.id, confirmed));
+      view.confirm(record.id, confirmed);
+      const now = Date.now();
+      sentOwn = [...sentOwn.filter((r) => !isExpired(r, now)), confirmed];
+    } else {
+      report(history.markUnconfirmed(record.id));
+      view.markUnconfirmed(record.id);
+    }
+  };
+
+  // The server never returns a sender's own messages in a poll, so an own message is
+  // confirmed by its sendData.php response. The engine's own response handler is empty, and
+  // it drops a send outright while its request is busy.
+  const origSend = win.sendData;
+  if (typeof origSend === 'function') {
+    win.sendData = function (/** @type {string} */ displayMDiv) {
+      if (abandoned || displayMDiv !== MAIN_DIV) return origSend.apply(this, arguments);
+      const req = win.sendReq;
+      const idle = Boolean(req) && (req.readyState == 4 || req.readyState == 0);
+      /** @type {Send} */
+      const send = { state: idle ? 'inflight' : 'failed', record: null };
+      lastSend = send;
+      const result = origSend.apply(this, arguments);
+      if (idle) {
+        req.addEventListener(
+          'loadend',
+          () => {
+            send.state = req.status >= 200 && req.status < 300 ? 'sent' : 'failed';
+            if (send.record) resolveSend(send.record, send.state);
+          },
+          { once: true },
+        );
+      }
+      return result;
+    };
+  }
+
   win.handleMessages = function (/** @type {unknown[]} */ ...args) {
     if (abandoned) return origHandle.apply(this, args);
     const req = win.receiveMesReq;
@@ -178,17 +243,20 @@ export function installEngineHook({ win, roomID }) {
         queue = queue.slice(i + 1);
       }
     }
+    // The engine echoes a send synchronously, right after sendData, outside any poll.
+    const send = inPoll ? null : lastSend;
+    if (!inPoll) lastSend = null;
     const before = win.showMessages;
     const result = origCreate.apply(this, arguments);
     /** @type {Observed} */
-    const observed = { call, server, inPoll, rendered: win.showMessages > before, at: Date.now() };
+    const observed = { call, server, inPoll, rendered: win.showMessages > before, at: Date.now(), send };
     if (buffered) buffered.push(observed);
     else safeObserve(observed);
     return result;
   };
 
   /** @param {Observed} observed */
-  function observe({ call, server, inPoll: polled, rendered, at: now }) {
+  function observe({ call, server, inPoll: polled, rendered, at: now, send }) {
     if (call.mDiv !== MAIN_DIV) return; // private windows are out of scope (A6)
 
     const target = isDelete(safeDecodeURI(String(call.message ?? '')));
@@ -213,11 +281,13 @@ export function installEngineHook({ win, roomID }) {
         ...body,
         receivedAt: nextReceivedAt(now),
       };
-      // An own message's server copy confirms its echo. The engine's duplicate filter
-      // usually drops that copy unrendered, so this check precedes the `rendered` one.
-      const pending = findPending(record, pendings, now);
+      // A server copy of an own message (only a self-whisper is ever delivered back) replaces
+      // its local record, pending or already confirmed by its send. The engine's duplicate
+      // filter may drop that copy unrendered, so this check precedes the `rendered` one.
+      const pending = findPending(record, pendings, now) ?? findPending(record, sentOwn, now);
       if (pending) {
         pendings = pendings.filter((p) => p !== pending);
+        sentOwn = sentOwn.filter((p) => p !== pending);
         const confirmed = { ...record, receivedAt: pending.receivedAt };
         report(history.confirmPending(pending.id, confirmed));
         view.confirm(pending.id, confirmed);
@@ -254,6 +324,10 @@ export function installEngineHook({ win, roomID }) {
       view.append(record);
       emit(record);
       expireLater(record, PENDING_TTL_MS + 1);
+      if (send) {
+        send.record = record;
+        if (send.state !== 'inflight') resolveSend(record, send.state);
+      }
       return;
     }
 
@@ -291,6 +365,8 @@ export function installEngineHook({ win, roomID }) {
       abandoned = true;
       buffered = null;
       pendings = [];
+      sentOwn = [];
+      lastSend = null;
     },
   };
 }
