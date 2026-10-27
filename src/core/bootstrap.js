@@ -1,0 +1,62 @@
+// Entry point. The double-load guard is the first statement (TDF-0009 Shared Contract): a
+// second copy — userscript plus site include — sets up nothing, and since feature modules
+// act only through core's extension points, its features stay inert too.
+
+import { openDb } from './db.js';
+import { engineAvailable, installEngineHook } from './engine-hook.js';
+import { describeError } from './errors.js';
+import { createHistory } from './history.js';
+import { MAIN_DIV } from './parse.js';
+import { createSettings } from './settings.js';
+import { createTheme } from './theme.js';
+import css from './theme.css';
+import { createView } from './view.js';
+
+if (!(/** @type {any} */ (window).__tdfChat2Loaded)) {
+  /** @type {any} */ (window).__tdfChat2Loaded = true;
+  start().catch((err) => startFailed(describeError(err)));
+}
+
+async function start() {
+  const win = /** @type {any} */ (window);
+  const container = document.getElementById(MAIN_DIV);
+  // Pages under the @match without a chat (login, transcripts) are expected: nothing to do.
+  if (!container) return;
+  if (!engineAvailable(win)) {
+    startFailed('the chat engine was not recognised');
+    return;
+  }
+  const roomID = String(win.roomID ?? '');
+
+  // Everything that can fail runs before the view mounts, so a failure leaves the
+  // original chat visible. Replay renders before the hook installs, so live messages
+  // append after it.
+  const db = await openDb();
+  const history = createHistory(db);
+  const settings = createSettings(db);
+  const theme = createTheme({ win, settings });
+  await theme.load();
+  await history.expirePending(roomID);
+  const records = await history.recent(roomID);
+
+  const view = createView({ doc: document, win, container, theme, css });
+  view.replay(records);
+  installEngineHook({ win, history, view, roomID });
+}
+
+/**
+ * Tell the user the overlay is off and why; the original chat stays in place.
+ * @param {string} reason
+ */
+function startFailed(reason) {
+  const banner = document.createElement('div');
+  banner.setAttribute('role', 'status');
+  banner.textContent = `TDF Chat 2.0 did not start (${reason}); showing the original chat.`;
+  banner.style.cssText =
+    'position:fixed;right:8px;bottom:8px;z-index:2147483647;max-width:360px;padding:6px 10px;' +
+    'font:12px system-ui,sans-serif;color:#1f2328;background:#fff8c5;' +
+    'border-left:3px solid #d1242f;box-shadow:0 2px 8px rgba(0,0,0,.2);cursor:pointer';
+  banner.title = 'Click to dismiss';
+  banner.addEventListener('click', () => banner.remove());
+  document.body.appendChild(banner);
+}

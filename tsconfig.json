@@ -1,0 +1,19 @@
+{
+  // Typecheck gate (Vector 18): only fully typed, pure modules are included.
+  // Widen `include` one typed module at a time, never in bulk.
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "target": "es2022",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["es2022"]
+  },
+  "include": [
+    "src/core/parse.js",
+    "src/core/expand.js",
+    "src/core/reconcile.js"
+  ]
+}

@@ -1,0 +1,152 @@
+/* TDF Chat 2.0 theme tokens and message view. Font size is normalised; sender colour and
+   font family are set per entry. */
+
+#tdf-chat {
+  --tdf-msg-size: 13px;
+  --tdf-ui-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  position: absolute;
+  z-index: 5;
+  box-sizing: border-box;
+  background: var(--tdf-bg);
+  color: var(--tdf-fg);
+  font-family: var(--tdf-ui-font);
+  border: 1px solid var(--tdf-border);
+}
+
+#tdf-chat[data-theme="light"] {
+  --tdf-bg: #ffffff;
+  --tdf-fg: #1f2328;
+  --tdf-muted: #59636e;
+  --tdf-border: #d1d9e0;
+  --tdf-hover-bg: rgba(31, 35, 40, 0.05);
+  --tdf-whisper-bg: rgba(130, 80, 223, 0.08);
+  --tdf-link: #0969da;
+  --tdf-link-hover: #ffffff;
+  --tdf-link-hover-bg: #0969da;
+  --tdf-chip-bg: #2d333b;
+}
+
+#tdf-chat[data-theme="dark"] {
+  --tdf-bg: #16191d;
+  --tdf-fg: #e6edf3;
+  --tdf-muted: #9198a1;
+  --tdf-border: #30363d;
+  --tdf-hover-bg: rgba(230, 237, 243, 0.06);
+  --tdf-whisper-bg: rgba(163, 113, 247, 0.14);
+  --tdf-link: #58a6ff;
+  --tdf-link-hover: #0d1117;
+  --tdf-link-hover-bg: #58a6ff;
+  --tdf-chip-bg: #e6edf3;
+}
+
+#tdf-chat .tdf-list {
+  height: 100%;
+  overflow-y: auto;
+  padding: 4px 0;
+  box-sizing: border-box;
+}
+
+#tdf-chat .tdf-msg {
+  padding: 3px 10px;
+  font-size: var(--tdf-msg-size);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+#tdf-chat .tdf-msg:hover {
+  background: var(--tdf-hover-bg);
+}
+
+#tdf-chat .tdf-msg * {
+  font-size: inherit;
+}
+
+#tdf-chat .tdf-user {
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#tdf-chat .tdf-user.tdf-sep::after {
+  content: ": ";
+}
+
+#tdf-chat .tdf-irc .tdf-user::after {
+  content: " ";
+}
+
+#tdf-chat .tdf-body pre {
+  margin: 0;
+  font-family: inherit;
+  white-space: pre-wrap;
+}
+
+#tdf-chat .tdf-body img {
+  max-width: 250px;
+  max-height: 250px;
+  vertical-align: middle;
+}
+
+#tdf-chat a {
+  color: var(--tdf-link);
+  text-decoration: underline;
+  border-radius: 3px;
+}
+
+#tdf-chat a:hover {
+  color: var(--tdf-link-hover);
+  background: var(--tdf-link-hover-bg);
+}
+
+#tdf-chat .tdf-kind-whisper {
+  background: var(--tdf-whisper-bg);
+}
+
+#tdf-chat .tdf-kind-entry,
+#tdf-chat .tdf-kind-exit,
+#tdf-chat .tdf-kind-system {
+  color: var(--tdf-muted);
+  font-style: italic;
+}
+
+#tdf-chat .tdf-pending {
+  opacity: 0.65;
+}
+
+#tdf-chat .tdf-unconfirmed .tdf-line::after {
+  content: " (not confirmed)";
+  color: var(--tdf-muted);
+  font-size: 0.85em;
+}
+
+/* Sender colours too close to the theme background keep their colour on a contrasting
+   chip, so they stay legible without being changed. */
+#tdf-chat[data-theme="dark"] .tdf-ink-dark .tdf-line,
+#tdf-chat[data-theme="light"] .tdf-ink-light .tdf-line {
+  background: var(--tdf-chip-bg);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+#tdf-chat .tdf-theme-toggle {
+  position: absolute;
+  top: 4px;
+  right: 18px;
+  z-index: 1;
+  font: 11px var(--tdf-ui-font);
+  color: var(--tdf-muted);
+  background: var(--tdf-bg);
+  border: 1px solid var(--tdf-border);
+  border-radius: 10px;
+  padding: 1px 8px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+#tdf-chat .tdf-theme-toggle:hover {
+  opacity: 1;
+}
+
+#tdf-chat .tdf-notice {
+  font-style: normal;
+  border-left: 3px solid #d1242f;
+}
