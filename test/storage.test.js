@@ -99,7 +99,13 @@ test('unconfirmed after 60 s: markUnconfirmed and expirePending', async () => {
   const now = 1_000_000;
   await h.addPending(msg({ id: 'local-old', receivedAt: now - PENDING_TTL_MS - 1 }));
   await h.addPending(msg({ id: 'local-new', receivedAt: now - 1000 }));
-  assert.deepEqual(await h.expirePending('1', now), ['local-old']);
+  const { expired, pending } = await h.expirePending('1', now);
+  assert.deepEqual(expired, ['local-old']);
+  // A pending record still within its wait is handed back for the new page to adopt.
+  assert.deepEqual(
+    pending.map((r) => r.id),
+    ['local-new'],
+  );
   assert.equal((await stored(db, 'local-old')).confirm, 'unconfirmed');
   assert.equal((await stored(db, 'local-new')).confirm, 'pending');
   assert.equal(await h.markUnconfirmed('local-new'), true);

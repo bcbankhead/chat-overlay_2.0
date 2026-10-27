@@ -35,16 +35,46 @@ export function engineAvailable(win) {
 }
 
 /**
- * @param {{
- *   win: any,
+ * @typedef {object} EngineCall the createMessageDiv arguments the hook reads
+ * @property {string} mDiv
+ * @property {string} message
+ * @property {string} mUser
+ * @property {string} mToUser
+ * @property {string} mTime
+ */
+
+/**
+ * @typedef {object} Observed one createMessageDiv call, as the hook saw it
+ * @property {EngineCall} call
+ * @property {ServerMessage | undefined} server the poll's record paired with the call
+ * @property {boolean} inPoll
+ * @property {boolean} rendered
+ * @property {number} at epoch ms of the call
+ */
+
+/**
+ * @typedef {object} EngineHook
+ * @property {(deps: {
  *   history: import('./history.js').History,
  *   view: import('./view.js').View,
- *   roomID: string,
- * }} deps
- * @returns {boolean} whether the hook was installed
+ *   pending?: MessageRecord[],
+ *   replayed?: MessageRecord[],
+ * }) => void} attach start storing and showing: adopt the room's stored pending own
+ *   messages, then flush, in order, what the engine rendered since install
+ * @property {() => void} abandon stop observing; the wrappers pass straight through
  */
-export function installEngineHook({ win, history, view, roomID }) {
-  if (!engineAvailable(win)) return false;
+
+const UNPAIRED_NOTICE =
+  'A message was shown but not saved: no server record in its poll matched its time and sender';
+
+/**
+ * Wrap the engine globals. Calls observed before `attach` are buffered, so messages the
+ * engine renders during the overlay's async startup are not lost.
+ * @param {{ win: any, roomID: string }} deps
+ * @returns {EngineHook | null} null when the engine globals are missing
+ */
+export function installEngineHook({ win, roomID }) {
+  if (!engineAvailable(win)) return null;
   const origHandle = win.handleMessages;
   const origCreate = win.createMessageDiv;
 
@@ -60,6 +90,15 @@ export function installEngineHook({ win, history, view, roomID }) {
   let seq = 0;
   /** @type {MessageRecord[]} pending own messages awaiting their server copy */
   let pendings = [];
+  /** @type {Observed[] | null} calls awaiting `attach`; null once attached */
+  let buffered = [];
+  let abandoned = false;
+  /** @type {Set<string>} ids the replay already showed */
+  let replayedIds = new Set();
+  /** @type {import('./history.js').History} */
+  let history;
+  /** @type {import('./view.js').View} */
+  let view;
 
   /** @param {Promise<unknown>} p */
   const report = (p) => p.catch((err) => view.notice(`Chat history not saved: ${describeError(err)}`));
@@ -73,7 +112,31 @@ export function installEngineHook({ win, history, view, roomID }) {
     }
   };
 
+  /** @param {Observed} observed */
+  const safeObserve = (observed) => {
+    try {
+      observe(observed);
+    } catch (err) {
+      view.notice(`Message not recorded: ${describeError(err)}`);
+    }
+  };
+
+  /**
+   * Mark a pending own message unconfirmed when its wait runs out, unless confirmed first.
+   * @param {MessageRecord} record
+   * @param {number} delay ms
+   */
+  const expireLater = (record, delay) => {
+    win.setTimeout(() => {
+      if (!pendings.includes(record)) return;
+      pendings = pendings.filter((p) => p !== record);
+      report(history.markUnconfirmed(record.id));
+      view.markUnconfirmed(record.id);
+    }, Math.max(0, delay));
+  };
+
   win.handleMessages = function (/** @type {unknown[]} */ ...args) {
+    if (abandoned) return origHandle.apply(this, args);
     const req = win.receiveMesReq;
     if (req && req.readyState == 4 && req.responseXML) {
       queue = Array.from(req.responseXML.getElementsByTagName('usermessage'), (node) =>
@@ -100,26 +163,32 @@ export function installEngineHook({ win, history, view, roomID }) {
     /** @type {string} */ mToUser,
     /** @type {string} */ mTime,
   ) {
-    // Pair the call with its server record before the original runs: inside a poll the
-    // engine calls createMessageDiv exactly once per usermessage, in order.
-    const server = inPoll ? queue.shift() : undefined;
+    if (abandoned) return origCreate.apply(this, arguments);
+    /** @type {EngineCall} */
+    const call = { mDiv, message, mUser: mUser ?? '', mToUser: mToUser ?? '', mTime: String(mTime ?? '') };
+    // Pair the call with its server record before the original runs. The engine renders a
+    // poll's records in order but may skip one, so the first record with the call's mTime
+    // and sender pairs, and the records skipped before it are dropped.
+    /** @type {ServerMessage | undefined} */
+    let server;
+    if (inPoll) {
+      const i = queue.findIndex((s) => s.mTime === call.mTime && s.user === call.mUser);
+      if (i >= 0) {
+        server = queue[i];
+        queue = queue.slice(i + 1);
+      }
+    }
     const before = win.showMessages;
     const result = origCreate.apply(this, arguments);
-    const rendered = win.showMessages > before;
-    try {
-      observe({ mDiv, message, mUser: mUser ?? '', mToUser: mToUser ?? '', mTime: mTime ?? '' }, server, rendered);
-    } catch (err) {
-      view.notice(`Message not recorded: ${describeError(err)}`);
-    }
+    /** @type {Observed} */
+    const observed = { call, server, inPoll, rendered: win.showMessages > before, at: Date.now() };
+    if (buffered) buffered.push(observed);
+    else safeObserve(observed);
     return result;
   };
 
-  /**
-   * @param {{ mDiv: string, message: string, mUser: string, mToUser: string, mTime: string }} call
-   * @param {ServerMessage | undefined} server
-   * @param {boolean} rendered
-   */
-  function observe(call, server, rendered) {
+  /** @param {Observed} observed */
+  function observe({ call, server, inPoll: polled, rendered, at: now }) {
     if (call.mDiv !== MAIN_DIV) return; // private windows are out of scope (A6)
 
     const target = isDelete(safeDecodeURI(String(call.message ?? '')));
@@ -129,20 +198,17 @@ export function installEngineHook({ win, history, view, roomID }) {
       return;
     }
 
-    const paired =
-      server && server.mTime === String(call.mTime) && server.user === call.mUser ? server : undefined;
-    const now = Date.now();
     const body = parseBody(String(call.message ?? ''));
     const kind = classify({ targetDiv: call.mDiv, toUser: call.mToUser, body }, lang);
 
-    if (paired) {
+    if (server) {
       /** @type {MessageRecord} */
       const record = {
-        id: paired.id,
+        id: server.id,
         roomID,
-        mTime: paired.mTime,
-        user: paired.user,
-        toUser: paired.toUser,
+        mTime: server.mTime,
+        user: server.user,
+        toUser: server.toUser,
         kind,
         ...body,
         receivedAt: nextReceivedAt(now),
@@ -157,7 +223,7 @@ export function installEngineHook({ win, history, view, roomID }) {
         view.confirm(pending.id, confirmed);
         return;
       }
-      if (!rendered) return;
+      if (!rendered || replayedIds.has(record.id)) return;
       report(history.put(record));
       view.append(record);
       emit(record);
@@ -165,6 +231,8 @@ export function installEngineHook({ win, history, view, roomID }) {
     }
 
     if (!rendered) return;
+
+    if (polled && call.mTime !== '') view.notice(UNPAIRED_NOTICE);
 
     const ownEcho = call.mTime === '' && call.mUser !== '' && call.mUser === win.userName;
     if (ownEcho) {
@@ -185,12 +253,7 @@ export function installEngineHook({ win, history, view, roomID }) {
       report(history.addPending(record));
       view.append(record);
       emit(record);
-      win.setTimeout(() => {
-        if (!pendings.includes(record)) return;
-        pendings = pendings.filter((p) => p !== record);
-        report(history.markUnconfirmed(record.id));
-        view.markUnconfirmed(record.id);
-      }, PENDING_TTL_MS + 1);
+      expireLater(record, PENDING_TTL_MS + 1);
       return;
     }
 
@@ -208,5 +271,26 @@ export function installEngineHook({ win, history, view, roomID }) {
     });
   }
 
-  return true;
+  return {
+    attach(deps) {
+      if (abandoned || !buffered) return;
+      ({ history, view } = deps);
+      replayedIds = new Set((deps.replayed ?? []).map((r) => r.id));
+      // Pending own messages left by the previous page: a server copy still confirms them,
+      // and each timer runs out the wait it had left.
+      const now = Date.now();
+      for (const record of deps.pending ?? []) {
+        pendings.push(record);
+        expireLater(record, PENDING_TTL_MS + 1 - (now - record.receivedAt));
+      }
+      const queued = buffered;
+      buffered = null;
+      for (const observed of queued) safeObserve(observed);
+    },
+    abandon() {
+      abandoned = true;
+      buffered = null;
+      pendings = [];
+    },
+  };
 }

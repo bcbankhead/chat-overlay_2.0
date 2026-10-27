@@ -29,6 +29,7 @@ function fakeEngine() {
       const nodes = win.receiveMesReq.responseXML.getElementsByTagName('usermessage');
       for (const node of nodes) {
         const f = win.mutate(node.textContent.split('}{'));
+        if (!f) continue;
         win.createMessageDiv('0', f[1], f[2], win.showMessages + 1, f[5], f[7], f[3], f[4], f[8]);
       }
     },
@@ -47,12 +48,13 @@ function setup() {
   const calls = [];
   const history = new Proxy({}, { get: (_, op) => async (...args) => calls.push([op, ...args]) });
   const view = new Proxy({}, { get: (_, op) => (...args) => calls.push([`view.${op}`, ...args]) });
-  const ok = installEngineHook({ win, history, view, roomID: '1' });
+  const hook = installEngineHook({ win, roomID: '1' });
+  hook.attach({ history, view });
   const poll = (...messages) => {
     win.receiveMesReq.responseXML = xml(...messages);
     win.handleMessages();
   };
-  return { win, calls, ok, poll };
+  return { win, calls, ok: hook !== null, poll };
 }
 
 test('a rendered server message is stored with its server id and emitted', () => {
@@ -144,7 +146,7 @@ test('private-window messages are ignored', () => {
 test('missing engine globals install nothing', () => {
   const win = { createMessageDiv() {}, handleMessages() {} };
   const before = { ...win };
-  assert.equal(installEngineHook({ win, history: {}, view: {}, roomID: '1' }), false);
+  assert.equal(installEngineHook({ win, roomID: '1' }), null);
   assert.equal(win.createMessageDiv, before.createMessageDiv);
   assert.equal(win.handleMessages, before.handleMessages);
 });
@@ -154,7 +156,7 @@ test('a failed history write is shown as a notice', async () => {
   const calls = [];
   const history = { put: async () => Promise.reject(new Error('QuotaExceededError')) };
   const view = new Proxy({}, { get: (_, op) => (...args) => calls.push([`view.${op}`, ...args]) });
-  installEngineHook({ win, history, view, roomID: '1' });
+  installEngineHook({ win, roomID: '1' }).attach({ history, view });
   win.receiveMesReq.responseXML = xml(um('905', 'bob', 'hi', '1705'));
   win.handleMessages();
   await new Promise((r) => setTimeout(r, 0));
@@ -184,20 +186,100 @@ test('an exception inside the hook is shown as a notice and the engine call stil
     },
     notice: (text) => notices.push(text),
   };
-  installEngineHook({ win, history: {}, view, roomID: '1' });
+  installEngineHook({ win, roomID: '1' }).attach({ history: {}, view });
   const result = win.createMessageDiv('1', '9', 'chatContainer', 1, 'av|#000|12px|v|hi|0|0', 'x', '', '', '');
   assert.equal(result, undefined);
   assert.equal(win.showMessages, 1);
   assert.deepEqual(notices, ['Message not recorded: render failed']);
 });
 
-test('a server record that does not match the call is not stored', () => {
+test('a server record that does not match the call is not stored, with a notice saying why', () => {
   const { win, calls, poll } = setup();
   win.mutate = (f) => [...f.slice(0, 8), '1800']; // the engine renders a different mTime
   poll(um('907', 'bob', 'hi', '1707'));
   assert.ok(!calls.some((c) => c[0] === 'put'));
   const shown = calls.find((c) => c[0] === 'view.append');
   assert.equal(shown[1].id, null);
+  assert.ok(calls.some((c) => c[0] === 'view.notice' && /not saved: no server record/.test(c[1])));
+});
+
+test('a record the engine skips mid-poll does not misalign the records after it', () => {
+  const { win, calls, poll } = setup();
+  win.mutate = (f) => (f[3] === 'eve' ? null : f); // the engine makes no call for eve's record
+  poll(
+    um('910', 'bob', 'one', '1710'),
+    um('911', 'eve', 'skipped', '1711'),
+    um('912', 'carol', 'three', '1712'),
+    um('913', 'dave', 'four', '1713'),
+  );
+  assert.deepEqual(
+    calls.filter((c) => c[0] === 'put').map((c) => c[1].id),
+    ['910', '912', '913'],
+  );
+  assert.ok(!calls.some((c) => c[0] === 'view.notice'));
+});
+
+test('calls observed before attach are flushed in order once attached', () => {
+  const win = fakeEngine();
+  const calls = [];
+  const history = new Proxy({}, { get: (_, op) => async (...args) => calls.push([op, ...args]) });
+  const view = new Proxy({}, { get: (_, op) => (...args) => calls.push([`view.${op}`, ...args]) });
+  const hook = installEngineHook({ win, roomID: '1' });
+  win.receiveMesReq.responseXML = xml(um('920', 'bob', 'early', '1720'), um('921', 'carol', 'replayed', '1721'));
+  win.handleMessages();
+  assert.deepEqual(calls, []);
+  hook.attach({ history, view, replayed: [{ id: '921' }] });
+  assert.deepEqual(
+    calls.filter((c) => c[0] === 'put' || c[0] === 'view.append').map((c) => [c[0], c[1].id]),
+    [
+      ['put', '920'],
+      ['view.append', '920'],
+    ],
+  );
+});
+
+test('a pending own message adopted from the previous page is confirmed by its server copy', () => {
+  const win = fakeEngine();
+  const calls = [];
+  const history = new Proxy({}, { get: (_, op) => async (...args) => calls.push([op, ...args]) });
+  const view = new Proxy({}, { get: (_, op) => (...args) => calls.push([`view.${op}`, ...args]) });
+  const pending = {
+    id: 'local-1-0',
+    roomID: '1',
+    mTime: '',
+    user: 'alice',
+    toUser: '',
+    kind: 'public',
+    avatar: 'av.gif',
+    color: '#000',
+    size: '12px',
+    family: 'verdana',
+    text: 'before reload',
+    ircFlag: '0',
+    lineBreakFlag: '0',
+    receivedAt: Date.now() - 1000,
+    confirm: 'pending',
+  };
+  installEngineHook({ win, roomID: '1' }).attach({ history, view, pending: [pending], replayed: [pending] });
+  win.receiveMesReq.responseXML = xml(um('930', 'alice', 'before reload', '1730'));
+  win.handleMessages();
+  const confirm = calls.find((c) => c[0] === 'confirmPending');
+  assert.equal(confirm[1], 'local-1-0');
+  assert.equal(confirm[2].id, '930');
+  assert.ok(!calls.some((c) => c[0] === 'put'));
+  calls.length = 0;
+  win.timers.forEach((fn) => fn());
+  assert.deepEqual(calls, []);
+});
+
+test('abandon makes the wrappers pass straight through', () => {
+  const win = fakeEngine();
+  const hook = installEngineHook({ win, roomID: '1' });
+  hook.abandon();
+  win.receiveMesReq.responseXML = xml(um('940', 'bob', 'hi', '1740'));
+  win.handleMessages();
+  assert.equal(win.showMessages, 1);
+  assert.doesNotThrow(() => hook.attach({ history: {}, view: {} }));
 });
 
 test('handleMessages before readyState 4 queues nothing', () => {

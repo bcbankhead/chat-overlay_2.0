@@ -68,3 +68,24 @@ test('disallowed elements are replaced by their text', () => {
   assert.equal(div.querySelector('b'), null);
   assert.equal(div.textContent, 'boldp{}');
 });
+
+test('style values carrying an injection token are dropped', () => {
+  for (const value of ['expression(alert(1))', 'JavaScript:alert(1)', 'red<x', 'red>x', 'r\\65 d']) {
+    const span = clean(`<span style="color: ${value}; font-family: arial">t</span>`).querySelector('span');
+    assert.equal(span.getAttribute('style'), 'font-family: arial', value);
+  }
+});
+
+test('comments and processing instructions are removed', () => {
+  const div = clean('a<!-- <img src=x onerror=alert(1)> --><?xml version="1.0"?>b<span><!--c-->s</span>');
+  assert.equal(div.innerHTML, 'ab<span>s</span>');
+  assert.equal(div.querySelector('img'), null);
+});
+
+test('mailto: hrefs are kept and other non-web schemes refused', () => {
+  const div = clean('<a href="mailto:x@x.test">m</a><a href="data:text/html,x">d</a><a href="vbscript:x">v</a>');
+  const [mail, data, vb] = div.querySelectorAll('a');
+  assert.equal(mail.getAttribute('href'), 'mailto:x@x.test');
+  assert.equal(data.getAttribute('href'), null);
+  assert.equal(vb.getAttribute('href'), null);
+});

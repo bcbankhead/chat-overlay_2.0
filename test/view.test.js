@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
+import { DEFAULT_REPLAY_LIMIT } from '../src/core/history.js';
 import { createTheme } from '../src/core/theme.js';
 import { createView } from '../src/core/view.js';
 
@@ -21,8 +22,9 @@ function fakeSettings(initial = {}, { failSet = false } = {}) {
 
 const settle = () => new Promise((r) => setTimeout(r, 10));
 
-async function setup({ dark = false, settings = fakeSettings(), autoScroll = true } = {}) {
+async function setup({ dark = false, settings = fakeSettings(), autoScroll = true, globals = {} } = {}) {
   const win = new Window();
+  Object.assign(win, globals);
   const doc = win.document;
   doc.body.innerHTML = `<div id="chatContainer"></div><input type="checkbox" id="autoScrollID" ${autoScroll ? 'checked' : ''}>`;
   const listeners = [];
@@ -124,6 +126,51 @@ test('removeByMTime removes every entry with that mTime', async () => {
   view.replay([rec({ id: 'a', mTime: '5' }), rec({ id: 'b', mTime: '6' }), rec({ id: 'c', mTime: '5' })]);
   view.removeByMTime('5');
   assert.deepEqual(msgs(root).map((el) => el.dataset.id), ['b']);
+});
+
+test('the list is capped: the oldest entries are trimmed and lookups still work', async () => {
+  const { view, root } = await setup();
+  const over = DEFAULT_REPLAY_LIMIT + 5;
+  view.replay(Array.from({ length: DEFAULT_REPLAY_LIMIT }, (_, i) => rec({ id: `r${i}`, mTime: `${i}` })));
+  for (let i = 0; i < over; i++) {
+    view.append(rec({ id: `local-${i}`, mTime: '', confirm: 'pending' }));
+    assert.ok(msgs(root).length <= DEFAULT_REPLAY_LIMIT);
+  }
+  view.notice('Chat history not saved: x');
+  assert.equal(msgs(root).length, DEFAULT_REPLAY_LIMIT);
+  assert.equal(root.querySelector('[data-id^="r"]'), null);
+  assert.equal(root.querySelector('[data-id="local-0"]'), null);
+
+  view.confirm('local-0', rec({ id: 'gone', mTime: '900' })); // trimmed: nothing to confirm
+  view.removeByMTime('3'); // trimmed: nothing to remove
+  assert.equal(root.querySelector('[data-id="gone"]'), null);
+  assert.equal(msgs(root).length, DEFAULT_REPLAY_LIMIT);
+
+  view.confirm(`local-${over - 1}`, rec({ id: '77', mTime: '300' }));
+  view.markUnconfirmed(`local-${over - 2}`);
+  assert.ok(root.querySelector('[data-id="77"]'));
+  assert.equal(root.querySelector(`[data-id="local-${over - 1}"]`), null);
+  assert.ok(root.querySelector(`[data-id="local-${over - 2}"]`).classList.contains('tdf-unconfirmed'));
+  view.removeByMTime('300');
+  assert.equal(root.querySelector('[data-id="77"]'), null);
+});
+
+test('engine enableUrl/enableEmail of 0 turn linking off; unset leaves it on', async () => {
+  const text = 'see http://example.com or mail a@example.com';
+  const off = await setup({ globals: { enableUrl: '0', enableEmail: '0' } });
+  off.view.append(rec({ text }));
+  assert.equal(off.root.querySelector('.tdf-body a'), null);
+  const urlOnly = await setup({ globals: { enableUrl: '1', enableEmail: '0' } });
+  urlOnly.view.append(rec({ text }));
+  assert.deepEqual(
+    [...urlOnly.root.querySelectorAll('.tdf-body a')].map((a) => a.getAttribute('href')),
+    ['http://example.com'],
+  );
+  const on = await setup();
+  on.view.append(rec({ text }));
+  const hrefs = [...on.root.querySelectorAll('.tdf-body a')].map((a) => a.getAttribute('href'));
+  assert.ok(hrefs.includes('http://example.com'));
+  assert.ok(hrefs.some((h) => h.startsWith('mailto:')));
 });
 
 test('an engine-local notice with no id renders without a data-id', async () => {

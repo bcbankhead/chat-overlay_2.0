@@ -3,7 +3,7 @@
 // act only through core's extension points, its features stay inert too.
 
 import { openDb } from './db.js';
-import { engineAvailable, installEngineHook } from './engine-hook.js';
+import { installEngineHook } from './engine-hook.js';
 import { describeError } from './errors.js';
 import { createHistory } from './history.js';
 import { MAIN_DIV } from './parse.js';
@@ -22,26 +22,62 @@ async function start() {
   const container = document.getElementById(MAIN_DIV);
   // Pages under the @match without a chat (login, transcripts) are expected: nothing to do.
   if (!container) return;
-  if (!engineAvailable(win)) {
+  const roomID = String(win.roomID ?? '');
+
+  // The hook installs before the first await: what the engine renders during startup is
+  // buffered and flushed after the replay, in order, rather than lost under the overlay.
+  const hook = installEngineHook({ win, roomID });
+  if (!hook) {
     startFailed('the chat engine was not recognised');
     return;
   }
-  const roomID = String(win.roomID ?? '');
+  const visibility = container.style.visibility;
+  try {
+    const db = await openDb();
+    const history = createHistory(db);
+    const settings = createSettings(db);
+    const theme = createTheme({ win, settings });
+    await theme.load();
+    const { pending } = await history.expirePending(roomID);
+    const records = await history.recent(roomID);
 
-  // Everything that can fail runs before the view mounts, so a failure leaves the
-  // original chat visible. Replay renders before the hook installs, so live messages
-  // append after it.
-  const db = await openDb();
-  const history = createHistory(db);
-  const settings = createSettings(db);
-  const theme = createTheme({ win, settings });
-  await theme.load();
-  await history.expirePending(roomID);
-  const records = await history.recent(roomID);
+    const view = createView({ doc: document, win, container, theme, css });
+    replay(view, records);
+    hook.attach({ history, view, pending, replayed: records });
+  } catch (err) {
+    // Undo whatever had mounted, so the banner's "showing the original chat" holds.
+    hook.abandon();
+    document.getElementById('tdf-chat')?.remove();
+    document.getElementById('tdf-chat-style')?.remove();
+    container.style.visibility = visibility;
+    throw err;
+  }
+}
 
-  const view = createView({ doc: document, win, container, theme, css });
-  view.replay(records);
-  installEngineHook({ win, history, view, roomID });
+/**
+ * Replay stored records. A record that will not render is skipped with a notice, rather
+ * than failing the start once the view has mounted.
+ * @param {import('./view.js').View} view
+ * @param {import('./history.js').MessageRecord[]} records
+ */
+function replay(view, records) {
+  try {
+    view.replay(records);
+    return;
+  } catch {
+    // Fall back to one record at a time to find the ones that fail.
+  }
+  let failed = 0;
+  let reason = '';
+  for (const record of records) {
+    try {
+      view.replay([record]);
+    } catch (err) {
+      if (!failed) reason = describeError(err);
+      failed += 1;
+    }
+  }
+  if (failed) view.notice(`${failed} stored message${failed === 1 ? '' : 's'} could not be shown: ${reason}`);
 }
 
 /**

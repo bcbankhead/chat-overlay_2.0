@@ -3,6 +3,7 @@
 
 import { describeError } from './errors.js';
 import { expand } from './expand.js';
+import { DEFAULT_REPLAY_LIMIT } from './history.js';
 import { safeDecodeURIComponent } from './parse.js';
 import { sanitize } from './sanitize.js';
 
@@ -168,7 +169,54 @@ export function createView({ doc, win, container, theme, css }) {
     el.setAttribute('role', 'status');
     el.textContent = text;
     list.appendChild(el);
+    trim();
     autoscroll();
+  }
+
+  /** @type {Record<'id' | 'mtime', Map<string, Set<HTMLElement>>>} */
+  const byKey = { id: new Map(), mtime: new Map() };
+
+  /** @param {HTMLElement} el */
+  function index(el) {
+    for (const key of /** @type {const} */ (['id', 'mtime'])) {
+      const value = el.dataset[key];
+      if (value === undefined) continue;
+      let set = byKey[key].get(value);
+      if (!set) byKey[key].set(value, (set = new Set()));
+      set.add(el);
+    }
+  }
+
+  /** @param {HTMLElement} el */
+  function unindex(el) {
+    for (const key of /** @type {const} */ (['id', 'mtime'])) {
+      const value = el.dataset[key];
+      if (value === undefined) continue;
+      const set = byKey[key].get(value);
+      if (!set) continue;
+      set.delete(el);
+      if (set.size === 0) byKey[key].delete(value);
+    }
+  }
+
+  /** @param {HTMLElement} el */
+  function remove(el) {
+    unindex(el);
+    el.remove();
+  }
+
+  // The list keeps no more than a replay shows; the oldest entries go first.
+  function trim() {
+    while (list.childElementCount > DEFAULT_REPLAY_LIMIT) {
+      remove(/** @type {HTMLElement} */ (list.firstElementChild));
+    }
+  }
+
+  /** @param {ViewRecord} record */
+  function add(record) {
+    const el = render(record);
+    index(el);
+    return el;
   }
 
   /**
@@ -176,23 +224,27 @@ export function createView({ doc, win, container, theme, css }) {
    * @param {'id' | 'mtime'} key
    * @param {string} value
    */
-  const entries = (key, value) =>
-    Array.from(list.querySelectorAll('.tdf-msg')).filter(
-      (el) => /** @type {HTMLElement} */ (el).dataset[key] === value,
-    );
+  const entries = (key, value) => [...(byKey[key].get(value) ?? [])];
 
   return {
     /** @param {ViewRecord} record */
     append(record) {
-      list.appendChild(render(record));
+      list.appendChild(add(record));
+      trim();
       autoscroll();
     },
 
     /** @param {ViewRecord[]} records oldest first */
     replay(records) {
+      // Render every record before indexing any, so a throw leaves nothing behind.
+      const els = records.map(render);
       const frag = doc.createDocumentFragment();
-      for (const record of records) frag.appendChild(render(record));
+      for (const el of els) {
+        index(el);
+        frag.appendChild(el);
+      }
       list.appendChild(frag);
+      trim();
       autoscroll();
     },
 
@@ -202,7 +254,10 @@ export function createView({ doc, win, container, theme, css }) {
      * @param {ViewRecord} record
      */
     confirm(pendingId, record) {
-      for (const el of entries('id', pendingId)) el.replaceWith(render(record));
+      for (const el of entries('id', pendingId)) {
+        unindex(el);
+        el.replaceWith(add(record));
+      }
     },
 
     /** @param {string} id */
@@ -215,7 +270,7 @@ export function createView({ doc, win, container, theme, css }) {
 
     /** @param {string} mTime */
     removeByMTime(mTime) {
-      for (const el of entries('mtime', mTime)) el.remove();
+      for (const el of entries('mtime', mTime)) remove(el);
     },
 
     notice,

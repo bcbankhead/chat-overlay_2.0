@@ -97,17 +97,20 @@ export function createHistory(db) {
     },
 
     /**
-     * Mark every pending record in the room older than the expiry unconfirmed — the
-     * page they were waiting in has gone.
+     * Mark every pending record in the room older than the expiry unconfirmed; the rest
+     * are still within their wait, for the new page to adopt.
      * @param {string} roomID
      * @param {number} [now]
-     * @returns {Promise<string[]>} the ids marked
+     * @returns {Promise<{ expired: string[], pending: MessageRecord[] }>} the ids marked,
+     *   and the records still pending
      */
     async expirePending(roomID, now = Date.now()) {
       const t = tx('readwrite');
       const index = t.objectStore(STORES.messages).index('roomID');
       /** @type {string[]} */
       const marked = [];
+      /** @type {MessageRecord[]} */
+      const pending = [];
       await new Promise((resolve, reject) => {
         const req = index.openCursor(IDBKeyRange.only(roomID));
         req.onerror = () => reject(req.error);
@@ -116,15 +119,19 @@ export function createHistory(db) {
           if (!cursor) return resolve(undefined);
           /** @type {MessageRecord} */
           const record = cursor.value;
-          if (record.confirm === 'pending' && isExpired(record, now)) {
-            cursor.update({ ...record, confirm: 'unconfirmed' });
-            marked.push(record.id);
+          if (record.confirm === 'pending') {
+            if (isExpired(record, now)) {
+              cursor.update({ ...record, confirm: 'unconfirmed' });
+              marked.push(record.id);
+            } else {
+              pending.push(record);
+            }
           }
           cursor.continue();
         };
       });
       await done(t);
-      return marked;
+      return { expired: marked, pending };
     },
 
     /**
