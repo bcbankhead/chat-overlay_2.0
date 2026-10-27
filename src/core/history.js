@@ -136,31 +136,36 @@ export function createHistory(db) {
     },
 
     /**
-     * Honour an admin `DELETEMESSAGE_<mTime>`: delete the room's records with that mTime.
+     * Honour an admin `DELETEMESSAGE_<mTime>`: delete the room's earliest-received record
+     * with that mTime. mTime is not unique; the engine removes only the first div with that
+     * id (message.js.php removeMessageDiv), so later same-second messages survive.
      * @param {string} roomID
      * @param {string} mTime
-     * @returns {Promise<string[]>} the ids deleted
+     * @returns {Promise<string[]>} the id deleted, or none
      */
     async deleteByMTime(roomID, mTime) {
       const t = tx('readwrite');
-      const index = t.objectStore(STORES.messages).index('mTime');
-      /** @type {string[]} */
-      const deleted = [];
-      await new Promise((resolve, reject) => {
-        const req = index.openCursor(IDBKeyRange.only(mTime));
+      const store = t.objectStore(STORES.messages);
+      /** @type {MessageRecord | null} */
+      const first = await new Promise((resolve, reject) => {
+        /** @type {MessageRecord | null} */
+        let earliest = null;
+        const req = store.index('mTime').openCursor(IDBKeyRange.only(mTime));
         req.onerror = () => reject(req.error);
         req.onsuccess = () => {
           const cursor = req.result;
-          if (!cursor) return resolve(undefined);
-          if (cursor.value.roomID === roomID) {
-            cursor.delete();
-            deleted.push(cursor.value.id);
+          if (!cursor) return resolve(earliest);
+          /** @type {MessageRecord} */
+          const record = cursor.value;
+          if (record.roomID === roomID && (!earliest || record.receivedAt < earliest.receivedAt)) {
+            earliest = record;
           }
           cursor.continue();
         };
       });
+      if (first) store.delete(first.id);
       await done(t);
-      return deleted;
+      return first ? [first.id] : [];
     },
 
     /**

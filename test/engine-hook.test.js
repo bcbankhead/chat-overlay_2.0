@@ -188,13 +188,21 @@ test('a self-whisper confirmed by its send is replaced, not duplicated, by its s
 test('after abandon, sendData passes straight through to the engine', () => {
   const win = fakeEngine();
   const hook = installEngineHook({ win, roomID: '1' });
+  win.sendData('chatContainer');
+  assert.equal(win.sendReq.listeners.length, 1); // the wrapper watches a main-div send
+  win.sendReq.finish(200);
   hook.abandon();
   win.sendData('chatContainer');
-  assert.deepEqual(win.sent, ['chatContainer']);
+  assert.deepEqual(win.sent, ['chatContainer', 'chatContainer']);
   assert.deepEqual(win.sendReq.listeners, []);
 });
 
 test('an engine without sendData still records own echoes, left to the expiry timer', () => {
+  const withSend = setup();
+  sendOwn(withSend.win, 'send hook');
+  withSend.win.sendReq.finish(200);
+  assert.ok(withSend.calls.some((c) => c[0] === 'confirmPending')); // the wrapper confirms by the send
+
   const win = fakeEngine();
   delete win.sendData;
   const calls = [];
@@ -204,16 +212,127 @@ test('an engine without sendData still records own echoes, left to the expiry ti
   assert.equal(win.sendData, undefined);
   win.createMessageDiv(0, '9', 'chatContainer', 1, 'av.gif|#000|12px|verdana|no send hook|0|0', 'beep_high.mp3', 'alice', '', '');
   const id = calls.find((c) => c[0] === 'addPending')[1].id;
+  win.sendReq.finish(200);
+  assert.ok(!calls.some((c) => c[0] === 'confirmPending' || c[0] === 'markUnconfirmed'));
   win.timers.forEach((fn) => fn());
   assert.ok(calls.some((c) => c[0] === 'markUnconfirmed' && c[1] === id));
 });
 
 test('a send to a private window is not paired with a main-room echo', () => {
   const { win, calls } = setup();
+  sendOwn(win, 'main room');
+  win.sendReq.finish(200);
+  const main = calls.find((c) => c[0] === 'addPending')[1].id;
+  assert.ok(calls.some((c) => c[0] === 'confirmPending' && c[1] === main)); // a main-div send pairs
+  calls.length = 0;
   win.sendData('pcontent_7');
+  assert.deepEqual(win.sendReq.listeners, []);
   win.createMessageDiv(0, '9', 'chatContainer', 1, 'av.gif|#000|12px|verdana|unrelated|0|0', 'beep_high.mp3', 'alice', '', '');
   win.sendReq.finish(200);
+  assert.ok(calls.some((c) => c[0] === 'addPending'));
   assert.ok(!calls.some((c) => c[0] === 'confirmPending'));
+});
+
+test('without a send request the engine cannot post, so the echo is marked unconfirmed at once', () => {
+  const win = fakeEngine();
+  delete win.sendReq;
+  win.sendData = (displayMDiv) => win.sent.push(displayMDiv);
+  const calls = [];
+  const history = new Proxy({}, { get: (_, op) => async (...args) => calls.push([op, ...args]) });
+  const view = new Proxy({}, { get: (_, op) => (...args) => calls.push([`view.${op}`, ...args]) });
+  installEngineHook({ win, roomID: '1' }).attach({ history, view });
+  sendOwn(win, 'no request');
+  const id = calls.find((c) => c[0] === 'addPending')[1].id;
+  assert.ok(calls.some((c) => c[0] === 'markUnconfirmed' && c[1] === id));
+  assert.ok(calls.some((c) => c[0] === 'view.markUnconfirmed' && c[1] === id));
+});
+
+test('a send that completes before attach confirms its buffered echo once attached', () => {
+  const win = fakeEngine();
+  const calls = [];
+  const history = new Proxy({}, { get: (_, op) => async (...args) => calls.push([op, ...args]) });
+  const view = new Proxy({}, { get: (_, op) => (...args) => calls.push([`view.${op}`, ...args]) });
+  const hook = installEngineHook({ win, roomID: '1' });
+  sendOwn(win, 'early send');
+  win.sendReq.finish(200);
+  assert.deepEqual(calls, []);
+  hook.attach({ history, view });
+  const id = calls.find((c) => c[0] === 'addPending')[1].id;
+  const confirm = calls.find((c) => c[0] === 'confirmPending');
+  assert.equal(confirm[1], id);
+  assert.equal(confirm[2].text, 'early send');
+  assert.ok(calls.some((c) => c[0] === 'view.confirm' && c[1] === id));
+});
+
+test('a main-div send with no echo is not paired with a later own echo', async () => {
+  const { win, calls } = setup();
+  win.sendData('chatContainer'); // room entry: the engine echoes nothing
+  win.createMessageDiv('1', '9', 'chatContainer', 1, '../images/notice.gif|#000|12px|verdana|AdBot|1', 'x', '', '');
+  win.sendReq.finish(200);
+  win.createMessageDiv(0, '9', 'chatContainer', 1, 'av.gif|#000|12px|verdana|after adbot|0|0', 'beep_high.mp3', 'alice', '', '');
+  win.sendData('chatContainer'); // room exit: nothing is rendered after it in this task
+  win.sendReq.finish(200);
+  await Promise.resolve();
+  win.createMessageDiv(0, '9', 'chatContainer', 1, 'av.gif|#000|12px|verdana|later|0|0', 'beep_high.mp3', 'alice', '', '');
+  assert.equal(calls.filter((c) => c[0] === 'addPending').length, 2);
+  assert.ok(!calls.some((c) => c[0] === 'confirmPending' || c[0] === 'markUnconfirmed'));
+  sendOwn(win, 'paired');
+  win.sendReq.finish(200);
+  const paired = calls.filter((c) => c[0] === 'addPending').at(-1)[1].id;
+  assert.deepEqual(
+    calls.filter((c) => c[0] === 'confirmPending').map((c) => c[1]),
+    [paired],
+  );
+});
+
+/** A view whose `op` throws; notices are collected. */
+const throwingView = (op, notices) =>
+  new Proxy(
+    {},
+    {
+      get: (_, name) => {
+        if (name === 'notice') return (text) => notices.push(text);
+        if (name === op)
+          return () => {
+            throw new Error(`${op} failed`);
+          };
+        return () => {};
+      },
+    },
+  );
+const quietHistory = new Proxy({}, { get: () => async () => true });
+
+test('a throw in the send wrapper is shown as a notice; the engine send and echo still run', () => {
+  const win = fakeEngine();
+  win.sendReq.addEventListener = () => {
+    throw new Error('listener refused');
+  };
+  const notices = [];
+  const calls = [];
+  const history = new Proxy({}, { get: (_, op) => async (...args) => calls.push([op, ...args]) });
+  installEngineHook({ win, roomID: '1' }).attach({ history, view: throwingView(null, notices) });
+  assert.doesNotThrow(() => sendOwn(win, 'still echoed'));
+  assert.deepEqual(win.sent, ['chatContainer']);
+  assert.ok(calls.some((c) => c[0] === 'addPending'));
+  assert.deepEqual(notices, ['Message status not tracked: listener refused']);
+});
+
+test('a throw while settling a send response is shown as a notice', () => {
+  const win = fakeEngine();
+  const notices = [];
+  installEngineHook({ win, roomID: '1' }).attach({ history: quietHistory, view: throwingView('confirm', notices) });
+  sendOwn(win, 'confirm throws');
+  assert.doesNotThrow(() => win.sendReq.finish(200));
+  assert.deepEqual(notices, ['Message status not updated: confirm failed']);
+});
+
+test('a throw in the expiry timer is shown as a notice', () => {
+  const win = fakeEngine();
+  const notices = [];
+  installEngineHook({ win, roomID: '1' }).attach({ history: quietHistory, view: throwingView('markUnconfirmed', notices) });
+  win.createMessageDiv(0, '9', 'chatContainer', 1, 'av.gif|#000|12px|verdana|expires|0|0', 'beep_high.mp3', 'alice', '', '');
+  assert.doesNotThrow(() => win.timers.forEach((fn) => fn()));
+  assert.deepEqual(notices, ['Message status not updated: markUnconfirmed failed']);
 });
 
 test('an echo with no server copy is marked unconfirmed by its timer', () => {

@@ -130,6 +130,22 @@ export function installEngineHook({ win, roomID }) {
     }
   };
 
+  /**
+   * Run hook bookkeeping from an engine call or callback; a throw becomes a notice.
+   * @template T
+   * @param {string} what
+   * @param {() => T} fn
+   * @returns {T | undefined}
+   */
+  const guard = (what, fn) => {
+    try {
+      return fn();
+    } catch (err) {
+      view?.notice(`${what}: ${describeError(err)}`);
+      return undefined;
+    }
+  };
+
   /** @param {Observed} observed */
   const safeObserve = (observed) => {
     try {
@@ -145,12 +161,16 @@ export function installEngineHook({ win, roomID }) {
    * @param {number} delay ms
    */
   const expireLater = (record, delay) => {
-    win.setTimeout(() => {
-      if (!pendings.includes(record)) return;
-      pendings = pendings.filter((p) => p !== record);
-      report(history.markUnconfirmed(record.id));
-      view.markUnconfirmed(record.id);
-    }, Math.max(0, delay));
+    win.setTimeout(
+      () =>
+        guard('Message status not updated', () => {
+          if (!pendings.includes(record)) return;
+          pendings = pendings.filter((p) => p !== record);
+          report(history.markUnconfirmed(record.id));
+          view.markUnconfirmed(record.id);
+        }),
+      Math.max(0, delay),
+    );
   };
 
   /**
@@ -181,19 +201,30 @@ export function installEngineHook({ win, roomID }) {
     win.sendData = function (/** @type {string} */ displayMDiv) {
       if (abandoned || displayMDiv !== MAIN_DIV) return origSend.apply(this, arguments);
       const req = win.sendReq;
-      const idle = Boolean(req) && (req.readyState == 4 || req.readyState == 0);
-      /** @type {Send} */
-      const send = { state: idle ? 'inflight' : 'failed', record: null };
-      lastSend = send;
+      const send = guard('Message status not tracked', () => {
+        const idle = Boolean(req) && (req.readyState == 4 || req.readyState == 0);
+        /** @type {Send} */
+        const created = { state: idle ? 'inflight' : 'failed', record: null };
+        lastSend = created;
+        // Only the echo the engine renders synchronously after this send belongs to it; a send
+        // with no echo (room entry or exit) must not pair with a later one.
+        queueMicrotask(() => {
+          if (lastSend === created) lastSend = null;
+        });
+        return created;
+      });
       const result = origSend.apply(this, arguments);
-      if (idle) {
-        req.addEventListener(
-          'loadend',
-          () => {
-            send.state = req.status >= 200 && req.status < 300 ? 'sent' : 'failed';
-            if (send.record) resolveSend(send.record, send.state);
-          },
-          { once: true },
+      if (send?.state === 'inflight') {
+        guard('Message status not tracked', () =>
+          req.addEventListener(
+            'loadend',
+            () =>
+              guard('Message status not updated', () => {
+                send.state = req.status >= 200 && req.status < 300 ? 'sent' : 'failed';
+                if (send.record) resolveSend(send.record, send.state);
+              }),
+            { once: true },
+          ),
         );
       }
       return result;

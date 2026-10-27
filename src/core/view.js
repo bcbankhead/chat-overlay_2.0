@@ -268,9 +268,16 @@ export function createView({ doc, win, container, theme, css }) {
       }
     },
 
-    /** @param {string} mTime */
+    /**
+     * Remove the first rendered entry with that mTime, as the engine removes only the first
+     * div with that id; later same-second entries stay.
+     * @param {string} mTime
+     */
     removeByMTime(mTime) {
-      for (const el of entries('mtime', mTime)) remove(el);
+      const [first] = entries('mtime', mTime).sort((a, b) =>
+        a.compareDocumentPosition(b) & 4 /* DOCUMENT_POSITION_FOLLOWING */ ? -1 : 1,
+      );
+      if (first) remove(first);
     },
 
     notice,

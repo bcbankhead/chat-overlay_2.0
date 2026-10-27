@@ -121,9 +121,13 @@ test('replay renders records in order; a pending entry is confirmed or marked un
   assert.ok(!msgs(root)[3].classList.contains('tdf-pending'));
 });
 
-test('removeByMTime removes every entry with that mTime', async () => {
+test('removeByMTime removes only the first entry in list order with that mTime', async () => {
   const { view, root } = await setup();
-  view.replay([rec({ id: 'a', mTime: '5' }), rec({ id: 'b', mTime: '6' }), rec({ id: 'c', mTime: '5' })]);
+  view.replay([rec({ id: 'local-1-0', mTime: '', confirm: 'pending' }), rec({ id: 'b', mTime: '6' }), rec({ id: 'c', mTime: '5' })]);
+  // Confirmed in place: first in the list, though indexed after c.
+  view.confirm('local-1-0', rec({ id: 'a', mTime: '5' }));
+  view.removeByMTime('5');
+  assert.deepEqual(msgs(root).map((el) => el.dataset.id), ['b', 'c']);
   view.removeByMTime('5');
   assert.deepEqual(msgs(root).map((el) => el.dataset.id), ['b']);
 });

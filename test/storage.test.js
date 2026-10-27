@@ -114,17 +114,19 @@ test('unconfirmed after 60 s: markUnconfirmed and expirePending', async () => {
   assert.equal(await h.markUnconfirmed('server'), false);
 });
 
-test('deleteByMTime removes only the matching records of the room', async () => {
+test('deleteByMTime removes only the room\'s earliest-received record with that mTime', async () => {
   const h = createHistory(await fresh());
-  await h.put(msg({ id: 'a', mTime: '100' }));
+  // Ids sort opposite to receipt, so the choice is by receivedAt, not key order.
+  await h.put(msg({ id: 'z', mTime: '100', receivedAt: 1 }));
   await h.put(msg({ id: 'b', mTime: '100', receivedAt: 2 }));
   await h.put(msg({ id: 'c', mTime: '101', receivedAt: 3 }));
   await h.put(msg({ id: 'd', mTime: '100', roomID: '2' }));
-  assert.deepEqual((await h.deleteByMTime('1', '100')).sort(), ['a', 'b']);
+  assert.deepEqual(await h.deleteByMTime('1', '100'), ['z']);
   assert.deepEqual(
     (await h.recent('1')).map((r) => r.id),
-    ['c'],
+    ['b', 'c'],
   );
+  assert.deepEqual(await h.deleteByMTime('1', '999'), []);
   assert.deepEqual(
     (await h.recent('2')).map((r) => r.id),
     ['d'],
