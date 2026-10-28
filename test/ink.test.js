@@ -60,7 +60,7 @@ test('every shifted colour reaches the minimum contrast on both themes', () => {
 test('drift: THEME_BG matches each theme\'s --tdf-bg in theme.css', () => {
   const css = readFileSync(new URL('../src/core/theme.css', import.meta.url), 'utf8');
   for (const theme of /** @type {const} */ (['light', 'dark'])) {
-    const block = new RegExp(`\\[data-theme="${theme}"\\]\\s*\\{([^}]*)\\}`).exec(css);
+    const block = new RegExp(`:root\\[data-tdf-theme="${theme}"\\]\\s*\\{([^}]*)\\}`).exec(css);
     assert.ok(block, `no ${theme} block in theme.css`);
     const bg = /--tdf-bg:\s*([^;]+);/.exec(block[1]);
     assert.ok(bg, `no --tdf-bg in the ${theme} block`);
