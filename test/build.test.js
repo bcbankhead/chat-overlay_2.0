@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { build, checkGrantNone, checkSecondCopyInert } from '../build.mjs';
+import { build, checkGrantNone, checkSecondCopyInert, verify } from '../build.mjs';
 
 const repo = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -72,6 +72,22 @@ test('the build fails when an output uses a userscript-manager API', async () =>
   }
 });
 
+test('a build that fails its checks writes neither output', async () => {
+  const root = rootWith("GM_log('x');\n");
+  try {
+    await assert.rejects(build({ root }), /tdf-chat\.user\.js: line \d+ uses[\s\S]*tdf-chat\.js: line \d+ uses/);
+    assert.ok(!existsSync(path.join(root, 'dist')), 'dist/ left behind');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('verify applies the grant check to the userscript only', () => {
+  const code = ['// ==UserScript==', '// @grant window.close', '// ==/UserScript==', '(() => {})();'].join('\n');
+  assert.match(verify('u.js', code, { userscript: true })[0], /^u\.js: the header must grant exactly "none"/);
+  assert.deepEqual(verify('i.js', code, { userscript: false }), []);
+});
+
 test('the build fails when a second copy would not be inert', async () => {
   const root = rootWith("window.addEventListener('load', () => {});\n");
   try {
@@ -109,6 +125,10 @@ test('the second-copy check flags code that runs past the guard', () => {
   assert.match(checkSecondCopyInert('Object.defineProperty(window, "y", { value: 1 });')[0], /window\.y defined/);
   assert.match(checkSecondCopyInert('getComputedStyle(document.body);')[0], /threw: getComputedStyle is not defined/);
   assert.match(checkSecondCopyInert('throw { code: 1 };')[0], /threw: \{"code":1\}/);
+  assert.match(checkSecondCopyInert('globalThis.a = 1;')[0], /window\.a written/);
+  assert.match(checkSecondCopyInert('self.addEventListener;')[0], /window\.addEventListener read/);
+  assert.match(checkSecondCopyInert('(() => { b = 1; })();')[0], /global b written/);
+  assert.match(checkSecondCopyInert('Promise.resolve().then(() => { document.title = "x"; });')[0], /document\.title written/);
 });
 
 test('build succeeds with no feature modules', async () => {

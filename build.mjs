@@ -2,9 +2,9 @@
 // (site include), from the same entry; only the banner and the output file differ.
 // The entry is virtual: src/core/bootstrap.js, then every src/features/*/index.js found, so
 // no slice edits a shared entry file (TDF-0009 Shared Contract, Build).
-// Both outputs are checked after building, and the build fails on any wrong state.
+// Both outputs are checked before either is written, and the build fails on any wrong state.
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import vm from 'node:vm';
@@ -78,6 +78,9 @@ export function checkGrantNone(code) {
  * imported modules' declarations ahead of bootstrap.js's body, so the guard is not literally
  * the bundle's first statement. Instead the bundle runs as a second copy would — every
  * `__tdfChat2*` flag already set — and must touch nothing else on `window` or `document`.
+ * `globalThis`, `self` and `top` are the window, as in a page; a bare global write and work
+ * queued as a microtask are caught too. Timers and other Web APIs are absent, so using one
+ * before the guard fails as "not defined".
  * @param {string} code
  * @returns {string[]}
  */
@@ -112,28 +115,34 @@ export function checkSecondCopyInert(code) {
         },
       },
     );
+  const window = recorder('window');
+  /** @type {Record<string, unknown>} */
+  const sandbox = { window, document: recorder('document'), globalThis: window, self: window, top: window };
+  const own = new Set(Object.keys(sandbox));
   try {
-    vm.runInNewContext(code, { window: recorder('window'), document: recorder('document') });
+    vm.runInNewContext(code, sandbox, { microtaskMode: 'afterEvaluate' });
   } catch (err) {
     // The error comes from the vm's realm, so `instanceof Error` is false for it.
     const message = /** @type {{ message?: unknown }} */ (err)?.message;
     touched.push(`threw: ${typeof message === 'string' ? message : JSON.stringify(err)}`);
   }
+  for (const key of Object.keys(sandbox)) if (!own.has(key)) touched.push(`global ${key} written`);
   return touched.map((t) => `a second copy is not inert (${t})`);
 }
 
 /**
- * @param {string} file
+ * Every check for one output, as `<name>: <problem>` lines.
+ * @param {string} name
+ * @param {string} code
  * @param {{ userscript: boolean }} kind
+ * @returns {string[]}
  */
-function verify(file, { userscript }) {
-  const code = readFileSync(file, 'utf8');
-  const problems = [
+export function verify(name, code, { userscript }) {
+  return [
     ...checkNoManagerApi(code),
     ...(userscript ? checkGrantNone(code) : []),
     ...checkSecondCopyInert(code),
-  ];
-  if (problems.length) throw new Error(`${path.basename(file)} failed its build checks:\n  ${problems.join('\n  ')}`);
+  ].map((problem) => `${name}: ${problem}`);
 }
 
 /**
@@ -169,11 +178,21 @@ export async function build({ root = path.dirname(fileURLToPath(import.meta.url)
   };
   const userscript = outfile ?? path.join(root, 'dist', 'tdf-chat.user.js');
   const include = path.join(path.dirname(userscript), 'tdf-chat.js');
-  await esbuild.build({ ...options, banner: { js: userscriptBanner(root) }, outfile: userscript });
-  await esbuild.build({ ...options, banner: { js: includeBanner(root) }, outfile: include });
+  // Built in memory and written only once both pass, so a failed build leaves nothing to upload.
+  /** @param {string} banner @param {string} file */
+  const bundle = async (banner, file) =>
+    (await esbuild.build({ ...options, banner: { js: banner }, outfile: file, write: false })).outputFiles[0].text;
+  const userscriptCode = await bundle(userscriptBanner(root), userscript);
+  const includeCode = await bundle(includeBanner(root), include);
 
-  verify(userscript, { userscript: true });
-  verify(include, { userscript: false });
+  const problems = [
+    ...verify(path.basename(userscript), userscriptCode, { userscript: true }),
+    ...verify(path.basename(include), includeCode, { userscript: false }),
+  ];
+  if (problems.length) throw new Error(`the build failed its checks; nothing was written:\n  ${problems.join('\n  ')}`);
+  mkdirSync(path.dirname(userscript), { recursive: true });
+  writeFileSync(userscript, userscriptCode);
+  writeFileSync(include, includeCode);
   return { features, outputs: { userscript, include } };
 }
 
