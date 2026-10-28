@@ -61,17 +61,19 @@ const shownIds = (document) => [...document.querySelectorAll('#tdf-chat .tdf-msg
 const um = (id, user, text, mTime) =>
   `${id}}{9}{chatContainer}{${user}}{}{${encodeURI(`av.gif|#ff0000|20px|georgia|${text}|0|0`)}}{x}{beep_high.mp3}{${mTime}`;
 
+/** @type {{ userscript: string, include: string } | undefined} */
 let built;
-async function bundled() {
+async function outputs() {
   if (!built) {
     const dir = mkdtempSync(path.join(tmpdir(), 'tdf-smoke-'));
-    const outfile = path.join(dir, 'tdf-chat.user.js');
-    await build({ root: repo, outfile });
-    built = readFileSync(outfile, 'utf8');
+    const { outputs: files } = await build({ root: repo, outfile: path.join(dir, 'tdf-chat.user.js') });
+    built = { userscript: readFileSync(files.userscript, 'utf8'), include: readFileSync(files.include, 'utf8') };
     rmSync(dir, { recursive: true, force: true });
   }
   return built;
 }
+const bundled = async () => (await outputs()).userscript;
+const included = async () => (await outputs()).include;
 
 test('the built userscript overlays the chat, stores messages and replays them on reload', async () => {
   const bundle = await bundled();
@@ -204,4 +206,37 @@ test('a failure after the view mounts restores the original chat, as the banner 
   assert.equal(document.getElementById('tdf-chat-style'), null);
   assert.equal(document.getElementById('chatContainer').style.visibility, '');
   assert.match(document.querySelector('[role="status"]').textContent, /did not start \(observer broke\); showing the original chat/);
+});
+
+test('the site include behaves as the userscript: overlays, stores and replays', async () => {
+  const include = await included();
+  const indexedDB = new IDBFactory();
+  const first = await page(include, indexedDB);
+  assert.ok(first.document.getElementById('tdf-chat'), 'overlay mounted');
+  assert.ok(first.document.getElementById('tdf-composer-style'), 'composer feature installed');
+  first.poll(um('1', 'bob', 'hello', '100'));
+  await settle();
+  assert.deepEqual(shownIds(first.document), ['1']);
+
+  const second = await page(include, indexedDB);
+  assert.deepEqual(shownIds(second.document), ['1']);
+});
+
+test('with both the userscript and the site include on a page, the interface is created once', async () => {
+  const indexedDB = new IDBFactory();
+  const { window, document, poll } = await page(await bundled(), indexedDB);
+  window.eval(await included());
+  await settle();
+  assert.equal(window.__tdfChat2Loaded, true);
+  assert.equal(document.querySelectorAll('#tdf-chat').length, 1);
+  assert.equal(document.querySelectorAll('#tdf-chat-style').length, 1);
+  assert.equal(document.querySelectorAll('#tdf-composer-style').length, 1);
+  poll(um('1', 'bob', 'once', '100'));
+  await settle();
+  assert.deepEqual(shownIds(document), ['1']);
+  const db = await openDb({ indexedDB });
+  const req = db.transaction('messages').objectStore('messages').count();
+  const stored = await new Promise((resolve) => (req.onsuccess = () => resolve(req.result)));
+  db.close();
+  assert.equal(stored, 1);
 });
