@@ -157,7 +157,12 @@ test('no thumb when nothing overflows', async () => {
   assert.equal(thumb.classList.contains('visible'), false);
 });
 
-test('dragging the thumb scrolls by the content-to-view ratio', async () => {
+/** The thumb's offset within the visible area, from its translateY minus scrollTop. */
+function thumbOffset(el, thumb) {
+  return Number(/translateY\(([-\d.]+)px\)/.exec(thumb.style.transform)[1]) - el.scrollTop;
+}
+
+test('dragging the thumb scrolls so the thumb stays under the pointer', async () => {
   const shell = await freshShell();
   shell.mount(fakeTheme());
   const { win, doc, el } = scrollArea();
@@ -166,11 +171,28 @@ test('dragging the thumb scrolls by the content-to-view ratio', async () => {
   thumb.dispatchEvent(new win.MouseEvent('mousedown', { clientY: 10, bubbles: true, cancelable: true }));
   assert.equal(thumb.classList.contains('dragging'), true);
   doc.dispatchEvent(new win.MouseEvent('mousemove', { clientY: 30 }));
-  assert.equal(el.scrollTop, 80, '20 px of drag is 80 px of a 4:1 area');
+  // 300 px of scroll range over 70 px of thumb travel (94 px track, 24 px thumb).
+  assert.ok(Math.abs(el.scrollTop - (20 * 300) / 70) < 1e-9);
   doc.dispatchEvent(new win.MouseEvent('mouseup'));
   assert.equal(thumb.classList.contains('dragging'), false);
+  const top = el.scrollTop;
   doc.dispatchEvent(new win.MouseEvent('mousemove', { clientY: 90 }));
-  assert.equal(el.scrollTop, 80, 'the drag ended');
+  assert.equal(el.scrollTop, top, 'the drag ended');
+});
+
+test('on a long list, where the thumb is clamped to its minimum, it tracks the pointer', async () => {
+  const shell = await freshShell();
+  shell.mount(fakeTheme());
+  const { win, doc, el } = scrollArea({ total: 100000 });
+  shell.attachScrollbar(el);
+  const thumb = el.querySelector('.tdf-thumb');
+  el.dispatchEvent(new win.Event('scroll'));
+  const before = thumbOffset(el, thumb);
+  thumb.dispatchEvent(new win.MouseEvent('mousedown', { clientY: 10, bubbles: true, cancelable: true }));
+  doc.dispatchEvent(new win.MouseEvent('mousemove', { clientY: 40 }));
+  el.dispatchEvent(new win.Event('scroll'));
+  assert.ok(Math.abs(thumbOffset(el, thumb) - before - 30) < 1e-6, 'the thumb moved as far as the pointer');
+  doc.dispatchEvent(new win.MouseEvent('mouseup'));
 });
 
 test('the message list gets a floating scrollbar, and trimming keeps its thumb', async () => {

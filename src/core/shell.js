@@ -113,14 +113,18 @@ function floatScrollbar(el) {
   /** @type {(() => void) | null} */
   let endDrag = null;
 
-  function place() {
-    const geometry = thumbGeometry({
+  function measure() {
+    return thumbGeometry({
       view: el.clientHeight,
       total: el.scrollHeight,
       scrollTop: el.scrollTop,
       inset: INSET,
       min: MIN_THUMB,
     });
+  }
+
+  function place() {
+    const geometry = measure();
     if (!geometry) {
       thumb.style.display = 'none';
       return false;
@@ -154,11 +158,16 @@ function floatScrollbar(el) {
   const onDown = (event) => {
     event.preventDefault();
     event.stopPropagation();
+    // Map the thumb's travel onto the scroll range, as thumbGeometry does, so the
+    // thumb stays under the pointer even when its height is clamped to the minimum.
+    const geometry = measure();
+    const travel = el.clientHeight - INSET * 2 - (geometry?.height ?? 0);
+    if (!geometry || travel <= 0) return;
     dragging = true;
     thumb.classList.add('dragging');
     const startY = event.clientY;
     const startTop = el.scrollTop;
-    const ratio = el.scrollHeight / el.clientHeight;
+    const ratio = (el.scrollHeight - el.clientHeight) / travel;
     /** @param {MouseEvent} ev */
     const move = (ev) => {
       el.scrollTop = startTop + (ev.clientY - startY) * ratio;
