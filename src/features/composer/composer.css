@@ -285,6 +285,10 @@
   opacity: 0.5;
 }
 
+:root[data-tdf-theme] .tdf-attach-hint.tdf-attach-refused {
+  color: #cf222e;
+}
+
 .tdf-attach-thumb.tdf-attach-failed img {
   outline: 2px solid #cf222e;
   outline-offset: -2px;

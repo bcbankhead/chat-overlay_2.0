@@ -5,7 +5,14 @@ import { shareRefusal } from './sharetext.js';
 test('shareRefusal names a failing status', () => {
   assert.equal(shareRefusal(500, 'oops'), 'Upload failed (HTTP 500)');
   assert.equal(shareRefusal(404, ''), 'Upload failed (HTTP 404)');
-  assert.equal(shareRefusal(302, ''), 'Upload failed (HTTP 302)');
+});
+
+test('shareRefusal treats a redirect, opaque or not, as a refusal', () => {
+  const redirected = 'Upload refused: the Share Files plugin redirected (signed out of the chat?)';
+  assert.equal(shareRefusal(0, ''), redirected);
+  assert.equal(shareRefusal(302, ''), redirected);
+  assert.equal(shareRefusal(399, ''), redirected);
+  assert.equal(shareRefusal(400, ''), 'Upload failed (HTTP 400)');
 });
 
 test("shareRefusal treats the plugin's 'no access' page as a refusal", () => {

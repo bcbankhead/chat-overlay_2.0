@@ -647,3 +647,98 @@ test('while an upload is in flight, × and a second Enter do nothing', async () 
   assert.equal(posts, 1);
   assert.equal(thumb.hidden, true);
 });
+
+test('a file that cannot attach says why on the hint line', async () => {
+  const { window, document, bar, win } = page();
+  const hint = /** @type {any} */ (document.querySelector('.tdf-attach-hint'));
+  drop(window, bar, new window.File(['x'], 'notes.txt', { type: 'text/plain' }));
+  assert.equal(hint.textContent, 'Only images can be attached: notes.txt');
+  assert.equal(hint.classList.contains('tdf-attach-refused'), true);
+
+  win.fetch = () => new Promise(() => {});
+  drop(window, bar, new window.File(['x'], 'cat.png', { type: 'image/png' }));
+  enter(window, bar, false);
+  await settle();
+  drop(window, bar, new window.File(['y'], 'other.png', { type: 'image/png' }));
+  assert.equal(hint.textContent, 'An image is still uploading');
+});
+
+test('a drop of several images keeps the first and says so', () => {
+  const { window, document, bar } = page();
+  const event = new window.Event('drop', { bubbles: true, cancelable: true });
+  const files = [new window.File(['x'], 'a.png', { type: 'image/png' }), new window.File(['y'], 'b.png', { type: 'image/png' })];
+  Object.defineProperty(event, 'dataTransfer', { value: { files } });
+  bar.dispatchEvent(event);
+  assert.equal(/** @type {any} */ (document.querySelector('.tdf-attach-thumb')).title, 'a.png');
+  assert.equal(document.querySelector('.tdf-attach-hint')?.textContent, 'One image at a time: the first was kept');
+});
+
+test('before the theme mounts nothing attaches and Enter reaches the engine', () => {
+  const { window, document, bar, state } = page({ theme: null });
+  const event = drop(window, bar, new window.File(['x'], 'cat.png', { type: 'image/png' }));
+  assert.equal(event.defaultPrevented, false);
+  assert.equal(/** @type {any} */ (document.querySelector('.tdf-attach-thumb')).hidden, true);
+  enter(window, bar, false);
+  assert.equal(state.sent, 1);
+});
+
+test('share requests never follow a redirect, give up on a stall, and say so', async () => {
+  const { window, document, bar, win } = page();
+  /** @type {any[]} */
+  const inits = [];
+  win.fetch = async (/** @type {any} */ _url, /** @type {any} */ init = {}) => {
+    inits.push(init);
+    return { status: 0, type: 'opaqueredirect', text: async () => '' };
+  };
+  const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
+  drop(window, bar, new window.File(['x'], 'cat.png', { type: 'image/png' }));
+  enter(window, bar, false);
+  await settle();
+  assert.equal(inits[0].redirect, 'manual');
+  assert.ok(inits[0].signal, 'a timeout signal is attached');
+  assert.equal(thumb.title, 'Upload refused: the Share Files plugin redirected (signed out of the chat?)');
+
+  win.fetch = async () => {
+    throw new win.DOMException('The operation timed out.', 'TimeoutError');
+  };
+  enter(window, bar, false);
+  await settle();
+  assert.equal(thumb.title, 'Upload failed: the Share Files plugin did not answer within 30 s');
+  assert.equal(thumb.classList.contains('tdf-attach-failed'), true);
+});
+
+test('shareID is matched on value, id or a label naming only that radio; a private share fails closed', async () => {
+  const { window, document, bar, win } = page();
+  const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
+  /** @param {string} formBody */
+  const send = async (formBody) => {
+    const calls = stubShare(win, { formBody });
+    drop(window, bar, new window.File(['x'], 'cat.png', { type: 'image/png' }));
+    enter(window, bar, false);
+    await settle();
+    return calls;
+  };
+
+  let calls = await send('<form><input type="radio" name="shareID" value="pub"><input type="radio" name="shareID" value="priv"></form>');
+  assert.equal(calls[1].body.get('shareID'), 'pub', 'by value');
+
+  win.whisperUser('Bob');
+  calls = await send('<form><input type="radio" name="shareID" id="s-pub" value="1"><input type="radio" name="shareID" id="s-priv" value="2"></form>');
+  assert.equal(calls[1].body.get('shareID'), '2', 'by id');
+
+  calls = await send('<form><input type="radio" name="shareID" id="a" value="1"><label for="a">Public</label><input type="radio" name="shareID" id="b" value="2"><label for="b">Private</label></form>');
+  assert.equal(calls[1].body.get('shareID'), '2', 'by label[for]');
+
+  calls = await send('<form><label><input type="radio" name="shareID" value="1"> Public <input type="radio" name="shareID" value="2"> Private</label></form>');
+  assert.equal(calls.length, 1, 'a label naming both radios names neither: nothing is posted');
+  assert.equal(thumb.title, 'Upload failed: the Share Files form has no private choice');
+
+  calls = await send('<form><input type="file" name="uploadedfile"></form>');
+  assert.equal(calls.length, 1, 'no radios while whispering: nothing is posted');
+  assert.equal(thumb.title, 'Upload failed: the Share Files form has no private choice');
+
+  win.clearWhisper();
+  calls = await send('<form><input type="radio" name="shareID" value="1"><input type="radio" name="shareID" value="2"></form>');
+  assert.equal(calls.length, 1, 'radios that name nothing: nothing is posted');
+  assert.equal(thumb.title, 'Upload failed: the Share Files form has no public choice');
+});
