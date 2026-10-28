@@ -224,6 +224,16 @@ test('a queued toggle whose save fails rejects with the cause', async () => {
   await assert.rejects(toggled, /quota exceeded/);
 });
 
+test('a toggle still queued when a failed start unmounts rejects with the reason', async () => {
+  const shell = await freshShell();
+  const toggled = shell.toggleTheme();
+  shell.unmount();
+  await assert.rejects(toggled, /overlay did not start/);
+  const theme = fakeTheme();
+  shell.mount(theme);
+  assert.equal(theme.toggles, 0, 'the dropped toggle is not replayed by a later mount');
+});
+
 test('detaching mid-drag ends the drag', async () => {
   const shell = await freshShell();
   shell.mount(fakeTheme());

@@ -20,6 +20,8 @@ let unsubscribe = null;
 const listeners = new Set();
 /** @type {Array<() => void>} */
 let queued = [];
+/** @type {Set<(reason: Error) => void>} */
+const pendingToggles = new Set();
 
 /**
  * Bootstrap only: hand the loaded theme to the shell and replay what was queued.
@@ -38,12 +40,18 @@ export function mount(loaded) {
   for (const run of pending) run();
 }
 
-/** Bootstrap only: a start that failed after mounting leaves nothing reachable. */
+/**
+ * Bootstrap only: a start that failed after mounting leaves nothing reachable. Toggles
+ * still queued are rejected, so their callers learn the overlay did not start.
+ */
 export function unmount() {
   unsubscribe?.();
   unsubscribe = null;
   theme = null;
   queued = [];
+  const pending = [...pendingToggles];
+  pendingToggles.clear();
+  for (const reject of pending) reject(new Error('overlay did not start'));
 }
 
 /**
@@ -53,8 +61,12 @@ export function unmount() {
 export function toggleTheme() {
   if (theme) return theme.toggle();
   return new Promise((resolve, reject) => {
+    pendingToggles.add(reject);
     // Replayed by mount, once the theme is set.
-    queued.push(() => /** @type {import('./theme.js').Theme} */ (theme).toggle().then(resolve, reject));
+    queued.push(() => {
+      pendingToggles.delete(reject);
+      /** @type {import('./theme.js').Theme} */ (theme).toggle().then(resolve, reject);
+    });
   });
 }
 
