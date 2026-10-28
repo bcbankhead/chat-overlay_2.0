@@ -1,0 +1,174 @@
+/* TDF Chat 2.0 control rail. Mounted inside #tdf-chat, so every colour is one of its theme
+   tokens (src/core/theme.css); no literal colours here. */
+
+/* The engine's panel stays in the DOM, still patched by the poll; it is hidden only while
+   the rail exists, so a failed start leaves the original panel showing. resizeDivs writes
+   only inline width/height, which cannot override this. */
+body:has(#tdf-rail) #userContainer {
+  display: none !important;
+}
+
+#tdf-rail {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font: 13px var(--tdf-ui-font);
+  color: var(--tdf-fg);
+}
+
+#tdf-rail .tdf-rail-column {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px;
+  background: var(--tdf-bg);
+  border: 1px solid var(--tdf-border);
+  border-radius: 8px;
+}
+
+#tdf-rail .tdf-rail-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+#tdf-rail .tdf-rail-button {
+  width: 32px;
+  height: 32px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--tdf-fg);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#tdf-rail .tdf-rail-button:hover,
+#tdf-rail .tdf-rail-button[aria-expanded="true"] {
+  background: var(--tdf-hover-bg);
+  border-color: var(--tdf-border);
+}
+
+#tdf-rail .tdf-rail-slot:empty {
+  display: none;
+}
+
+#tdf-rail .tdf-rail-side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 280px;
+  /* Empty while nothing is open; it must not block the page beneath it. */
+  pointer-events: none;
+}
+
+#tdf-rail .tdf-rail-side > * {
+  pointer-events: auto;
+}
+
+#tdf-rail .tdf-rail-error {
+  padding: 6px 10px;
+  background: var(--tdf-bg);
+  border: 1px solid var(--tdf-border);
+  border-left-width: 3px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+#tdf-rail .tdf-rail-error[hidden] {
+  display: none;
+}
+
+#tdf-rail .tdf-rail-flyout {
+  width: 100%;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  background: var(--tdf-bg);
+  border: 1px solid var(--tdf-border);
+  border-radius: 8px;
+}
+
+#tdf-rail .tdf-rail-flyout[hidden] {
+  display: none;
+}
+
+#tdf-rail .tdf-rail-title {
+  padding: 8px 10px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--tdf-border);
+}
+
+#tdf-rail .tdf-rail-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--tdf-border);
+}
+
+#tdf-rail .tdf-rail-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--tdf-muted);
+}
+
+#tdf-rail select {
+  flex: 1;
+  max-width: 190px;
+  font: inherit;
+  color: var(--tdf-fg);
+  background: var(--tdf-bg);
+  border: 1px solid var(--tdf-border);
+  border-radius: 4px;
+}
+
+#tdf-rail .tdf-rail-users {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+
+#tdf-rail .tdf-rail-user-name,
+#tdf-rail .tdf-rail-action {
+  display: flex;
+  width: 100%;
+  gap: 6px;
+  padding: 4px 10px;
+  font: inherit;
+  text-align: left;
+  color: var(--tdf-fg);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+#tdf-rail .tdf-rail-user-name:hover,
+#tdf-rail .tdf-rail-action:hover,
+#tdf-rail .tdf-rail-user-name[aria-expanded="true"] {
+  background: var(--tdf-hover-bg);
+}
+
+#tdf-rail .tdf-rail-user-status {
+  color: var(--tdf-muted);
+}
+
+#tdf-rail .tdf-rail-menu {
+  padding: 2px 0 4px 14px;
+  border-left: 2px solid var(--tdf-border);
+  margin-left: 10px;
+}
+
+#tdf-rail .tdf-rail-empty {
+  padding: 4px 10px;
+  color: var(--tdf-muted);
+  font-style: italic;
+}
