@@ -18,6 +18,7 @@
     "src/core/group.js",
     "src/core/ink.js",
     "src/core/reconcile.js",
-    "src/features/composer/link.js"
+    "src/features/composer/link.js",
+    "src/features/composer/sharetext.js"
   ]
 }

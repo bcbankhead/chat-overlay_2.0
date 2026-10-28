@@ -28,7 +28,6 @@
   --tdf-link: #0969da;
   --tdf-link-hover: #ffffff;
   --tdf-link-hover-bg: #0969da;
-  --tdf-chip-bg: #2d333b;
 }
 
 :root[data-tdf-theme="dark"] {
@@ -41,7 +40,6 @@
   --tdf-link: #58a6ff;
   --tdf-link-hover: #0d1117;
   --tdf-link-hover-bg: #58a6ff;
-  --tdf-chip-bg: #e6edf3;
 }
 
 /* The engine page: themed background, its background image removed. */

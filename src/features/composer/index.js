@@ -1,16 +1,20 @@
-// Composer input modifications on the engine's own textarea#optionsBar: Shift+Enter inserts a
-// newline, a URL pasted over a selection becomes a labelled link, and the textarea is restyled
-// in place. Sending is untouched — the inline submitenter still calls addMessage, so whisper,
-// silence, the length limit and the repeat filter keep applying.
+// Composer modifications on the engine's own textarea#optionsBar: Shift+Enter inserts a
+// newline, a URL pasted over a selection becomes a labelled link, and the composer is restyled
+// in place (composer.css, from data-tdf-theme on <html>) with a smiley picker, image attach and
+// a whisper chip. Text still goes out through the engine — the inline submitenter calls
+// addMessage — so whisper, silence, the length limit and the repeat filter keep applying.
 
 import { MAIN_DIV } from '../../core/parse.js';
-import { inkClass } from '../../core/view.js';
+import { installAttach } from './attach.js';
+import { installBox } from './box.js';
 import css from './composer.css';
 import { buildLabelledLink, isSingleHttpUrl } from './link.js';
+import { installSmileyButton } from './smilies.js';
+import { installWhisper } from './whisper.js';
+
+export { openSmileyPicker } from './smilies.js';
 
 const BAR = 'optionsBar';
-// A copy of names theme.css owns; index.test.js fails when the two drift.
-const TOKENS = ['--tdf-bg', '--tdf-fg', '--tdf-muted', '--tdf-border', '--tdf-link', '--tdf-chip-bg'];
 
 const win = /** @type {any} */ (window);
 if (!win.__tdfChat2Composer) {
@@ -19,7 +23,31 @@ if (!win.__tdfChat2Composer) {
   // the element to exist.
   window.addEventListener('keypress', onKeypress, true);
   window.addEventListener('paste', onPaste, true);
-  installTheme();
+  install();
+}
+
+/**
+ * Add the composer's own pieces beside the engine's. Pages under the @match without a chat
+ * have nothing to restyle. composer.css styles only under :root[data-tdf-theme], so until the
+ * overlay mounts its theme — or if it never does — the engine's composer looks as it did.
+ */
+function install() {
+  if (!document.getElementById(MAIN_DIV)) return;
+  const style = document.createElement('style');
+  style.id = 'tdf-composer-style';
+  style.textContent = css;
+  document.head.appendChild(style);
+
+  const bar = document.getElementById(BAR);
+  if (!isBar(bar)) return;
+
+  // The chip, icon, thumbnail and hint are placed against the box's container.
+  const host = bar.parentElement ?? document.body;
+  if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+  installBox(bar);
+  installSmileyButton(bar);
+  installWhisper(bar, host);
+  installAttach(bar, host);
 }
 
 /**
@@ -73,54 +101,4 @@ function insert(bar, text) {
   if (typeof document.execCommand === 'function' && document.execCommand('insertText', false, text)) return;
   bar.setRangeText(text, bar.selectionStart, bar.selectionEnd, 'end');
   bar.dispatchEvent(new Event('input', { bubbles: true }));
-}
-
-/**
- * Restyle the composer with the overlay's theme. The theme is data-tdf-theme on <html>; the
- * resolved token values are copied into this feature's stylesheet whenever it changes. Until
- * the overlay mounts — or if it never does — the composer keeps the engine's look.
- */
-function installTheme() {
-  // Pages under the @match without a chat never mount the overlay: nothing to wait for.
-  if (!document.getElementById(MAIN_DIV)) return;
-  const style = document.createElement('style');
-  style.id = 'tdf-composer-style';
-  document.head.appendChild(style);
-
-  const root = document.documentElement;
-  let mounted = false;
-  /** @type {HTMLTextAreaElement | null} */
-  let bar = null;
-
-  const ink = () => {
-    if (bar) bar.dataset.tdfInk = inkClass(getComputedStyle(bar).color) ?? '';
-  };
-
-  const sync = () => {
-    if (!mounted || !bar || !root.dataset.tdfTheme) return;
-    const computed = getComputedStyle(root);
-    const tokens = TOKENS.map((name) => `${name}: ${computed.getPropertyValue(name).trim()};`).join(' ');
-    style.textContent = `#${BAR}[data-tdf-theme] { ${tokens} }\n${css}`;
-    bar.dataset.tdfTheme = root.dataset.tdfTheme;
-    ink();
-  };
-
-  const find = () => {
-    // #tdf-chat is only the signal that the overlay mounted.
-    const foundBar = document.getElementById(BAR);
-    if (!document.getElementById('tdf-chat') || !isBar(foundBar)) return false;
-    mounted = true;
-    bar = foundBar;
-    new MutationObserver(sync).observe(root, { attributes: true, attributeFilter: ['data-tdf-theme'] });
-    // The engine restyles the composer inline when the sender's colour or font changes.
-    new MutationObserver(ink).observe(bar, { attributes: true, attributeFilter: ['style'] });
-    sync();
-    return true;
-  };
-
-  if (find()) return;
-  const finder = new MutationObserver(() => {
-    if (find()) finder.disconnect();
-  });
-  finder.observe(document.body, { childList: true, subtree: true });
 }

@@ -4,7 +4,7 @@
 import { expand } from './expand.js';
 import { clockHHMM, continuesGroup, groupTime } from './group.js';
 import { DEFAULT_REPLAY_LIMIT } from './history.js';
-import { adapt, luminance, parseColor, THEME_BG } from './ink.js';
+import { adapt, THEME_BG } from './ink.js';
 import { safeDecodeURIComponent } from './parse.js';
 import { sanitize } from './sanitize.js';
 import { attachScrollbar } from './shell.js';
@@ -53,20 +53,6 @@ function regroup(el) {
   const cont = continuesGroup(prev && groupKey(prev), key);
   row.classList.toggle('tdf-cont', cont);
   row.classList.toggle('tdf-head', !cont);
-}
-
-/**
- * Theme-independent ink class: which background the sender colour is illegible on. The
- * view no longer uses it (messages take ink.js's colour shift); the composer still does.
- * @param {string} color
- */
-export function inkClass(color) {
-  const rgb = parseColor(color);
-  if (!rgb) return null;
-  const l = luminance(rgb);
-  if (l < 0.13) return 'tdf-ink-dark'; // under 3:1 against the dark background
-  if (l > 0.3) return 'tdf-ink-light'; // under 3:1 against the light background
-  return null;
 }
 
 /**
