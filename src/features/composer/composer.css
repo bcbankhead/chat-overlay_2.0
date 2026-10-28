@@ -1,6 +1,5 @@
-/* The engine's composer, textarea#optionsBar, restyled in place. The theme tokens live on
-   #tdf-chat, which the composer is not inside, so index.js copies them onto this rule's
-   selector. The engine's own inline styles (the sender's colour, font, size, bold, italic,
+/* The engine's composer, textarea#optionsBar, restyled in place. index.js copies the theme
+   tokens' resolved values onto this rule's selector, and data-tdf-theme from <html>. The engine's own inline styles (the sender's colour, font, size, bold, italic,
    underline) are left alone: they preview the message being written. */
 
 #optionsBar[data-tdf-theme] {

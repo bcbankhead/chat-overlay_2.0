@@ -8,7 +8,8 @@ import { describeError } from './errors.js';
 import { createHistory } from './history.js';
 import { MAIN_DIV } from './parse.js';
 import { createSettings } from './settings.js';
-import { createTheme } from './theme.js';
+import { mount, unmount } from './shell.js';
+import { FADE_CLASS, createTheme } from './theme.js';
 import css from './theme.css';
 import { createView } from './view.js';
 
@@ -32,21 +33,29 @@ async function start() {
     return;
   }
   const visibility = container.style.visibility;
+  const html = document.documentElement;
+  /** @type {import('./theme.js').Theme | null} */
+  let theme = null;
   try {
     const db = await openDb();
     const history = createHistory(db);
     const settings = createSettings(db);
-    const theme = createTheme({ win, settings });
+    theme = createTheme({ win, settings, root: html });
     await theme.load();
+    mount(theme);
     const { pending } = await history.expirePending(roomID);
     const records = await history.recent(roomID);
 
-    const view = createView({ doc: document, win, container, theme, css });
+    const view = createView({ doc: document, win, container, css });
     replay(view, records);
     hook.attach({ history, view, pending, replayed: records });
   } catch (err) {
     // Undo whatever had mounted, so the banner's "showing the original chat" holds.
     hook.abandon();
+    unmount();
+    theme?.stop();
+    delete html.dataset.tdfTheme;
+    html.classList.remove(FADE_CLASS);
     document.getElementById('tdf-chat')?.remove();
     document.getElementById('tdf-chat-style')?.remove();
     container.style.visibility = visibility;

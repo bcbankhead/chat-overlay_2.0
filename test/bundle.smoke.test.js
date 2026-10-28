@@ -8,6 +8,7 @@ import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { Window } from 'happy-dom';
 import { build } from '../build.mjs';
 import { openDb } from '../src/core/db.js';
+import { createSettings } from '../src/core/settings.js';
 
 const repo = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const settle = () => new Promise((r) => setTimeout(r, 50));
@@ -95,24 +96,28 @@ test('the built userscript overlays the chat, stores messages and replays them o
   assert.equal(line.style.fontFamily, '');
   assert.equal(line.style.fontSize, '');
 
-  // The theme toggle cycles auto → light and persists across reloads.
-  const toggle = overlay.querySelector('.tdf-theme-toggle');
-  assert.equal(toggle.textContent, 'Auto');
-  toggle.click();
-  await settle();
-  assert.equal(toggle.textContent, 'Light');
-  assert.equal(overlay.dataset.theme, 'light');
+  // With no stored choice <html> follows the system; the overlay has no theme button, and
+  // its list has a floating scrollbar.
+  assert.equal(first.document.documentElement.dataset.tdfTheme, 'light');
+  assert.equal(overlay.querySelector('.tdf-theme-toggle'), null);
+  const list = overlay.querySelector('.tdf-list');
+  assert.ok(list.classList.contains('tdf-scroll'));
+  assert.ok(list.querySelector('.tdf-thumb'));
 
   // A second copy of the script (userscript + site include) does nothing.
   first.window.eval(bundle);
   await settle();
   assert.equal(first.document.querySelectorAll('#tdf-chat').length, 1);
 
+  // A stored choice applies after a reload.
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('theme', 'dark');
+  db.close();
+
   const second = await page(bundle, indexedDB);
   const replayed = [...second.document.querySelectorAll('#tdf-chat .tdf-msg')].map((el) => el.dataset.id);
   assert.deepEqual(replayed, ['1', '2']);
-  assert.equal(second.document.querySelector('#tdf-chat .tdf-theme-toggle').textContent, 'Light');
-  assert.equal(second.document.getElementById('tdf-chat').dataset.theme, 'light');
+  assert.equal(second.document.documentElement.dataset.tdfTheme, 'dark');
   second.poll(um('3', 'bob', 'live', '102'));
   await settle();
   const after = [...second.document.querySelectorAll('#tdf-chat .tdf-msg')].map((el) => el.dataset.id);
@@ -206,6 +211,7 @@ test('a failure after the view mounts restores the original chat, as the banner 
   const { document } = await page(await bundled(), new IDBFactory(), { globals });
   assert.equal(document.getElementById('tdf-chat'), null);
   assert.equal(document.getElementById('tdf-chat-style'), null);
+  assert.equal(document.documentElement.dataset.tdfTheme, undefined, 'the page is not left themed');
   assert.equal(document.getElementById('chatContainer').style.visibility, '');
   assert.match(document.querySelector('[role="status"]').textContent, /did not start \(observer broke\); showing the original chat/);
 });

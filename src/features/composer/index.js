@@ -76,8 +76,8 @@ function insert(bar, text) {
 }
 
 /**
- * Restyle the composer with the overlay's theme. The tokens are defined on #tdf-chat, so their
- * resolved values are copied into this feature's stylesheet whenever the theme changes. Until
+ * Restyle the composer with the overlay's theme. The theme is data-tdf-theme on <html>; the
+ * resolved token values are copied into this feature's stylesheet whenever it changes. Until
  * the overlay mounts — or if it never does — the composer keeps the engine's look.
  */
 function installTheme() {
@@ -87,8 +87,8 @@ function installTheme() {
   style.id = 'tdf-composer-style';
   document.head.appendChild(style);
 
-  /** @type {HTMLElement | null} */
-  let root = null;
+  const root = document.documentElement;
+  let mounted = false;
   /** @type {HTMLTextAreaElement | null} */
   let bar = null;
 
@@ -97,21 +97,21 @@ function installTheme() {
   };
 
   const sync = () => {
-    if (!root || !bar || !root.dataset.theme) return;
+    if (!mounted || !bar || !root.dataset.tdfTheme) return;
     const computed = getComputedStyle(root);
     const tokens = TOKENS.map((name) => `${name}: ${computed.getPropertyValue(name).trim()};`).join(' ');
     style.textContent = `#${BAR}[data-tdf-theme] { ${tokens} }\n${css}`;
-    bar.dataset.tdfTheme = root.dataset.theme;
+    bar.dataset.tdfTheme = root.dataset.tdfTheme;
     ink();
   };
 
   const find = () => {
-    const foundRoot = document.getElementById('tdf-chat');
+    // #tdf-chat is only the signal that the overlay mounted.
     const foundBar = document.getElementById(BAR);
-    if (!foundRoot || !isBar(foundBar)) return false;
-    root = foundRoot;
+    if (!document.getElementById('tdf-chat') || !isBar(foundBar)) return false;
+    mounted = true;
     bar = foundBar;
-    new MutationObserver(sync).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+    new MutationObserver(sync).observe(root, { attributes: true, attributeFilter: ['data-tdf-theme'] });
     // The engine restyles the composer inline when the sender's colour or font changes.
     new MutationObserver(ink).observe(bar, { attributes: true, attributeFilter: ['style'] });
     sync();

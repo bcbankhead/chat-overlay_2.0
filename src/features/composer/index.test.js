@@ -48,7 +48,7 @@ function page({ overlay = false, chat = true } = {}) {
   if (overlay) {
     const root = document.createElement('div');
     root.id = 'tdf-chat';
-    root.dataset.theme = 'dark';
+    document.documentElement.dataset.tdfTheme = 'dark';
     document.body.appendChild(root);
   }
   window.eval(bundle);
@@ -111,17 +111,19 @@ test('non-URL text, or a label that cannot be carried, pastes as before', () => 
   assert.equal(bar.value, 'mail me@example.com');
 });
 
-test('the composer takes the overlay theme once #tdf-chat mounts, and follows it', async () => {
+test('the composer takes the overlay theme once #tdf-chat mounts, and follows it on <html>', async () => {
   const { document, bar } = page();
-  assert.equal(bar.dataset.tdfTheme, undefined);
+  const html = document.documentElement;
+  html.dataset.tdfTheme = 'light';
+  await settle();
+  assert.equal(bar.dataset.tdfTheme, undefined, 'not themed before the overlay mounts');
   const root = document.createElement('div');
   root.id = 'tdf-chat';
-  root.dataset.theme = 'light';
   document.body.appendChild(root);
   await settle();
   assert.equal(bar.dataset.tdfTheme, 'light');
   assert.ok(document.getElementById('tdf-composer-style')?.textContent?.includes('#optionsBar[data-tdf-theme]'));
-  root.dataset.theme = 'dark';
+  html.dataset.tdfTheme = 'dark';
   await settle();
   assert.equal(bar.dataset.tdfTheme, 'dark');
 });
@@ -156,14 +158,14 @@ test('keys and pastes outside the composer, and other keys in it, are left alone
   assert.equal(state.sent, 0);
 });
 
-test('the composer is not themed while #tdf-chat has no theme', async () => {
+test('the composer is not themed while <html> has no theme', async () => {
   const { document, bar } = page();
   const root = document.createElement('div');
   root.id = 'tdf-chat';
   document.body.appendChild(root);
   await settle();
   assert.equal(bar.dataset.tdfTheme, undefined);
-  root.dataset.theme = 'dark';
+  document.documentElement.dataset.tdfTheme = 'dark';
   await settle();
   assert.equal(bar.dataset.tdfTheme, 'dark');
 });
@@ -172,7 +174,7 @@ test('a page without the chat installs no theme and observes nothing', async () 
   const { document, bar } = page({ chat: false });
   const root = document.createElement('div');
   root.id = 'tdf-chat';
-  root.dataset.theme = 'dark';
+  document.documentElement.dataset.tdfTheme = 'dark';
   document.body.appendChild(root);
   await settle();
   assert.equal(bar.dataset.tdfTheme, undefined);
@@ -208,7 +210,7 @@ test('every theme token the composer copies is defined by both themes in theme.c
   assert.ok(tokens.length > 0);
   const theme = readFileSync(path.join(here, '..', '..', 'core', 'theme.css'), 'utf8');
   for (const name of ['light', 'dark']) {
-    const block = new RegExp(`#tdf-chat\\[data-theme="${name}"\\] \\{([^}]*)\\}`).exec(theme)?.[1];
+    const block = new RegExp(`:root\\[data-tdf-theme="${name}"\\] \\{([^}]*)\\}`).exec(theme)?.[1];
     assert.ok(block, `no ${name} block in theme.css`);
     for (const token of tokens) assert.match(block, new RegExp(`${token}:`), `${token} missing from ${name}`);
   }

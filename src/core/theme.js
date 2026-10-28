@@ -1,57 +1,89 @@
-// Light/dark theme: `auto` follows prefers-color-scheme; the toggle cycles
-// auto → light → dark and persists the `theme` setting.
+// Light/dark theme on <html> as data-tdf-theme. The `theme` setting holds the chosen
+// selector, never resolved colours: null follows prefers-color-scheme live until the first
+// toggle stores 'light' or 'dark'. Every switch after the first apply cross-fades.
 
-const MODES = /** @type {const} */ (['auto', 'light', 'dark']);
+/** @typedef {'light' | 'dark'} ResolvedTheme */
 
-/** @typedef {(typeof MODES)[number]} ThemeMode */
+// On <html> while a switch cross-fades; theme.css transitions every colour under it.
+export const FADE_CLASS = 'tdf-theme-fading';
+// The CSS transition is 300 ms; the class stays a little longer so it ends cleanly.
+const FADE_MS = 450;
 
 /**
- * @param {{ win: Window, settings: import('./settings.js').Settings }} deps
+ * @param {{ win: Window, settings: import('./settings.js').Settings, root: HTMLElement }} deps
  */
-export function createTheme({ win, settings }) {
+export function createTheme({ win, settings, root }) {
   const query = win.matchMedia?.('(prefers-color-scheme: dark)');
-  /** @type {ThemeMode} */
-  let mode = 'auto';
-  /** @type {HTMLElement | null} */
-  let root = null;
-  /** @type {Set<(mode: ThemeMode) => void>} */
+  const reduced = win.matchMedia?.('(prefers-reduced-motion: reduce)');
+  /** @type {ResolvedTheme | null} */
+  let stored = null;
+  /** @type {ResolvedTheme | null} */
+  let applied = null;
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let fadeTimer;
+  /** @type {Set<(theme: ResolvedTheme) => void>} */
   const changed = new Set();
 
-  function apply() {
-    if (!root) return;
-    const resolved = mode === 'auto' ? (query?.matches ? 'dark' : 'light') : mode;
-    root.dataset.theme = resolved;
-    for (const fn of changed) fn(mode);
+  /** @returns {ResolvedTheme} */
+  const resolved = () => stored ?? (query?.matches ? 'dark' : 'light');
+
+  function fade() {
+    if (reduced?.matches) return;
+    root.classList.add(FADE_CLASS);
+    clearTimeout(fadeTimer);
+    fadeTimer = setTimeout(() => root.classList.remove(FADE_CLASS), FADE_MS);
   }
 
-  query?.addEventListener?.('change', () => {
-    if (mode === 'auto') apply();
-  });
+  function apply() {
+    const next = resolved();
+    if (next === applied) return;
+    if (applied !== null) fade();
+    applied = next;
+    root.dataset.tdfTheme = next;
+    for (const fn of changed) fn(next);
+  }
+
+  const onScheme = () => {
+    if (stored === null) apply();
+  };
+  query?.addEventListener?.('change', onScheme);
 
   return {
-    /** Read the persisted mode. */
+    /** Read the stored choice; anything but 'light' or 'dark' (a legacy 'auto') is none. */
     async load() {
-      const stored = await settings.get('theme');
-      mode = MODES.includes(stored) ? stored : 'auto';
+      const value = await settings.get('theme');
+      stored = value === 'light' || value === 'dark' ? value : null;
       apply();
     },
 
-    /** @param {HTMLElement} el the element carrying the theme tokens */
-    attach(el) {
-      root = el;
+    /** Flip the resolved theme and persist the choice. */
+    async toggle() {
+      stored = resolved() === 'dark' ? 'light' : 'dark';
       apply();
+      await settings.set('theme', stored);
     },
 
-    /** @param {(mode: ThemeMode) => void} fn */
+    /**
+     * @param {(theme: ResolvedTheme) => void} fn called with the resolved theme on each switch
+     * @returns {() => void} off
+     */
     onChange(fn) {
       changed.add(fn);
+      return () => {
+        changed.delete(fn);
+      };
     },
 
-    /** Advance auto → light → dark → auto and persist. */
-    async cycle() {
-      mode = MODES[(MODES.indexOf(mode) + 1) % MODES.length];
-      apply();
-      await settings.set('theme', mode);
+    /** The applied theme, or null before load. */
+    current() {
+      return applied;
+    },
+
+    /** Stop following the system and fading; for a start that failed. */
+    stop() {
+      query?.removeEventListener?.('change', onScheme);
+      clearTimeout(fadeTimer);
+      changed.clear();
     },
   };
 }

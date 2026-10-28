@@ -1,20 +1,18 @@
 // The message view: a linear list overlaid on #chatContainer. The engine's container stays
 // in the DOM, hidden, so its scrolling and trimming keep working underneath.
 
-import { describeError } from './errors.js';
 import { expand } from './expand.js';
 import { clockHHMM, continuesGroup, groupTime } from './group.js';
 import { DEFAULT_REPLAY_LIMIT } from './history.js';
 import { adapt, luminance, parseColor, THEME_BG } from './ink.js';
 import { safeDecodeURIComponent } from './parse.js';
 import { sanitize } from './sanitize.js';
+import { attachScrollbar } from './shell.js';
 
 /**
  * What the view renders: a stored record, or an engine-local notice with no id.
  * @typedef {Omit<import('./history.js').MessageRecord, 'id'> & { id: string | null }} ViewRecord
  */
-
-const THEME_LABELS = { auto: 'Auto', light: 'Light', dark: 'Dark' };
 
 /** Kinds that are the view's own voice: muted, never in a sender colour. */
 const NOTICE_KINDS = new Set(['entry', 'exit', 'system']);
@@ -76,11 +74,10 @@ export function inkClass(color) {
  *   doc: Document,
  *   win: Window & { addSmilie?: (text: string) => string, enableEmail?: unknown, enableUrl?: unknown },
  *   container: HTMLElement,
- *   theme: import('./theme.js').Theme,
  *   css: string,
  * }} deps
  */
-export function createView({ doc, win, container, theme, css }) {
+export function createView({ doc, win, container, css }) {
   const style = doc.createElement('style');
   style.id = 'tdf-chat-style';
   style.textContent = css;
@@ -90,19 +87,8 @@ export function createView({ doc, win, container, theme, css }) {
   root.id = 'tdf-chat';
   const list = doc.createElement('div');
   list.className = 'tdf-list';
-  const toggle = doc.createElement('button');
-  toggle.type = 'button';
-  toggle.className = 'tdf-theme-toggle';
-  toggle.title = 'Theme: auto → light → dark';
-  toggle.addEventListener('click', () => {
-    theme.cycle().catch((err) => notice(`Theme not saved: ${describeError(err)}`));
-  });
-  root.append(toggle, list);
-
-  theme.onChange((mode) => {
-    toggle.textContent = THEME_LABELS[mode];
-  });
-  theme.attach(root);
+  root.appendChild(list);
+  attachScrollbar(list);
 
   container.insertAdjacentElement('afterend', root);
   container.style.visibility = 'hidden';
@@ -275,10 +261,13 @@ export function createView({ doc, win, container, theme, css }) {
     regroup(next);
   }
 
+  // Live, and counting entries only: the floating scrollbar's thumb is in the list too.
+  const shown = list.getElementsByClassName('tdf-msg');
+
   // The list keeps no more than a replay shows; the oldest entries go first.
   function trim() {
-    while (list.childElementCount > DEFAULT_REPLAY_LIMIT) {
-      remove(/** @type {HTMLElement} */ (list.firstElementChild));
+    while (shown.length > DEFAULT_REPLAY_LIMIT) {
+      remove(/** @type {HTMLElement} */ (shown[0]));
     }
   }
 

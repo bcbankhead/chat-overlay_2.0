@@ -1,7 +1,8 @@
-/* TDF Chat 2.0 theme tokens and message view. Every message uses the UI font at the view's
-   size; only the sender colour is kept, shifted per theme (ink.js) into --tdf-ink-light and
-   --tdf-ink-dark on each line. Rows group by sender (group.js): a tdf-head shows avatar,
-   name and time, a tdf-cont is indented beneath it. */
+/* TDF Chat 2.0 theme tokens, page shell and message view. The theme is data-tdf-theme on
+   <html>, so the page, the composer and every overlay area select from one attribute. Every
+   message uses the UI font at the view's size; only the sender colour is kept, shifted per
+   theme (ink.js) into --tdf-ink-light and --tdf-ink-dark on each line. Rows group by sender
+   (group.js): a tdf-head shows avatar, name and time, a tdf-cont is indented beneath it. */
 
 #tdf-chat {
   --tdf-msg-size: 13px;
@@ -13,9 +14,11 @@
   color: var(--tdf-fg);
   font-family: var(--tdf-ui-font);
   border: 1px solid var(--tdf-border);
+  border-radius: 10px;
+  overflow: hidden;
 }
 
-#tdf-chat[data-theme="light"] {
+:root[data-tdf-theme="light"] {
   --tdf-bg: #ffffff;
   --tdf-fg: #1f2328;
   --tdf-muted: #59636e;
@@ -28,7 +31,7 @@
   --tdf-chip-bg: #2d333b;
 }
 
-#tdf-chat[data-theme="dark"] {
+:root[data-tdf-theme="dark"] {
   --tdf-bg: #16191d;
   --tdf-fg: #e6edf3;
   --tdf-muted: #9198a1;
@@ -39,6 +42,64 @@
   --tdf-link-hover: #0d1117;
   --tdf-link-hover-bg: #58a6ff;
   --tdf-chip-bg: #e6edf3;
+}
+
+/* The engine page: themed background, its background image removed. */
+.body {
+  background-color: #FBFBFF !important;
+  background-image: none !important;
+}
+
+:root[data-tdf-theme="dark"] .body {
+  background-color: #DADAE6 !important;
+}
+
+/* A theme switch cross-fades every colour for 300 ms; theme.js removes the class after, so
+   hovers and slides keep their own timing. It is never added under reduced motion. */
+.tdf-theme-fading,
+.tdf-theme-fading *,
+.tdf-theme-fading *::before,
+.tdf-theme-fading *::after {
+  transition-property: background-color, color, border-color, outline-color, fill, stroke, box-shadow !important;
+  transition-duration: 300ms !important;
+  transition-timing-function: ease !important;
+  transition-delay: 0s !important;
+}
+
+/* Floating scrollbars (shell.js attachScrollbar): the native bar is hidden and a thin thumb
+   is drawn over the content. */
+.tdf-scroll {
+  position: relative;
+  scrollbar-width: none;
+}
+
+.tdf-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.tdf-thumb {
+  position: absolute;
+  top: 0;
+  right: 3px;
+  z-index: 2;
+  width: 6px;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.55);
+  opacity: 0;
+  transition: opacity 300ms ease-out, width 120ms ease-out;
+  cursor: pointer;
+}
+
+.tdf-thumb.visible {
+  opacity: 1;
+  transition: opacity 120ms ease-out, width 120ms ease-out;
+}
+
+/* Wider under the pointer, so it is easy to grab. */
+.tdf-thumb:hover,
+.tdf-thumb.dragging {
+  width: 9px;
+  background: rgba(128, 128, 128, 0.8);
 }
 
 #tdf-chat .tdf-list {
@@ -135,11 +196,11 @@
 }
 
 /* The sender colour, as shifted for this theme; unset means the theme's text colour. */
-#tdf-chat[data-theme="light"] .tdf-line {
+:root[data-tdf-theme="light"] #tdf-chat .tdf-line {
   color: var(--tdf-ink-light, inherit);
 }
 
-#tdf-chat[data-theme="dark"] .tdf-line {
+:root[data-tdf-theme="dark"] #tdf-chat .tdf-line {
   color: var(--tdf-ink-dark, inherit);
 }
 
@@ -222,25 +283,6 @@
 
 #tdf-chat .tdf-body a:has(> img.tdf-posted):hover {
   background: none;
-}
-
-#tdf-chat .tdf-theme-toggle {
-  position: absolute;
-  top: 4px;
-  right: 18px;
-  z-index: 1;
-  font: 11px var(--tdf-ui-font);
-  color: var(--tdf-muted);
-  background: var(--tdf-bg);
-  border: 1px solid var(--tdf-border);
-  border-radius: 10px;
-  padding: 1px 8px;
-  cursor: pointer;
-  opacity: 0.7;
-}
-
-#tdf-chat .tdf-theme-toggle:hover {
-  opacity: 1;
 }
 
 #tdf-chat .tdf-notice {

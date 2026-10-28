@@ -9,7 +9,8 @@ export const DEFAULTS = Object.freeze({
   storeImagesOffline: false,
   likeEmoji: ':h',
   likeIntervalSeconds: 15,
-  theme: /** @type {'auto' | 'light' | 'dark'} */ ('auto'),
+  // The chosen theme; null follows the system until the first toggle.
+  theme: /** @type {'light' | 'dark' | null} */ (null),
 });
 
 /** @typedef {keyof typeof DEFAULTS} SettingKey */

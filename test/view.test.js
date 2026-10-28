@@ -2,47 +2,20 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
 import { DEFAULT_REPLAY_LIMIT } from '../src/core/history.js';
-import { createTheme } from '../src/core/theme.js';
 import { createView } from '../src/core/view.js';
 
-/** In-memory stand-in for the settings accessor. */
-function fakeSettings(initial = {}, { failSet = false } = {}) {
-  const values = { theme: 'auto', ...initial };
-  return {
-    values,
-    async get(key) {
-      return values[key];
-    },
-    async set(key, value) {
-      if (failSet) throw new Error('quota exceeded');
-      values[key] = value;
-    },
-  };
-}
-
-const settle = () => new Promise((r) => setTimeout(r, 10));
-
-async function setup({ dark = false, settings = fakeSettings(), autoScroll = true, globals = {} } = {}) {
+async function setup({ autoScroll = true, globals = {} } = {}) {
   const win = new Window({ url: 'https://example.test/chat/' });
   Object.assign(win, globals);
   const doc = win.document;
   doc.body.innerHTML = `<div id="chatContainer"></div><input type="checkbox" id="autoScrollID" ${autoScroll ? 'checked' : ''}>`;
-  const listeners = [];
-  win.matchMedia = () => ({
-    get matches() {
-      return dark;
-    },
-    addEventListener: (_, fn) => listeners.push(fn),
-  });
   win.addSmilie = (t) => t.split(':h').join('<img src="smilies/heart.gif">');
   const whispered = [];
   win.whisperUser = (name) => whispered.push(name);
-  const theme = createTheme({ win, settings });
-  await theme.load();
   const container = doc.getElementById('chatContainer');
-  const view = createView({ doc, win, container, theme, css: '#tdf-chat{}' });
+  const view = createView({ doc, win, container, css: '#tdf-chat{}' });
   const root = doc.getElementById('tdf-chat');
-  return { win, doc, view, root, container, settings, whispered, flipScheme: (d) => { dark = d; listeners.forEach((fn) => fn()); } };
+  return { win, doc, view, root, container, whispered };
 }
 
 const rec = (over) => ({
@@ -358,38 +331,8 @@ test('clicking a sender name whispers them', async () => {
   assert.equal(root.querySelector('.tdf-user').textContent, 'bob b');
 });
 
-test('theme: auto follows the colour scheme; the toggle cycles and persists', async () => {
-  const { root, settings, flipScheme } = await setup({ dark: true });
-  const toggle = root.querySelector('.tdf-theme-toggle');
-  assert.equal(root.dataset.theme, 'dark');
-  assert.equal(toggle.textContent, 'Auto');
-  flipScheme(false);
-  assert.equal(root.dataset.theme, 'light');
-  toggle.click();
-  await settle();
-  assert.equal(toggle.textContent, 'Light');
-  assert.equal(settings.values.theme, 'light');
-  flipScheme(true); // a fixed mode ignores the scheme
-  assert.equal(root.dataset.theme, 'light');
-  toggle.click();
-  await settle();
-  assert.equal(root.dataset.theme, 'dark');
-  toggle.click();
-  await settle();
-  assert.equal(toggle.textContent, 'Auto');
-  assert.equal(settings.values.theme, 'auto');
-});
-
-test('theme: a stored dark mode loads; an unknown stored value falls back to auto', async () => {
-  const dark = await setup({ settings: fakeSettings({ theme: 'dark' }) });
-  assert.equal(dark.root.dataset.theme, 'dark');
-  const bad = await setup({ settings: fakeSettings({ theme: 'neon' }) });
-  assert.equal(bad.root.querySelector('.tdf-theme-toggle').textContent, 'Auto');
-});
-
-test('theme: a failed save is shown as a notice', async () => {
-  const { root } = await setup({ settings: fakeSettings({}, { failSet: true }) });
-  root.querySelector('.tdf-theme-toggle').click();
-  await settle();
-  assert.equal(root.querySelector('.tdf-notice').textContent, 'Theme not saved: quota exceeded');
+test('the overlay has no theme button of its own', async () => {
+  const { root } = await setup();
+  assert.equal(root.querySelector('.tdf-theme-toggle'), null);
+  assert.equal(root.dataset.theme, undefined);
 });
