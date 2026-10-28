@@ -1,0 +1,30 @@
+/* The engine's composer, textarea#optionsBar, restyled in place. The theme tokens live on
+   #tdf-chat, which the composer is not inside, so index.js copies them onto this rule's
+   selector. The engine's own inline styles (the sender's colour, font, size, bold, italic,
+   underline) are left alone: they preview the message being written. */
+
+#optionsBar[data-tdf-theme] {
+  box-sizing: border-box;
+  background: var(--tdf-bg);
+  border: 1px solid var(--tdf-border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  outline: none;
+  resize: none;
+  caret-color: var(--tdf-fg);
+}
+
+#optionsBar[data-tdf-theme]:focus {
+  border-color: var(--tdf-link);
+}
+
+#optionsBar[data-tdf-theme]::placeholder {
+  color: var(--tdf-muted);
+}
+
+/* A sender colour too close to the theme background keeps its colour on a contrasting
+   ground, as the message view's chip does. */
+#optionsBar[data-tdf-theme="dark"][data-tdf-ink="tdf-ink-dark"],
+#optionsBar[data-tdf-theme="light"][data-tdf-ink="tdf-ink-light"] {
+  background: var(--tdf-chip-bg);
+}

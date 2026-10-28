@@ -40,7 +40,7 @@ function luminance(color) {
  * Theme-independent ink class: which background the sender colour is illegible on.
  * @param {string} color
  */
-function inkClass(color) {
+export function inkClass(color) {
   const l = luminance(color);
   if (l === null) return null;
   if (l < 0.13) return 'tdf-ink-dark'; // under 3:1 against the dark background
