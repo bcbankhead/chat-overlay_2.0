@@ -238,6 +238,10 @@ test('the engine list and room controls are hidden only while the rail works', (
   assert.ok(controls, 'the controls rule is keyed on a working rail');
   assert.deepEqual(controls[1].split(',').map((s) => s.trim()), ['#roomIcon', '#roomCreate', '#roomSelect', '#optionsLogout']);
   assert.match(controls[2], /display: none !important/);
+  const failed = /#tdf-rail\.tdf-rail-failed :is\(([^)]*)\) \{([^}]*)\}/.exec(css);
+  assert.ok(failed, 'a failed rail hides its rooms and Logout');
+  assert.deepEqual(failed[1].split(',').map((s) => s.trim()), ['.tdf-rail-current', '.tdf-rail-others', '.tdf-rail-logout']);
+  assert.match(failed[2], /display: none !important/);
 });
 
 test('the sidebar colours follow the design in both themes, and the flyout width is 418px', () => {
@@ -368,7 +372,7 @@ test('the name menu opens leftward from the pointer and stays in the viewport', 
   await t.teardown();
 });
 
-test('Esc, a press outside it and a scroll close the name menu', async () => {
+test('Esc, a press outside it and a scroll in the rail close the name menu', async () => {
   const t = setup();
   const menu = t.nameMenu('12');
   t.doc.dispatchEvent(new t.win.KeyboardEvent('keydown', { key: 'Escape' }));
@@ -379,6 +383,9 @@ test('Esc, a press outside it and a scroll close the name menu', async () => {
   t.doc.body.dispatchEvent(new t.win.MouseEvent('mousedown', { bubbles: true }));
   assert.equal(menu.hidden, true);
   t.nameMenu('12');
+  t.doc.getElementById('tdf-chat').dispatchEvent(new t.win.Event('scroll'));
+  t.doc.dispatchEvent(new t.win.Event('scroll'));
+  assert.equal(menu.hidden, false, 'the message view\'s autoscroll, or the page\'s, keeps it');
   t.doc.querySelector('.tdf-rail-users').dispatchEvent(new t.win.Event('scroll'));
   assert.equal(menu.hidden, true);
   await t.teardown();
@@ -654,7 +661,10 @@ test('an open panel replaced under its id re-opens; one unregistered closes', as
 
 test('a user list that cannot mount is reported and leaves the engine controls showing', async () => {
   const t = setup({
+    extra: '<div id="roomIcon"></div>',
     prepare: (doc) => {
+      doc.getElementById('userContainer').getBoundingClientRect = () => ({ top: 80, left: 900, width: 236, height: 500 });
+      doc.getElementById('roomIcon').getBoundingClientRect = () => ({ top: 50 });
       Object.defineProperty(doc.getElementById('userContainer'), 'children', {
         get() {
           throw new Error('unreadable');
@@ -665,6 +675,8 @@ test('a user list that cannot mount is reported and leaves the engine controls s
   assert.ok(t.doc.getElementById('tdf-rail').classList.contains('tdf-rail-failed'));
   assert.deepEqual(t.errors(), ['Rail: unreadable']);
   assert.equal(t.doc.querySelector('.tdf-rail-users'), null);
+  const { top, height } = t.doc.getElementById('tdf-rail').style;
+  assert.deepEqual([top, height], ['80px', '500px'], 'no raise over the engine row it re-shows');
   await t.teardown();
   assert.equal(t.doc.getElementById('tdf-rail'), null);
 });
@@ -737,7 +749,10 @@ test('a rail that throws while mounting is marked failed, leaving the engine con
   const consoleError = console.error;
   console.error = (...args) => logged.push(args);
   const t = setup({
+    extra: '<div id="roomIcon"></div>',
     prepare: (doc) => {
+      doc.getElementById('userContainer').getBoundingClientRect = () => ({ top: 80, left: 900, width: 236, height: 500 });
+      doc.getElementById('roomIcon').getBoundingClientRect = () => ({ top: 50 });
       const append = doc.body.appendChild.bind(doc.body);
       doc.body.appendChild = (node) => {
         append(node);
@@ -749,6 +764,10 @@ test('a rail that throws while mounting is marked failed, leaving the engine con
   console.error = consoleError;
   assert.ok(t.doc.getElementById('tdf-rail').classList.contains('tdf-rail-failed'));
   assert.equal(logged[0]?.[1]?.message, 'mount broke');
+  const box = t.doc.querySelector('#tdf-rail .tdf-rail-error');
+  assert.equal(box.hidden, false);
+  assert.equal(box.textContent, 'Rail: mount broke', 'the cause shows in the rail');
+  assert.equal(t.doc.getElementById('tdf-rail').style.top, '80px', 'no raise over the engine row');
   await t.teardown();
   assert.equal(t.doc.getElementById('tdf-rail'), null);
 });

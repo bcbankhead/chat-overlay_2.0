@@ -1,7 +1,8 @@
 // The name menu: a left or right click on a user's name opens it leftward from the pointer,
 // clamped to the viewport. Whisper (or Stop whispering, for the user already whispered to)
 // comes first and replaces the engine's Whisper To field; then the rest of userPanel's
-// engine-gated actions, then registered ones. Esc, a press outside it or a scroll closes it.
+// engine-gated actions, then registered ones. Esc, a press outside it or a scroll inside the
+// rail closes it.
 
 import { listUserMenuActions } from './api.js';
 import { renderIcon } from './icons.js';
@@ -118,9 +119,16 @@ export function createNameMenu({ doc, win, engine, parent, onError }) {
   const onKey = (event) => {
     if (event.key === 'Escape') close();
   };
+  // Only a scroll that moves the rows under it: the message view's autoscroll on every new
+  // message must not close it.
+  /** @param {Event} event */
+  const onScroll = (event) => {
+    const node = /** @type {Node | null} */ (event.target);
+    if (node && parent.contains(node) && !menu.contains(node)) close();
+  };
   doc.addEventListener('mousedown', onPress, true);
   doc.addEventListener('keydown', onKey);
-  doc.addEventListener('scroll', close, true);
+  doc.addEventListener('scroll', onScroll, true);
   win.addEventListener('resize', close);
 
   return {
@@ -130,7 +138,7 @@ export function createNameMenu({ doc, win, engine, parent, onError }) {
       close();
       doc.removeEventListener('mousedown', onPress, true);
       doc.removeEventListener('keydown', onKey);
-      doc.removeEventListener('scroll', close, true);
+      doc.removeEventListener('scroll', onScroll, true);
       win.removeEventListener('resize', close);
       menu.remove();
     },

@@ -49,9 +49,14 @@ body:has(#tdf-rail:not(.tdf-rail-failed)) :is(#roomIcon, #roomCreate, #roomSelec
   border-radius: 10px;
 }
 
-/* A failed rail keeps only its icon row and the failure, over the engine's list. */
+/* A failed rail keeps only its icon row and the failure, over the engine's list; it drops
+   its raise (rail.js), so the engine's room row and Logout it re-shows stay reachable. */
 #tdf-rail.tdf-rail-failed {
   height: auto !important;
+}
+
+#tdf-rail.tdf-rail-failed :is(.tdf-rail-current, .tdf-rail-others, .tdf-rail-logout) {
+  display: none !important;
 }
 
 #tdf-rail button {

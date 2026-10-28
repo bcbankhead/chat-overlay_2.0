@@ -76,10 +76,12 @@ export function mountRail({ doc, win, target, raise = 0, shell }) {
     const next = `${top},${left},${width},${height}`;
     if (next === placed) return;
     placed = next;
-    root.style.top = `${top - raise}px`;
+    // A failed rail re-shows the engine's room row (rail.css), so it no longer covers it.
+    const up = root.classList.contains('tdf-rail-failed') ? 0 : raise;
+    root.style.top = `${top - up}px`;
     root.style.left = `${left}px`;
     root.style.width = `${width}px`;
-    root.style.height = `${height + raise}px`;
+    root.style.height = `${height + up}px`;
   };
   place();
   // Scroll (capture) and resize fire far more often than frames; read the rect once per frame.
@@ -301,6 +303,8 @@ export function mountRail({ doc, win, target, raise = 0, shell }) {
     fail(err) {
       report(err);
       root.classList.add('tdf-rail-failed');
+      placed = '';
+      place();
     },
     /** Remove the rail and everything it attached. */
     destroy() {
@@ -398,10 +402,19 @@ export function startRail({ doc, win, css, shell }) {
     } catch (err) {
       if (rail) rail.fail(err);
       else {
-        // A rail that broke while mounting: keep the engine's controls showing (rail.css).
+        // A rail that broke while mounting: keep the engine's controls showing (rail.css),
+        // drop the raise off their row, and show the cause in its own error box.
         const half = doc.getElementById('tdf-rail');
-        half?.classList.add('tdf-rail-failed');
-        undo.push(() => half?.remove());
+        if (half) {
+          half.classList.add('tdf-rail-failed');
+          half.style.top = `${userContainer.getBoundingClientRect().top}px`;
+          const box = /** @type {HTMLElement | null} */ (half.querySelector('.tdf-rail-error'));
+          if (box) {
+            box.textContent = `Rail: ${describeError(err)}`;
+            box.hidden = false;
+          }
+          undo.push(() => half.remove());
+        }
         console.error('Rail:', err);
       }
     }
