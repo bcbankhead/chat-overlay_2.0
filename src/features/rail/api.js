@@ -12,10 +12,24 @@ import { describeError } from '../../core/errors.js';
  * @typedef {object} RailPanel
  * @property {string} id                 a duplicate id replaces the earlier registration
  * @property {string} title
- * @property {string} icon               short text or emoji shown on the rail button
+ * @property {string} icon               an `<svg` markup string (see icons.js), or short text
  * @property {number} [order]            lower first; default 100
- * @property {(container: HTMLElement) => Cleanup} render          fills the flyout when opened
- * @property {(el: HTMLElement) => Cleanup} [renderRailSlot]       always-visible slot under the button
+ * @property {(container: HTMLElement, arg?: unknown) => Cleanup} render
+ *   fills the flyout when opened; `arg` is what `open(arg)` passed, undefined from a chip click
+ * @property {(el: HTMLElement) => Cleanup} [renderRailSlot]       always-visible slot inside the chip, after the icon
+ */
+
+/**
+ * What `registerRailPanel` returns: call it to unregister; `open(arg?)` shows the panel's
+ * flyout in the mounted rail.
+ * @typedef {(() => void) & { open: (arg?: unknown) => void }} RailPanelHandle
+ */
+
+/**
+ * The mounted rail, as `open` reaches it.
+ * @typedef {object} RailHost
+ * @property {(panel: RailPanel, arg: unknown) => void} open  only ever given a registered panel
+ * @property {(err: unknown) => void} report
  */
 
 /**
@@ -42,6 +56,8 @@ const panels = new Map();
 const actions = new Map();
 /** @type {Map<() => void, (err: unknown) => void>} listener → where its failures go */
 const listeners = new Map();
+/** @type {RailHost | null} installed by the rail while it is mounted */
+let host = null;
 
 // A failing listener neither skips the rest nor throws out of the registering caller, whose
 // registration has already gone through.
@@ -88,11 +104,34 @@ function sorted(map) {
 /**
  * Add a panel to the rail.
  * @param {RailPanel} panel
- * @returns {() => void} unregister
+ * @returns {RailPanelHandle} unregister, carrying `open(arg?)`
  */
 export function registerRailPanel(panel) {
   if (typeof panel?.render !== 'function') throw new TypeError('rail panel needs a render function');
-  return register(panels, panel, 'rail panel');
+  const unregister = register(panels, panel, 'rail panel');
+  const { id } = panel;
+  // Before the rail mounts there is nowhere to show it, and nowhere to say so.
+  const open = (/** @type {unknown} */ arg) => {
+    if (!host) return;
+    if (panels.get(id)?.item !== panel) {
+      host.report(new Error(`rail panel ${id} is no longer registered`));
+      return;
+    }
+    host.open(panel, arg);
+  };
+  return Object.assign(unregister, { open });
+}
+
+/**
+ * Called by the rail on mount; `open` handles reach it until the returned function runs.
+ * @param {RailHost} rail
+ * @returns {() => void} uninstall
+ */
+export function installRailHost(rail) {
+  host = rail;
+  return () => {
+    if (host === rail) host = null;
+  };
 }
 
 /**

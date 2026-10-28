@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { listPanels, listUserMenuActions, onRegistryChange, registerRailPanel, registerUserMenuAction } from './api.js';
+import {
+  installRailHost,
+  listPanels,
+  listUserMenuActions,
+  onRegistryChange,
+  registerRailPanel,
+  registerUserMenuAction,
+} from './api.js';
 
 const panel = (id, order) => ({ id, title: id, icon: id[0], order, render() {} });
 const action = (id, order, isVisible) => ({ id, label: id, order, isVisible, run() {} });
@@ -71,4 +78,49 @@ test('a throwing listener goes to its own sink, and neither skips the rest nor f
   offA();
   off();
   offB();
+});
+
+test('registerRailPanel returns the unregister function carrying open(arg?)', () => {
+  const handle = registerRailPanel(panel('h'));
+  assert.equal(typeof handle, 'function');
+  assert.equal(typeof handle.open, 'function');
+  handle();
+  assert.deepEqual(listPanels(), []);
+});
+
+test('open reaches the installed rail with its id and arg; before a rail, it does nothing', () => {
+  const handle = registerRailPanel(panel('o'));
+  handle.open('early');
+  const opened = [];
+  const reported = [];
+  const uninstall = installRailHost({ open: (p, arg) => opened.push([p.id, arg]), report: (e) => reported.push(e.message) });
+  handle.open({ n: 1 });
+  handle.open();
+  assert.deepEqual(opened, [['o', { n: 1 }], ['o', undefined]]);
+  uninstall();
+  handle.open('late');
+  assert.equal(opened.length, 2);
+  assert.deepEqual(reported, []);
+  handle();
+});
+
+test('a replaced or unregistered handle reports instead of opening', () => {
+  const opened = [];
+  const reported = [];
+  const uninstall = installRailHost({ open: (p) => opened.push(p.id), report: (e) => reported.push(e.message) });
+  const old = registerRailPanel(panel('r'));
+  const current = registerRailPanel(panel('r'));
+  old.open();
+  current();
+  current.open();
+  assert.deepEqual(opened, []);
+  assert.deepEqual(reported, ['rail panel r is no longer registered', 'rail panel r is no longer registered']);
+  // A stale uninstall leaves a newer rail installed.
+  const uninstallNew = installRailHost({ open: (p) => opened.push(p.id), report() {} });
+  uninstall();
+  const fresh = registerRailPanel(panel('f'));
+  fresh.open();
+  assert.deepEqual(opened, ['f']);
+  fresh();
+  uninstallNew();
 });

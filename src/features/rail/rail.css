@@ -1,84 +1,100 @@
 /* TDF Chat 2.0 control rail. Mounted inside #tdf-chat, so every colour is one of its theme
    tokens (src/core/theme.css); no literal colours here. */
 
-/* The engine's panel stays in the DOM, still patched by the poll; it is hidden only while
-   a working rail exists, so a failed start, or a rail whose Users panel failed to mount,
-   leaves the original panel showing. resizeDivs writes only inline width/height, which
-   cannot override this. */
+/* The engine's panel stays in the DOM, still sized by resizeDivs and patched by the poll;
+   it is hidden only while a working rail covers its box, so a failed start, or a rail whose
+   user list failed to mount, leaves the original panel showing. visibility, not display,
+   so the engine keeps laying it out and the rail can copy its rect. */
 body:has(#tdf-rail:not(.tdf-rail-failed)) #userContainer {
-  display: none !important;
+  visibility: hidden !important;
 }
 
+/* top/left/width/height are copied from #userContainer's rect by rail.js. */
 #tdf-rail {
   position: fixed;
-  top: 8px;
-  right: 8px;
   z-index: 10;
   display: flex;
-  align-items: flex-start;
-  gap: 6px;
+  flex-direction: column;
+  box-sizing: border-box;
   font: 13px var(--tdf-ui-font);
   color: var(--tdf-fg);
-}
-
-#tdf-rail .tdf-rail-column {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 4px;
   background: var(--tdf-bg);
-  border: 1px solid var(--tdf-border);
-  border-radius: 8px;
+  border-left: 1px solid var(--tdf-border);
 }
 
-#tdf-rail .tdf-rail-item {
+/* A failed rail keeps only its header and the failure, over the top of the engine panel. */
+#tdf-rail.tdf-rail-failed {
+  height: auto !important;
+}
+
+#tdf-rail .tdf-rail-header {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
+  padding: 6px;
+  border-bottom: 1px solid var(--tdf-border);
 }
 
-#tdf-rail .tdf-rail-button {
-  width: 32px;
-  height: 32px;
+#tdf-rail .tdf-rail-chips {
+  display: contents;
+}
+
+#tdf-rail .tdf-rail-icon {
+  display: inline-flex;
   font-size: 16px;
   line-height: 1;
+}
+
+#tdf-rail .tdf-rail-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+#tdf-rail .tdf-rail-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  font: inherit;
   color: var(--tdf-fg);
   background: transparent;
-  border: 1px solid transparent;
+  border: 1px solid var(--tdf-border);
   border-radius: 6px;
   cursor: pointer;
 }
 
-#tdf-rail .tdf-rail-button:hover,
-#tdf-rail .tdf-rail-button[aria-expanded="true"] {
+#tdf-rail .tdf-rail-chip[hidden] {
+  display: none;
+}
+
+#tdf-rail .tdf-rail-chip:disabled {
+  color: var(--tdf-muted);
+  cursor: default;
+}
+
+#tdf-rail .tdf-rail-chip:not(:disabled):hover,
+#tdf-rail .tdf-rail-chip[aria-expanded="true"] {
   background: var(--tdf-hover-bg);
-  border-color: var(--tdf-border);
+}
+
+#tdf-rail .tdf-rail-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 #tdf-rail .tdf-rail-slot:empty {
   display: none;
 }
 
-#tdf-rail .tdf-rail-side {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: 280px;
-  /* Empty while nothing is open; it must not block the page beneath it. */
-  pointer-events: none;
-}
-
-#tdf-rail .tdf-rail-side > * {
-  pointer-events: auto;
-}
-
 #tdf-rail .tdf-rail-error {
   padding: 6px 10px;
-  background: var(--tdf-bg);
-  border: 1px solid var(--tdf-border);
-  border-left-width: 3px;
-  border-radius: 8px;
+  border-bottom: 1px solid var(--tdf-border);
+  border-left: 3px solid var(--tdf-border);
   cursor: pointer;
 }
 
@@ -86,14 +102,34 @@ body:has(#tdf-rail:not(.tdf-rail-failed)) #userContainer {
   display: none;
 }
 
+/* The always-visible list: room heading, users (scrolling), other rooms. */
+#tdf-rail .tdf-rail-docked {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+#tdf-rail .tdf-rail-room-name {
+  padding: 6px 10px 2px;
+  font-weight: 600;
+}
+
+#tdf-rail .tdf-rail-room-name[hidden] {
+  display: none;
+}
+
 #tdf-rail .tdf-rail-flyout {
-  width: 100%;
-  max-height: calc(100vh - 16px);
+  position: absolute;
+  top: 0;
+  right: 100%;
+  width: 280px;
+  max-height: 100%;
   overflow-y: auto;
   box-sizing: border-box;
   background: var(--tdf-bg);
   border: 1px solid var(--tdf-border);
-  border-radius: 8px;
+  border-radius: 8px 0 0 8px;
 }
 
 #tdf-rail .tdf-rail-flyout[hidden] {
@@ -106,25 +142,14 @@ body:has(#tdf-rail:not(.tdf-rail-failed)) #userContainer {
   border-bottom: 1px solid var(--tdf-border);
 }
 
-#tdf-rail .tdf-rail-header {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--tdf-border);
-}
-
 #tdf-rail .tdf-rail-field {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
   color: var(--tdf-muted);
 }
 
 #tdf-rail select {
-  flex: 1;
-  max-width: 190px;
   font: inherit;
   color: var(--tdf-fg);
   background: var(--tdf-bg);
@@ -133,14 +158,19 @@ body:has(#tdf-rail:not(.tdf-rail-failed)) #userContainer {
 }
 
 #tdf-rail .tdf-rail-users {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   list-style: none;
   margin: 0;
   padding: 4px 0;
 }
 
 #tdf-rail .tdf-rail-user-name,
-#tdf-rail .tdf-rail-action {
+#tdf-rail .tdf-rail-action,
+#tdf-rail .tdf-rail-rooms-toggle {
   display: flex;
+  align-items: center;
   width: 100%;
   gap: 6px;
   padding: 4px 10px;
@@ -154,6 +184,7 @@ body:has(#tdf-rail:not(.tdf-rail-failed)) #userContainer {
 
 #tdf-rail .tdf-rail-user-name:hover,
 #tdf-rail .tdf-rail-action:hover,
+#tdf-rail .tdf-rail-rooms-toggle:hover,
 #tdf-rail .tdf-rail-user-name[aria-expanded="true"] {
   background: var(--tdf-hover-bg);
 }
@@ -166,6 +197,45 @@ body:has(#tdf-rail:not(.tdf-rail-failed)) #userContainer {
   padding: 2px 0 4px 14px;
   border-left: 2px solid var(--tdf-border);
   margin-left: 10px;
+}
+
+#tdf-rail .tdf-rail-rooms {
+  border-top: 1px solid var(--tdf-border);
+}
+
+#tdf-rail .tdf-rail-rooms-toggle {
+  color: var(--tdf-muted);
+}
+
+#tdf-rail .tdf-rail-caret svg {
+  width: 14px;
+  height: 14px;
+  transform: rotate(-90deg);
+}
+
+#tdf-rail .tdf-rail-rooms-toggle[aria-expanded="true"] .tdf-rail-caret svg {
+  transform: none;
+}
+
+#tdf-rail .tdf-rail-room-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 10px 8px;
+}
+
+#tdf-rail .tdf-rail-room {
+  padding: 2px 8px;
+  font: inherit;
+  color: var(--tdf-fg);
+  background: transparent;
+  border: 1px solid var(--tdf-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+#tdf-rail .tdf-rail-room:hover {
+  background: var(--tdf-hover-bg);
 }
 
 #tdf-rail .tdf-rail-empty {
