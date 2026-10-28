@@ -73,13 +73,36 @@ test('the column copies #userContainer\'s rect, and follows it on resize and scr
   assert.deepEqual(style(), ['40px', '900px', '236px', '500px']);
   rect = { top: 40, left: 700, width: 236, height: 300 };
   t.win.dispatchEvent(new t.win.Event('resize'));
+  await nextFrame();
   assert.deepEqual(style(), ['40px', '700px', '236px', '300px']);
   rect = { top: 10, left: 700, width: 236, height: 300 };
   t.doc.dispatchEvent(new t.win.Event('scroll'));
+  await nextFrame();
   assert.deepEqual(style(), ['10px', '700px', '236px', '300px']);
   await t.teardown();
   rect = { top: 0, left: 0, width: 1, height: 1 };
   t.win.dispatchEvent(new t.win.Event('resize'));
+});
+
+test('a burst of scrolls reads the rect once per frame, and an unchanged rect writes nothing', async () => {
+  let reads = 0;
+  const rect = { top: 40, left: 900, width: 236, height: 500 };
+  const t = setup({
+    prepare: (doc) => {
+      doc.getElementById('userContainer').getBoundingClientRect = () => {
+        reads++;
+        return rect;
+      };
+    },
+  });
+  const root = t.doc.getElementById('tdf-rail');
+  reads = 0;
+  for (let i = 0; i < 10; i++) t.doc.dispatchEvent(new t.win.Event('scroll'));
+  root.style.top = '1px';
+  await nextFrame();
+  assert.equal(reads, 1);
+  assert.equal(root.style.top, '1px', 'the same rect is not written again');
+  await t.teardown();
 });
 
 test('the engine panel is hidden with visibility, not display, and only while the rail works', () => {
@@ -375,8 +398,7 @@ test('engine and registered-action failures are shown in the rail with their cau
   t.doc.querySelector('.tdf-rail-profile').click();
   assert.deepEqual(t.errors(), [
     'Rail: user menu action odd: no idea',
-    'Rail: the chat engine has no viewProfile()',
-    'Rail: the chat engine has no viewProfile()',
+    'Rail: the chat engine has no viewProfile() (×2)',
   ]);
   t.doc.querySelector('.tdf-rail-error').click();
   assert.equal(t.doc.querySelector('.tdf-rail-error').hidden, true);
@@ -482,5 +504,103 @@ test('a status the engine is too busy to send is reported and the picker stays o
   assert.deepEqual(t.calls, []);
   assert.deepEqual(t.errors(), ['Rail: the chat engine is busy sending; the status was not changed']);
   assert.equal(t.doc.querySelector('.tdf-rail-status').value, '1');
+  await t.teardown();
+});
+
+test('a panel with a bad icon is reported and the rest of the rail still mounts', async () => {
+  const off = registerRailPanel({ id: 'bad-icon', title: 'Bad', icon: /** @type {any} */ (42), render() {} });
+  const t = setup();
+  assert.equal(t.doc.getElementById('tdf-rail').classList.contains('tdf-rail-failed'), false);
+  assert.deepEqual(t.users(), ['me', 'Alice']);
+  assert.equal(t.errors().length, 1);
+  assert.deepEqual(t.chips(), []);
+  const offGood = registerRailPanel({ id: 'good', title: 'Good', icon: 'G', render() {} });
+  assert.deepEqual(t.chips(), ['good'], 'a good panel still gets its chip');
+  offGood();
+  off();
+  await t.teardown();
+});
+
+test('a rail that throws while mounting is marked failed, leaving the engine panel showing', async () => {
+  const logged = [];
+  const consoleError = console.error;
+  console.error = (...args) => logged.push(args);
+  const t = setup({
+    prepare: (doc) => {
+      const host = doc.getElementById('tdf-chat');
+      const append = host.appendChild.bind(host);
+      host.appendChild = (node) => {
+        append(node);
+        throw new Error('mount broke');
+      };
+    },
+  });
+  console.error = consoleError;
+  assert.ok(t.doc.getElementById('tdf-rail').classList.contains('tdf-rail-failed'));
+  assert.equal(logged[0]?.[1]?.message, 'mount broke');
+  await t.teardown();
+  assert.equal(t.doc.getElementById('tdf-rail'), null);
+});
+
+test('the status select survives an unrelated store change, and the focused row keeps focus', async () => {
+  const t = setup();
+  const select = t.doc.querySelector('.tdf-rail-status');
+  const toggle = () => t.doc.querySelector('.tdf-rail-user[data-uuid="12"] .tdf-rail-user-name');
+  toggle().click();
+  toggle().focus();
+  t.doc.getElementById('room_1').insertAdjacentHTML('beforeend', row('20', 'Carol', '1'));
+  await nextFrame();
+  assert.deepEqual(t.users(), ['me', 'Alice', 'Carol']);
+  assert.equal(t.doc.querySelector('.tdf-rail-status'), select);
+  assert.equal(t.doc.activeElement, toggle());
+  assert.equal(toggle().getAttribute('aria-expanded'), 'true');
+  await t.teardown();
+});
+
+test('a user-menu action icon renders SVG as markup and text as text', async () => {
+  const t = setup();
+  const offs = [
+    registerUserMenuAction({ id: 'pic', label: 'Pictures', icon: ICONS.image, run() {} }),
+    registerUserMenuAction({ id: 'txt', label: 'Text', icon: '<b>x</b>', run() {} }),
+  ];
+  t.doc.querySelector('.tdf-rail-user[data-uuid="12"] .tdf-rail-user-name').click();
+  const pic = t.doc.querySelector('[data-action="pic"]');
+  assert.ok(pic.querySelector('.tdf-rail-icon svg'));
+  assert.equal(pic.textContent, 'Pictures');
+  const txt = t.doc.querySelector('[data-action="txt"]');
+  assert.equal(txt.querySelector('.tdf-rail-icon').textContent, '<b>x</b>');
+  assert.equal(txt.querySelector('b'), null);
+  offs.forEach((off) => off());
+  await t.teardown();
+});
+
+test('a repeated failure bumps the count on its line, and the box keeps only the latest lines', async () => {
+  const t = setup();
+  const off = registerRailPanel({ id: 'e', title: 'E', icon: 'E', render: () => { throw new Error('again'); } });
+  for (let i = 0; i < 3; i++) {
+    t.chip('e').click();
+    t.chip('e').click();
+  }
+  assert.deepEqual(t.errors(), ['Rail: again (×3)']);
+  off();
+  let n = 0;
+  const offMany = registerRailPanel({ id: 'm', title: 'M', icon: 'M', render: () => { throw new Error(`fail ${n++}`); } });
+  for (let i = 0; i < 30; i++) {
+    t.chip('m').click();
+    t.chip('m').click();
+  }
+  assert.equal(t.errors().length, 20);
+  assert.equal(t.errors().at(-1), 'Rail: fail 29');
+  offMany();
+  await t.teardown();
+});
+
+test('a room with no name is labelled by its id', async () => {
+  const t = setup({
+    prepare: (doc) => {
+      doc.querySelector('#room_1 .roomheader span').innerHTML = '<img>&nbsp;&nbsp;';
+    },
+  });
+  assert.equal(t.doc.querySelector('.tdf-rail-room-name').textContent, '1 (2)');
   await t.teardown();
 });

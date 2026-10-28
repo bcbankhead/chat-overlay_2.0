@@ -1,7 +1,7 @@
 // The rail's only contact with the engine's page globals: the flags userPanel gates on, and
 // the functions its menu calls. Everything else in the rail goes through here.
 
-import { safeDecodeURI } from './rowParse.js';
+import { safeDecodeURI } from '../../core/parse.js';
 
 /** Engine functions a menu action may call (userlist.js.php userPanel's onclick handlers). */
 const CALLABLE = new Set([

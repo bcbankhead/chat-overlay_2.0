@@ -4,6 +4,8 @@
 // Identity comes from row children and the room ancestor, never from the row id, which
 // concatenates uuID and roomID with no separator (TDF-0009.3 Locked decisions).
 
+import { safeDecodeURI } from '../../core/parse.js';
+
 /**
  * One user in the engine's list, as `userPanel(...)` receives it (userlist.js.php:351).
  * @typedef {object} RailUser
@@ -29,19 +31,6 @@
 
 /** `userPanel` argument order (userlist.js.php:74, :78). */
 const ARG_COUNT = 8;
-
-/**
- * `decodeURI`, as the engine applies it to names and labels, without throwing.
- * @param {string} text
- */
-export function safeDecodeURI(text) {
-  try {
-    return decodeURI(text);
-  } catch {
-    // A malformed sequence (URIError) is shown raw, as the engine's own text would be.
-    return text;
-  }
-}
 
 /**
  * The string arguments of an `onclick="userPanel(...)"` attribute, or null.

@@ -2,7 +2,7 @@
 // a list of engine calls, made by engine.js, with the exact arguments the engine's own
 // onclick handlers pass — so behaviour matches the original panel.
 
-import { safeDecodeURI } from './rowParse.js';
+import { safeDecodeURI } from '../../core/parse.js';
 
 /**
  * An engine call: function name, then its arguments.

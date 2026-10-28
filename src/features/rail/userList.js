@@ -3,6 +3,7 @@
 // registered ones.
 
 import { listUserMenuActions, onRegistryChange } from './api.js';
+import { renderIcon } from './icons.js';
 import { builtInActions } from './menuModel.js';
 import { readRooms } from './rowParse.js';
 import { renderOtherRooms, roomLabel } from './roomPicker.js';
@@ -97,6 +98,19 @@ export function createDockedList({ doc, engine, store, onError }) {
     let expanded = null;
     // Collapsed on every load (B3), kept across re-renders.
     let roomsOpen = false;
+    /** @type {HTMLSelectElement | null} */
+    let picker = null;
+    let pickerStatuses = '';
+
+    /**
+     * Identifies a control in the list across re-renders, so focus can be given back.
+     * @param {Element} el
+     */
+    function controlKey(el) {
+      const node = /** @type {HTMLElement} */ (el);
+      const user = /** @type {HTMLElement | null} */ (node.closest('.tdf-rail-user'));
+      return `${user?.dataset.uuid ?? ''}|${node.dataset.action ?? node.dataset.room ?? node.className}`;
+    }
 
     function render() {
       const rooms = store.rooms();
@@ -106,8 +120,10 @@ export function createDockedList({ doc, engine, store, onError }) {
       const own = room?.users.find((u) => u.uuID === engine.uID());
       const status = chosenStatus ?? engine.selectedStatus() ?? (own && statusFromText(own.statusText, statuses)) ?? 1;
 
-      slots.status.replaceChildren(
-        renderStatusPicker({
+      // Rebuilt only when the choices change, so a store update leaves an open dropdown alone.
+      const statusKey = JSON.stringify(statuses);
+      if (!picker || statusKey !== pickerStatuses) {
+        const field = renderStatusPicker({
           doc,
           statuses,
           current: status,
@@ -119,8 +135,16 @@ export function createDockedList({ doc, engine, store, onError }) {
             });
             render();
           },
-        }),
-      );
+        });
+        slots.status.replaceChildren(field);
+        picker = field.querySelector('select');
+        pickerStatuses = statusKey;
+      } else if (picker.value !== String(status)) {
+        picker.value = String(status);
+      }
+
+      const active = doc.activeElement;
+      const focused = active && active !== doc.body && slots.list.contains(active) ? controlKey(active) : null;
 
       const heading = doc.createElement('div');
       heading.className = 'tdf-rail-room-name';
@@ -149,6 +173,10 @@ export function createDockedList({ doc, engine, store, onError }) {
         onPick: (id) => attempt(() => engine.changeRooms(id)),
       });
       slots.list.replaceChildren(heading, list, others);
+      if (focused) {
+        const again = [...slots.list.querySelectorAll('button')].find((b) => controlKey(b) === focused);
+        again?.focus();
+      }
     }
 
     /** @param {import('./rowParse.js').RailUser} user */
@@ -183,14 +211,10 @@ export function createDockedList({ doc, engine, store, onError }) {
       const menu = doc.createElement('div');
       menu.className = 'tdf-rail-menu';
       menu.setAttribute('role', 'menu');
-      /** @type {{ id: string, label: string, run: () => void }[]} */
+      /** @type {{ id: string, label: string, icon?: string, run: () => void }[]} */
       const items = [
         ...builtInActions(user, engine.flags()).map((a) => ({ id: a.id, label: a.label, run: () => engine.call(a.calls) })),
-        ...listUserMenuActions(user, onError).map((a) => ({
-          id: a.id,
-          label: a.icon ? `${a.icon} ${a.label}` : a.label,
-          run: () => a.run(user),
-        })),
+        ...listUserMenuActions(user, onError).map((a) => ({ id: a.id, label: a.label, icon: a.icon, run: () => a.run(user) })),
       ];
       for (const item of items) {
         const button = doc.createElement('button');
@@ -198,7 +222,13 @@ export function createDockedList({ doc, engine, store, onError }) {
         button.className = 'tdf-rail-action';
         button.setAttribute('role', 'menuitem');
         button.dataset.action = item.id;
-        button.textContent = item.label;
+        if (item.icon) {
+          const icon = doc.createElement('span');
+          icon.className = 'tdf-rail-icon';
+          renderIcon(icon, item.icon);
+          button.appendChild(icon);
+        }
+        button.append(item.label);
         button.addEventListener('click', () => {
           // The engine closes its panel after an action; the accordion does the same.
           expanded = null;

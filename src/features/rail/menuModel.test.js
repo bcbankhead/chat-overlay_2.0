@@ -99,6 +99,16 @@ test('an admin also gets silence, kick, ban and IP on others, and the admin area
   assert.deepEqual(ids(builtInActions({ ...user, uuID: '7' }, flags({ admin: 1, moderatedChat: '1' }))), ['profile', 'admin-area', 'moderated-chat']);
 });
 
+test('a moderator gets silence, kick, ban and IP on others, and moderated chat but not the admin area on themself', () => {
+  const actions = builtInActions(user, flags({ moderator: 1 }));
+  assert.deepEqual(ids(actions).slice(-4), ['silence', 'kick', 'ban', 'ip']);
+  assert.deepEqual(find(actions, 'ban').calls, [['adminControls', 'Alice%20Smith', 'BAN']]);
+  assert.deepEqual(find(actions, 'ip').calls, [['newWin', 'http://www.infosniper.net/index.php?ip_address=10.0.0.1']]);
+  const own = builtInActions({ ...user, uuID: '7' }, flags({ moderator: 1, moderatedChat: '1' }));
+  assert.deepEqual(ids(own), ['profile', 'moderated-chat']);
+  assert.deepEqual(find(own, 'moderated-chat').calls, [['showInfoBox', 'mc', '400', '600', '100', 'plugins/moderated_chat/index.php', '']]);
+});
+
 test('a room owner gets silence and kick but not ban or IP', () => {
   const actions = ids(builtInActions(user, flags({ roomOwner: 1 })));
   assert.ok(actions.includes('silence') && actions.includes('kick'));
@@ -110,6 +120,14 @@ test('share files and webcam follow their own engine gates', () => {
   assert.deepEqual(ids(actions), ['private', 'whisper', 'webcam', 'profile', 'share', 'block', 'unblock', 'report']);
   assert.deepEqual(find(actions, 'webcam').calls, [['requestViewWebcam', 'Alice%20Smith']]);
   assert.deepEqual(find(builtInActions(user, flags({ webcamsOn: 1, groupWatch: 0 })), 'webcam').calls[0][0], 'showInfoBox');
+  assert.deepEqual(find(actions, 'share').calls, [
+    ['showInfoBox', 'shareFiles', '280', '300', '200', 'plugins/share/?shareWithUser=Alice%20Smith', ''],
+  ]);
+});
+
+test('webcam gets the eCredits notice when credits are on and empty', () => {
+  const actions = builtInActions(user, flags({ webcamsOn: 1, eCredits: 1, noCredits: true }));
+  assert.deepEqual(find(actions, 'webcam').calls, [['showInfoBox', 'system', '220', '300', '200', '', 'You do not have any eCredits']]);
 });
 
 test('clear whisper appears whenever a whisper target is set', () => {

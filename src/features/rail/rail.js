@@ -11,6 +11,8 @@ import { renderIcon } from './icons.js';
 import { createProfileChip } from './profileChip.js';
 import { createDockedList, createUserStore } from './userList.js';
 
+const MAX_ERRORS = 20;
+
 /**
  * @param {{ doc: Document, win: Window, host: HTMLElement, target: HTMLElement }} deps
  *   host is #tdf-chat, so the rail inherits its theme tokens; target is #userContainer,
@@ -47,14 +49,28 @@ export function mountRail({ doc, win, host, target }) {
   host.appendChild(root);
 
   // #tdf-rail is position:fixed, so the viewport rect is the one to copy (B1).
-  const track = () => {
-    const rect = target.getBoundingClientRect();
-    root.style.top = `${rect.top}px`;
-    root.style.left = `${rect.left}px`;
-    root.style.width = `${rect.width}px`;
-    root.style.height = `${rect.height}px`;
+  let placed = '';
+  const place = () => {
+    const { top, left, width, height } = target.getBoundingClientRect();
+    const next = `${top},${left},${width},${height}`;
+    if (next === placed) return;
+    placed = next;
+    root.style.top = `${top}px`;
+    root.style.left = `${left}px`;
+    root.style.width = `${width}px`;
+    root.style.height = `${height}px`;
   };
-  track();
+  place();
+  // Scroll (capture) and resize fire far more often than frames; read the rect once per frame.
+  /** @type {number | null} */
+  let frame = null;
+  const track = () => {
+    if (frame !== null) return;
+    frame = win.requestAnimationFrame(() => {
+      frame = null;
+      place();
+    });
+  };
   const resizeObserver = typeof win.ResizeObserver === 'function' ? new win.ResizeObserver(track) : null;
   resizeObserver?.observe(target);
   win.addEventListener('resize', track);
@@ -62,12 +78,20 @@ export function mountRail({ doc, win, host, target }) {
 
   /**
    * Show a failure in the rail itself, with its cause; every failure is kept until dismissed.
+   * A repeat of one already shown bumps its count, and only the latest MAX_ERRORS are kept,
+   * so a persistent failure cannot grow the box without bound.
    * @param {unknown} err
    */
   function report(err) {
-    const line = doc.createElement('div');
-    line.textContent = `Rail: ${describeError(err)}`;
+    const message = `Rail: ${describeError(err)}`;
+    const seen = [...errors.children].find((l) => /** @type {HTMLElement} */ (l).dataset.message === message);
+    const line = /** @type {HTMLElement} */ (seen ?? doc.createElement('div'));
+    const count = Number(line.dataset.count ?? 0) + 1;
+    line.dataset.message = message;
+    line.dataset.count = String(count);
+    line.textContent = count > 1 ? `${message} (×${count})` : message;
     errors.appendChild(line);
+    while (errors.children.length > MAX_ERRORS) errors.firstElementChild?.remove();
     errors.hidden = false;
   }
 
@@ -121,38 +145,41 @@ export function mountRail({ doc, win, host, target }) {
     slotCleanups = [];
     chips.replaceChildren();
     const panels = listPanels();
-    for (const panel of panels) {
-      const chip = doc.createElement('button');
-      chip.type = 'button';
-      chip.className = 'tdf-rail-chip';
-      chip.dataset.panel = panel.id;
-      chip.title = panel.title;
-      chip.setAttribute('aria-label', panel.title);
-      chip.setAttribute('aria-expanded', String(open?.panel === panel));
-      const icon = doc.createElement('span');
-      icon.className = 'tdf-rail-icon';
-      renderIcon(icon, panel.icon);
-      chip.appendChild(icon);
-      chip.addEventListener('click', () => {
-        if (open?.panel === panel) close();
-        else show(panel);
-      });
-      if (panel.renderRailSlot) {
-        const slot = doc.createElement('span');
-        slot.className = 'tdf-rail-slot';
-        chip.appendChild(slot);
-        const render = panel.renderRailSlot;
-        const cleanup = guarded(() => render(slot));
-        if (typeof cleanup === 'function') slotCleanups.push(cleanup);
-      }
-      chips.appendChild(chip);
-    }
+    for (const panel of panels) guarded(() => renderChip(panel));
     // An open panel that was unregistered closes; one replaced under its id re-opens.
     if (open && !panels.includes(open.panel)) {
       const replacement = panels.find((p) => p.id === open?.panel.id);
       if (replacement) show(replacement, open.arg);
       else close();
     }
+  }
+
+  /** @param {import('./api.js').RailPanel} panel */
+  function renderChip(panel) {
+    const chip = doc.createElement('button');
+    chip.type = 'button';
+    chip.className = 'tdf-rail-chip';
+    chip.dataset.panel = panel.id;
+    chip.title = panel.title;
+    chip.setAttribute('aria-label', panel.title);
+    chip.setAttribute('aria-expanded', String(open?.panel === panel));
+    const icon = doc.createElement('span');
+    icon.className = 'tdf-rail-icon';
+    renderIcon(icon, panel.icon);
+    chip.appendChild(icon);
+    chip.addEventListener('click', () => {
+      if (open?.panel === panel) close();
+      else show(panel);
+    });
+    if (panel.renderRailSlot) {
+      const slot = doc.createElement('span');
+      slot.className = 'tdf-rail-slot';
+      chip.appendChild(slot);
+      const render = panel.renderRailSlot;
+      const cleanup = guarded(() => render(slot));
+      if (typeof cleanup === 'function') slotCleanups.push(cleanup);
+    }
+    chips.appendChild(chip);
   }
 
   /** @param {KeyboardEvent} event */
@@ -191,6 +218,7 @@ export function mountRail({ doc, win, host, target }) {
       uninstall();
       unsubscribe();
       resizeObserver?.disconnect();
+      if (frame !== null) win.cancelAnimationFrame(frame);
       win.removeEventListener('resize', track);
       win.removeEventListener('scroll', track, true);
       doc.removeEventListener('keydown', onKey);
@@ -230,14 +258,18 @@ export function startRail({ doc, win, css }) {
       style.textContent = css;
       doc.head.appendChild(style);
     }
-    const rail = mountRail({ doc, win, host, target: userContainer });
     /** @type {Array<() => void>} undone in reverse */
-    const undo = [() => rail.destroy()];
+    const undo = [];
     teardown = () => {
       for (const fn of undo.reverse()) fn();
       teardown = null;
     };
+    /** @type {ReturnType<typeof mountRail> | null} */
+    let rail = null;
     try {
+      rail = mountRail({ doc, win, host, target: userContainer });
+      const mounted = rail;
+      undo.push(() => mounted.destroy());
       const engine = createEngine(win, doc);
       const store = createUserStore(win, userContainer, rail.report);
       undo.push(() => store.disconnect());
@@ -247,7 +279,14 @@ export function startRail({ doc, win, css }) {
       undo.push(profile.destroy);
       undo.push(createDockedList(deps)({ status: rail.slots.status, list: rail.slots.list }));
     } catch (err) {
-      rail.fail(err);
+      if (rail) rail.fail(err);
+      else {
+        // A rail that broke while mounting: keep the engine's panel showing (rail.css).
+        const half = doc.getElementById('tdf-rail');
+        half?.classList.add('tdf-rail-failed');
+        undo.push(() => half?.remove());
+        console.error('Rail:', err);
+      }
     }
   };
 
