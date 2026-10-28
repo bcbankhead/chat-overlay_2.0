@@ -19,7 +19,6 @@ const flags = (over = {}) => ({
   uID: 7,
   userName: 'me',
   privateOn: 1,
-  whisperOn: 1,
   webcamsOn: 0,
   profileOn: 1,
   profileRef: 2,
@@ -34,7 +33,6 @@ const flags = (over = {}) => ({
   moderatedChat: 0,
   styleFolder: 'default',
   intelliBotName: 'Intelli-bot',
-  whispering: false,
   lang: {},
   ...over,
 });
@@ -42,11 +40,10 @@ const flags = (over = {}) => ({
 const ids = (actions) => actions.map((a) => a.id);
 const find = (actions, id) => actions.find((a) => a.id === id);
 
-test('a member sees private chat, whisper, profile, block, unblock and report on another user', () => {
+test('a member sees private chat, profile, block, unblock and report on another user', () => {
   const actions = builtInActions(user, flags());
-  assert.deepEqual(ids(actions), ['private', 'whisper', 'profile', 'block', 'unblock', 'report']);
+  assert.deepEqual(ids(actions), ['private', 'profile', 'block', 'unblock', 'report']);
   assert.deepEqual(find(actions, 'private').calls, [['clearWhisper'], ['createPChatDiv', 'me', 'Alice%20Smith', '12', '7']]);
-  assert.deepEqual(find(actions, 'whisper').calls, [['whisperUser', 'Alice%20Smith']]);
   assert.deepEqual(find(actions, 'block').calls, [
     ['blockUsers', 'block', '12'],
     ['showInfoBox', 'system', '220', '300', '200', '', 'You have blocked Alice Smith'],
@@ -61,18 +58,17 @@ test('on yourself only profile shows (uID compared loosely, number against strin
   assert.deepEqual(ids(builtInActions({ ...user, uuID: '7' }, flags())), ['profile']);
 });
 
-test('a guest (groupPChat 0) gets the group notice for private chat and whisper', () => {
+test('a guest (groupPChat 0) gets the group notice for private chat', () => {
   const actions = builtInActions(user, flags({ groupPChat: 0, lang: { lang6: 'Not for guests' } }));
   const notice = [['showInfoBox', 'system', '220', '300', '200', '', 'Not for guests']];
   assert.deepEqual(find(actions, 'private').calls, notice);
-  assert.deepEqual(find(actions, 'whisper').calls, notice);
 });
 
 test('no eCredits outranks the group gate', () => {
   const actions = builtInActions(user, flags({ eCredits: 1, noCredits: true, groupPChat: 0 }));
   assert.deepEqual(find(actions, 'private').calls, [['showInfoBox', 'system', '220', '300', '200', '', 'You do not have any eCredits']]);
   // eCredits off: an empty credit counter is ignored, as the engine does.
-  assert.deepEqual(find(builtInActions(user, flags({ noCredits: true })), 'whisper').calls, [['whisperUser', 'Alice%20Smith']]);
+  assert.equal(find(builtInActions(user, flags({ noCredits: true })), 'private').calls[1][0], 'createPChatDiv');
 });
 
 test('profileRef 0, 1 and 2 pass uuID, the raw name and the forum id', () => {
@@ -87,7 +83,7 @@ test('profileRef 0, 1 and 2 pass uuID, the raw name and the forum id', () => {
 });
 
 test('an unblockable user (admin, mod, speaker) has no block, unblock or report', () => {
-  assert.deepEqual(ids(builtInActions({ ...user, block: '0' }, flags())), ['private', 'whisper', 'profile']);
+  assert.deepEqual(ids(builtInActions({ ...user, block: '0' }, flags())), ['private', 'profile']);
 });
 
 test('an admin also gets silence, kick, ban and IP on others, and the admin area on themself', () => {
@@ -117,7 +113,7 @@ test('a room owner gets silence and kick but not ban or IP', () => {
 
 test('share files and webcam follow their own engine gates', () => {
   const actions = builtInActions(user, flags({ share: 1, webcamsOn: 1 }));
-  assert.deepEqual(ids(actions), ['private', 'whisper', 'webcam', 'profile', 'share', 'block', 'unblock', 'report']);
+  assert.deepEqual(ids(actions), ['private', 'webcam', 'profile', 'share', 'block', 'unblock', 'report']);
   assert.deepEqual(find(actions, 'webcam').calls, [['requestViewWebcam', 'Alice%20Smith']]);
   assert.deepEqual(find(builtInActions(user, flags({ webcamsOn: 1, groupWatch: 0 })), 'webcam').calls[0][0], 'showInfoBox');
   assert.deepEqual(find(actions, 'share').calls, [
@@ -130,9 +126,10 @@ test('webcam gets the eCredits notice when credits are on and empty', () => {
   assert.deepEqual(find(actions, 'webcam').calls, [['showInfoBox', 'system', '220', '300', '200', '', 'You do not have any eCredits']]);
 });
 
-test('clear whisper appears whenever a whisper target is set', () => {
-  assert.ok(ids(builtInActions(user, flags({ whispering: true }))).includes('clear-whisper'));
-  assert.deepEqual(ids(builtInActions({ ...user, uuID: '7' }, flags({ whispering: true }))), ['clear-whisper', 'profile']);
+test('whisper is left to the name menu: no whisper or clear-whisper entry, whatever the engine flags', () => {
+  const engineFlags = flags({ whisperOn: 1, whispering: true });
+  assert.deepEqual(ids(builtInActions(user, engineFlags)), ['private', 'profile', 'block', 'unblock', 'report']);
+  assert.deepEqual(ids(builtInActions({ ...user, uuID: '7' }, engineFlags)), ['profile']);
 });
 
 test('Intelli-bot has no menu, matched case-insensitively', () => {
@@ -140,7 +137,7 @@ test('Intelli-bot has no menu, matched case-insensitively', () => {
 });
 
 test('labels come from the engine lang strings when present', () => {
-  const actions = builtInActions(user, flags({ lang: { lang33: 'PM', lang34: '' } }));
+  const actions = builtInActions(user, flags({ lang: { lang33: 'PM', lang36: '' } }));
   assert.equal(find(actions, 'private').label, 'PM');
-  assert.equal(find(actions, 'whisper').label, 'Whisper User');
+  assert.equal(find(actions, 'profile').label, 'View Profile');
 });

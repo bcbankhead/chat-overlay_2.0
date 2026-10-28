@@ -1,6 +1,7 @@
 // Pure port of the engine's userPanel menu gating (userlist.js.php:351-518). Each action is
 // a list of engine calls, made by engine.js, with the exact arguments the engine's own
-// onclick handlers pass — so behaviour matches the original panel.
+// onclick handlers pass — so behaviour matches the original panel. Whisper and Clear Whisper
+// are not here: the name menu (nameMenu.js) puts its own Whisper / Stop whispering first.
 
 import { safeDecodeURI } from '../../core/parse.js';
 
@@ -22,7 +23,6 @@ import { safeDecodeURI } from '../../core/parse.js';
  * @property {unknown} uID          own chat id
  * @property {unknown} userName     own name, as the engine passes it
  * @property {unknown} privateOn
- * @property {unknown} whisperOn
  * @property {unknown} webcamsOn
  * @property {unknown} profileOn
  * @property {unknown} profileRef   0 = uuID, 1 = name, 2 = forum userID
@@ -37,7 +37,6 @@ import { safeDecodeURI } from '../../core/parse.js';
  * @property {unknown} moderatedChat
  * @property {unknown} styleFolder
  * @property {unknown} intelliBotName
- * @property {boolean} whispering   `#whisperID` holds a name
  * @property {Record<string, unknown>} lang the engine's `lang<N>` strings
  */
 
@@ -46,7 +45,6 @@ const LANG = {
   lang6: 'Your user group does not have permission to use this feature',
   lang32: 'You do not have any eCredits',
   lang33: 'Private Chat',
-  lang34: 'Whisper User',
   lang35: 'View Webcam',
   lang36: 'View Profile',
   lang37: 'Block User',
@@ -102,7 +100,7 @@ export function profileID(user, profileRef) {
 }
 
 /**
- * The built-in menu for one user, in `userPanel`'s order and under its exact gates.
+ * The built-in menu for one user, whisper aside, in `userPanel`'s order and under its exact gates.
  * @param {import('./rowParse.js').RailUser} user
  * @param {EngineFlags} flags
  * @returns {MenuAction[]}
@@ -120,7 +118,7 @@ export function builtInActions(user, flags) {
   const staff = Boolean(flags.admin) || Boolean(flags.moderator);
 
   /**
-   * The credit and group gate shared by private chat, whisper and webcam.
+   * The credit and group gate shared by private chat and webcam.
    * @param {unknown} group
    * @param {EngineCall[]} allowed
    * @returns {EngineCall[]}
@@ -140,15 +138,6 @@ export function builtInActions(user, flags) {
         ['createPChatDiv', String(flags.userName ?? ''), name, user.uuID, String(flags.uID ?? '')],
       ]),
     });
-  }
-
-  if (flags.whisperOn && !self) {
-    // The engine gates whisper on groupPChat too (userlist.js.php:407).
-    actions.push({ id: 'whisper', label: lang(flags, 'lang34'), calls: gated(flags.groupPChat, [['whisperUser', name]]) });
-  }
-
-  if (flags.whispering) {
-    actions.push({ id: 'clear-whisper', label: 'Clear Whisper', calls: [['clearWhisper']] });
   }
 
   if (flags.webcamsOn && !self) {

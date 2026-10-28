@@ -14,9 +14,10 @@ import { describeError } from '../../core/errors.js';
  * @property {string} title
  * @property {string} icon               an `<svg` markup string (see icons.js), or short text
  * @property {number} [order]            lower first; default 100
+ * @property {'start' | 'end'} [align]   which end of the icon row; default 'start' ('end' is the Settings gear)
  * @property {(container: HTMLElement, arg?: unknown) => Cleanup} render
- *   fills the flyout when opened; `arg` is what `open(arg)` passed, undefined from a chip click
- * @property {(el: HTMLElement) => Cleanup} [renderRailSlot]       always-visible slot inside the chip, after the icon
+ *   fills the flyout when opened; `arg` is what `open(arg)` passed, undefined from an icon click
+ * @property {(el: HTMLElement) => Cleanup} [renderRailSlot]       always-visible slot inside the icon button, after the glyph
  */
 
 /**

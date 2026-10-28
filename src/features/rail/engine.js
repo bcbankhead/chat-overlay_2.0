@@ -1,8 +1,6 @@
 // The rail's only contact with the engine's page globals: the flags userPanel gates on, and
 // the functions its menu calls. Everything else in the rail goes through here.
 
-import { safeDecodeURI } from '../../core/parse.js';
-
 /** Engine functions a menu action may call (userlist.js.php userPanel's onclick handlers). */
 const CALLABLE = new Set([
   'whisperUser',
@@ -17,7 +15,7 @@ const CALLABLE = new Set([
 ]);
 
 /** Engine `lang<N>` strings the menu labels with. */
-const LANG_KEYS = ['lang6', 'lang32', 'lang33', 'lang34', 'lang35', 'lang36', 'lang37', 'lang38', 'lang39', 'lang40', 'lang41', 'lang42', 'lang43'];
+const LANG_KEYS = ['lang6', 'lang32', 'lang33', 'lang35', 'lang36', 'lang37', 'lang38', 'lang39', 'lang40', 'lang41', 'lang42', 'lang43'];
 
 /**
  * @param {Window} win
@@ -31,12 +29,10 @@ export function createEngine(win, doc) {
     /** @type {Record<string, unknown>} */
     const lang = {};
     for (const key of LANG_KEYS) lang[key] = w[key];
-    const whisper = /** @type {HTMLInputElement | null} */ (doc.getElementById('whisperID'));
     return {
       uID: w.uID,
       userName: w.userName,
       privateOn: w.privateOn,
-      whisperOn: w.whisperOn,
       webcamsOn: w.webcamsOn,
       profileOn: w.profileOn,
       profileRef: w.profileRef,
@@ -51,7 +47,6 @@ export function createEngine(win, doc) {
       moderatedChat: w.moderatedChat,
       styleFolder: w.styleFolder,
       intelliBotName: w.intelliBotName,
-      whispering: Boolean(whisper?.value),
       lang,
     };
   }
@@ -81,39 +76,6 @@ export function createEngine(win, doc) {
     /** Own chat id. */
     uID() {
       return String(w.uID ?? '');
-    },
-
-    /** Status labels Here / BRB / Away, by their `userStatusMes` index (settings.js.php). */
-    statuses() {
-      // The engine always defines userStatusMes; the fallback is its own value, not a guess.
-      const mes = Array.isArray(w.userStatusMes) ? w.userStatusMes : ['select', 'Here', 'BRB', 'Away'];
-      /** @type {{ index: number, label: string }[]} */
-      const out = [];
-      for (let i = 1; i < mes.length; i++) {
-        out.push({ index: i, label: safeDecodeURI(String(mes[i])) });
-      }
-      return out;
-    },
-
-    /** The status index the engine's own selector holds, or null when it has not been built. */
-    selectedStatus() {
-      const sel = /** @type {HTMLSelectElement | null} */ (doc.getElementById('selectStatusID'));
-      const index = sel ? Number(sel.value) : NaN;
-      return index >= 1 ? index : null;
-    },
-
-    /** @param {number} index into `userStatusMes` */
-    sendStatus(index) {
-      if (typeof w.sendStatus !== 'function') throw new Error('the chat engine has no sendStatus()');
-      // sendStatus drops the status unsent while a request is in flight (functions.js.php:991).
-      const state = w.sendReq?.readyState;
-      if (state !== undefined && state !== 0 && state !== 4) {
-        throw new Error('the chat engine is busy sending; the status was not changed');
-      }
-      w.sendStatus(index);
-      // Keep the engine's own selector, when built, in step with the rail's.
-      const sel = /** @type {HTMLSelectElement | null} */ (doc.getElementById('selectStatusID'));
-      if (sel) sel.value = String(index);
     },
 
     /** @param {string} roomID */

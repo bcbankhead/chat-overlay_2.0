@@ -1,13 +1,9 @@
-// The docked user list: the status picker, then the current room's users, then the other
-// rooms. Each user row is an accordion holding the engine-gated built-in actions, then
-// registered ones.
+// The sidebar's rooms: each a chip-accordion (name, count, caret) over its user list. The
+// current room is open by default and fills the height; the others sit collapsed at the
+// bottom, and an expanded one offers Join room. A name opens the name menu.
 
-import { listUserMenuActions, onRegistryChange } from './api.js';
-import { renderIcon } from './icons.js';
-import { builtInActions } from './menuModel.js';
+import { ICONS, renderIcon } from './icons.js';
 import { readRooms } from './rowParse.js';
-import { renderOtherRooms, roomLabel } from './roomPicker.js';
-import { renderStatusPicker, statusFromText } from './statusPicker.js';
 
 /**
  * @typedef {object} UserStore
@@ -74,109 +70,85 @@ export function createUserStore(win, container, onError) {
 }
 
 /**
- * The docked list, rendered straight into the rail's column rather than registered as a
- * panel, so it is always visible: the status picker goes into the header's `status` slot,
- * the current room, its users and the other-rooms row into `list`.
- * @param {{ doc: Document, engine: import('./engine.js').Engine, store: UserStore, onError: (err: unknown) => void }} deps
- * @returns {(slots: { status: HTMLElement, list: HTMLElement }) => () => void} mount, returning unmount
+ * @typedef {object} RoomView
+ * @property {HTMLElement} section
+ * @property {HTMLButtonElement} chip
+ * @property {HTMLElement} name
+ * @property {HTMLElement} count
+ * @property {HTMLButtonElement} join
+ * @property {HTMLElement} scroll   the scroll area, holding the floating thumb and `list`
+ * @property {HTMLUListElement} list
+ * @property {() => void} detach    the scroll area's floating scrollbar
  */
-export function createDockedList({ doc, engine, store, onError }) {
-  /** @type {number | null} chosen in the rail this page load; outranks what the engine shows */
-  let chosenStatus = null;
 
-  /** @param {() => void} fn */
-  const attempt = (fn) => {
-    try {
-      fn();
-    } catch (err) {
-      onError(err);
-    }
-  };
-
+/**
+ * The rooms, rendered into the sidebar's `current` and `others` slots. Each room keeps its
+ * elements across re-renders, so a poll update leaves its scroll position alone.
+ * @param {{
+ *   doc: Document,
+ *   engine: import('./engine.js').Engine,
+ *   store: UserStore,
+ *   attachScrollbar: (el: HTMLElement) => () => void,
+ *   onUser: (user: import('./rowParse.js').RailUser, x: number, y: number) => void,
+ *   onError: (err: unknown) => void,
+ * }} deps
+ * @returns {(slots: { current: HTMLElement, others: HTMLElement }) => () => void} mount, returning unmount
+ */
+export function createRoomList({ doc, engine, store, attachScrollbar, onUser, onError }) {
   return (slots) => {
-    /** @type {string | null} uuID of the expanded row, kept across re-renders */
-    let expanded = null;
-    // Collapsed on every load (B3), kept across re-renders.
-    let roomsOpen = false;
-    /** @type {HTMLSelectElement | null} */
-    let picker = null;
-    let pickerStatuses = '';
+    /** @type {Map<string, boolean>} opened or closed by the user, this page load */
+    const chosen = new Map();
+    /** @type {Map<string, RoomView>} */
+    const views = new Map();
+    /** @type {Map<string, import('./rowParse.js').RailUser>} by `uuID|roomID`, for the name menu */
+    let users = new Map();
 
-    /**
-     * Identifies a control in the list across re-renders, so focus can be given back.
-     * @param {Element} el
-     */
-    function controlKey(el) {
-      const node = /** @type {HTMLElement} */ (el);
-      const user = /** @type {HTMLElement | null} */ (node.closest('.tdf-rail-user'));
-      return `${user?.dataset.uuid ?? ''}|${node.dataset.action ?? node.dataset.room ?? node.className}`;
-    }
+    const empty = doc.createElement('div');
+    empty.className = 'tdf-rail-empty';
+    empty.textContent = 'The user list is not available.';
 
-    function render() {
-      const rooms = store.rooms();
-      const current = engine.roomID();
-      const room = rooms.find((r) => r.roomID === current);
-      const statuses = engine.statuses();
-      const own = room?.users.find((u) => u.uuID === engine.uID());
-      const status = chosenStatus ?? engine.selectedStatus() ?? (own && statusFromText(own.statusText, statuses)) ?? 1;
-
-      // Rebuilt only when the choices change, so a store update leaves an open dropdown alone.
-      const statusKey = JSON.stringify(statuses);
-      if (!picker || statusKey !== pickerStatuses) {
-        const field = renderStatusPicker({
-          doc,
-          statuses,
-          current: status,
-          // Re-rendered either way: a refused pick puts the picker back on the real status.
-          onPick: (index) => {
-            attempt(() => {
-              engine.sendStatus(index);
-              chosenStatus = index;
-            });
-            render();
-          },
-        });
-        slots.status.replaceChildren(field);
-        picker = field.querySelector('select');
-        pickerStatuses = statusKey;
-      } else if (picker.value !== String(status)) {
-        picker.value = String(status);
-      }
-
-      const active = doc.activeElement;
-      const focused = active && active !== doc.body && slots.list.contains(active) ? controlKey(active) : null;
-
-      const heading = doc.createElement('div');
-      heading.className = 'tdf-rail-room-name';
-      heading.textContent = room ? roomLabel(room) : '';
-      heading.hidden = !room;
-
-      const list = doc.createElement('ul');
-      list.className = 'tdf-rail-users';
-      for (const user of room?.users ?? []) list.appendChild(renderUser(user));
-      if (!room) {
-        const empty = doc.createElement('li');
-        empty.className = 'tdf-rail-empty';
-        empty.textContent = 'The user list is not available.';
-        list.appendChild(empty);
-      }
-
-      const others = renderOtherRooms({
-        doc,
-        rooms,
-        current,
-        expanded: roomsOpen,
-        onToggle: () => {
-          roomsOpen = !roomsOpen;
-          render();
-        },
-        onPick: (id) => attempt(() => engine.changeRooms(id)),
+    /** @param {string} roomID */
+    function view(roomID) {
+      const known = views.get(roomID);
+      if (known) return known;
+      const section = doc.createElement('section');
+      section.className = 'tdf-rail-room';
+      section.dataset.room = roomID;
+      const chip = doc.createElement('button');
+      chip.type = 'button';
+      chip.className = 'tdf-rail-room-chip';
+      const name = doc.createElement('span');
+      name.className = 'tdf-rail-room-name';
+      const count = doc.createElement('span');
+      count.className = 'tdf-rail-room-count';
+      const caret = doc.createElement('span');
+      caret.className = 'tdf-rail-caret';
+      renderIcon(caret, ICONS.caret);
+      chip.append(name, count, caret);
+      chip.addEventListener('click', () => {
+        chosen.set(roomID, !section.classList.contains('tdf-open'));
+        render();
       });
-      slots.list.replaceChildren(heading, list, others);
-      if (focused) {
-        const again = [...slots.list.querySelectorAll('button')].find((b) => controlKey(b) === focused);
-        again?.focus();
-      }
+      const join = doc.createElement('button');
+      join.type = 'button';
+      join.className = 'tdf-rail-join';
+      join.textContent = 'Join room';
+      join.addEventListener('click', () => {
+        try {
+          engine.changeRooms(roomID);
+        } catch (err) {
+          onError(err);
+        }
+      });
+      const scroll = doc.createElement('div');
+      scroll.className = 'tdf-rail-users';
+      const list = doc.createElement('ul');
+      scroll.appendChild(list);
+      section.append(chip, join, scroll);
+      /** @type {RoomView} */
+      const made = { section, chip, name, count, join, scroll, list, detach: attachScrollbar(scroll) };
+      views.set(roomID, made);
+      return made;
     }
 
     /** @param {import('./rowParse.js').RailUser} user */
@@ -184,74 +156,109 @@ export function createDockedList({ doc, engine, store, onError }) {
       const li = doc.createElement('li');
       li.className = 'tdf-rail-user';
       li.dataset.uuid = user.uuID;
-      const toggle = doc.createElement('button');
-      toggle.type = 'button';
-      toggle.className = 'tdf-rail-user-name';
-      toggle.setAttribute('aria-expanded', String(expanded === user.uuID));
+      li.dataset.room = user.roomID;
+      const img = doc.createElement('img');
+      img.className = 'tdf-rail-avatar';
+      img.alt = '';
+      if (user.avatar) img.src = `avatars/${user.avatar}`;
       const name = doc.createElement('span');
+      name.className = 'tdf-rail-user-name';
       name.textContent = user.name;
-      toggle.appendChild(name);
-      if (user.statusText.trim()) {
-        const status = doc.createElement('span');
-        status.className = 'tdf-rail-user-status';
-        status.textContent = user.statusText.trim();
-        toggle.appendChild(status);
+      li.append(img, name);
+      // The engine's own list shows BRB, Away and Idle beside the name; so does this one.
+      const status = user.statusText.trim();
+      if (status) {
+        const tag = doc.createElement('span');
+        tag.className = 'tdf-rail-user-status';
+        tag.textContent = status;
+        li.appendChild(tag);
       }
-      toggle.addEventListener('click', () => {
-        expanded = expanded === user.uuID ? null : user.uuID;
-        render();
-      });
-      li.appendChild(toggle);
-      if (expanded === user.uuID) li.appendChild(renderMenu(user));
       return li;
     }
 
-    /** @param {import('./rowParse.js').RailUser} user */
-    function renderMenu(user) {
-      const menu = doc.createElement('div');
-      menu.className = 'tdf-rail-menu';
-      menu.setAttribute('role', 'menu');
-      /** @type {{ id: string, label: string, icon?: string, run: () => void }[]} */
-      const items = [
-        ...builtInActions(user, engine.flags()).map((a) => ({ id: a.id, label: a.label, run: () => engine.call(a.calls) })),
-        ...listUserMenuActions(user, onError).map((a) => ({ id: a.id, label: a.label, icon: a.icon, run: () => a.run(user) })),
-      ];
-      for (const item of items) {
-        const button = doc.createElement('button');
-        button.type = 'button';
-        button.className = 'tdf-rail-action';
-        button.setAttribute('role', 'menuitem');
-        button.dataset.action = item.id;
-        if (item.icon) {
-          const icon = doc.createElement('span');
-          icon.className = 'tdf-rail-icon';
-          renderIcon(icon, item.icon);
-          button.appendChild(icon);
+    /**
+     * Put `children` into `parent` in order, moving only what is out of place: a scroll
+     * area taken out of the document loses its position.
+     * @param {HTMLElement} parent
+     * @param {HTMLElement[]} children
+     */
+    function arrange(parent, children) {
+      children.forEach((child, i) => {
+        if (parent.children[i] !== child) parent.insertBefore(child, parent.children[i] ?? null);
+      });
+      while (parent.children.length > children.length) parent.lastElementChild?.remove();
+    }
+
+    function render() {
+      const rooms = store.rooms();
+      const current = engine.roomID();
+      const live = new Set(rooms.map((r) => r.roomID));
+      for (const [id, v] of views) {
+        if (live.has(id)) continue;
+        v.detach();
+        views.delete(id);
+      }
+      users = new Map();
+      /** @type {HTMLElement[]} */
+      const others = [];
+      /** @type {HTMLElement | null} */
+      let here = null;
+      for (const room of rooms) {
+        const v = view(room.roomID);
+        const isCurrent = room.roomID === current;
+        const open = chosen.get(room.roomID) ?? isCurrent;
+        v.section.classList.toggle('tdf-current', isCurrent);
+        v.section.classList.toggle('tdf-open', open);
+        v.chip.setAttribute('aria-expanded', String(open));
+        v.name.textContent = room.name || room.roomID;
+        v.count.textContent = String(room.count);
+        v.join.hidden = isCurrent || !open;
+        v.scroll.hidden = !open;
+        /** @type {HTMLElement[]} */
+        const rows = room.users.map(renderUser);
+        if (rows.length === 0) {
+          const none = doc.createElement('li');
+          none.className = 'tdf-rail-empty';
+          none.textContent = 'Nobody here';
+          rows.push(none);
         }
-        button.append(item.label);
-        button.addEventListener('click', () => {
-          // The engine closes its panel after an action; the accordion does the same.
-          expanded = null;
-          attempt(item.run);
-          render();
-        });
-        menu.appendChild(button);
+        v.list.replaceChildren(...rows);
+        for (const user of room.users) users.set(`${user.uuID}|${user.roomID}`, user);
+        if (isCurrent) here = v.section;
+        else others.push(v.section);
       }
-      if (items.length === 0) {
-        const none = doc.createElement('div');
-        none.className = 'tdf-rail-empty';
-        none.textContent = 'No actions';
-        menu.appendChild(none);
+      arrange(slots.current, [here ?? empty]);
+      arrange(slots.others, others);
+    }
+
+    /** @param {MouseEvent} event */
+    const onName = (event) => {
+      const target = /** @type {Element | null} */ (event.target);
+      const row = /** @type {HTMLElement | null} */ (target?.closest?.('.tdf-rail-user') ?? null);
+      const user = row && users.get(`${row.dataset.uuid}|${row.dataset.room}`);
+      if (!user) return;
+      event.preventDefault();
+      try {
+        onUser(user, event.clientX, event.clientY);
+      } catch (err) {
+        onError(err);
       }
-      return menu;
+    };
+    for (const slot of [slots.current, slots.others]) {
+      slot.addEventListener('click', onName);
+      slot.addEventListener('contextmenu', onName);
     }
 
     render();
     const offStore = store.subscribe(render);
-    const offRegistry = onRegistryChange(render, onError);
     return () => {
       offStore();
-      offRegistry();
+      for (const slot of [slots.current, slots.others]) {
+        slot.removeEventListener('click', onName);
+        slot.removeEventListener('contextmenu', onName);
+      }
+      for (const v of views.values()) v.detach();
+      views.clear();
     };
   };
 }

@@ -1,84 +1,113 @@
-/* TDF Chat 2.0 control rail. Mounted inside #tdf-chat, so every colour is one of its theme
-   tokens (src/core/theme.css); no literal colours here. */
+/* TDF Chat 2.0 sidebar (UI design 2026-10-27, Sidebar and Flyouts). Mounted on <body>; its
+   own colours are tokens scoped by the theme on <html>, beside src/core/theme.css's. */
 
-/* The engine's panel stays in the DOM, still sized by resizeDivs and patched by the poll;
-   it is hidden only while a working rail covers its box, so a failed start, or a rail whose
-   user list failed to mount, leaves the original panel showing. visibility, not display,
-   so the engine keeps laying it out and the rail can copy its rect. */
+:root {
+  /* Every flyout shares the gallery's width: three 128px columns, gaps, padding, border. */
+  --tdf-flyout-w: 418px;
+}
+
+:root[data-tdf-theme="light"] {
+  --tdf-rail-bg: #EDEDF5;
+  --tdf-rail-chip-bg: #F6F6FB;
+  --tdf-rail-chip-border: #DCDCE6;
+}
+
+:root[data-tdf-theme="dark"] {
+  --tdf-rail-bg: #27272E;
+  --tdf-rail-chip-bg: #32323B;
+  --tdf-rail-chip-border: #43434E;
+}
+
+/* The engine's list stays in the DOM, still sized by resizeDivs and patched by the poll;
+   visibility, not display, so the engine keeps laying it out and the sidebar can copy its
+   rect. Room creation and the engine's Logout go; the sidebar grows up into their row.
+   All of it only while a working rail covers them, so a failed start, or a rail whose user
+   list failed to mount, leaves the engine's own controls showing. */
 body:has(#tdf-rail:not(.tdf-rail-failed)) #userContainer {
   visibility: hidden !important;
+}
+
+body:has(#tdf-rail:not(.tdf-rail-failed)) :is(#roomIcon, #roomCreate, #roomSelect, #optionsLogout) {
+  display: none !important;
 }
 
 /* top/left/width/height are copied from #userContainer's rect by rail.js. */
 #tdf-rail {
   position: fixed;
+  /* Above the message view (z-index 5) and the composer's own controls. */
   z-index: 10;
   display: flex;
   flex-direction: column;
+  gap: 8px;
   box-sizing: border-box;
-  font: 13px var(--tdf-ui-font);
+  padding: 8px;
+  /* --tdf-ui-font is set on #tdf-chat, which the sidebar is not inside; same stack. */
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   color: var(--tdf-fg);
-  background: var(--tdf-bg);
-  border-left: 1px solid var(--tdf-border);
+  background: var(--tdf-rail-bg);
+  border: 1px solid var(--tdf-rail-chip-border);
+  border-radius: 10px;
 }
 
-/* A failed rail keeps only its header and the failure, over the top of the engine panel. */
+/* A failed rail keeps only its icon row and the failure, over the engine's list. */
 #tdf-rail.tdf-rail-failed {
   height: auto !important;
 }
 
-#tdf-rail .tdf-rail-header {
+#tdf-rail button {
+  font: inherit;
+}
+
+#tdf-rail [hidden] {
+  display: none !important;
+}
+
+/* Icon row: panels, then the theme toggle; end-aligned panels (the gear) at the right. */
+#tdf-rail .tdf-rail-icons,
+#tdf-rail .tdf-rail-icon-group {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
-  padding: 6px;
-  border-bottom: 1px solid var(--tdf-border);
+  gap: 6px;
 }
 
-#tdf-rail .tdf-rail-chips {
-  display: contents;
+#tdf-rail .tdf-rail-end {
+  margin-left: auto;
 }
 
-#tdf-rail .tdf-rail-icon {
-  display: inline-flex;
-  font-size: 16px;
-  line-height: 1;
-}
-
-#tdf-rail .tdf-rail-icon svg {
-  width: 18px;
-  height: 18px;
-}
-
-#tdf-rail .tdf-rail-chip {
+#tdf-rail .tdf-rail-icon-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
-  min-width: 30px;
-  height: 30px;
+  min-width: 32px;
+  height: 32px;
   padding: 0 6px;
   box-sizing: border-box;
-  font: inherit;
   color: var(--tdf-fg);
-  background: transparent;
-  border: 1px solid var(--tdf-border);
-  border-radius: 6px;
+  background: var(--tdf-rail-chip-bg);
+  border: 1px solid var(--tdf-rail-chip-border);
+  border-radius: 8px;
   cursor: pointer;
 }
 
-#tdf-rail .tdf-rail-chip[hidden] {
-  display: none;
+#tdf-rail .tdf-rail-icon-btn:hover,
+#tdf-rail .tdf-rail-icon-btn[aria-expanded="true"] {
+  color: var(--tdf-link);
 }
 
-#tdf-rail .tdf-rail-chip:disabled {
-  color: var(--tdf-muted);
-  cursor: default;
+#tdf-rail .tdf-rail-icon-btn[aria-expanded="true"] {
+  border-color: var(--tdf-link);
 }
 
-#tdf-rail .tdf-rail-chip:not(:disabled):hover,
-#tdf-rail .tdf-rail-chip[aria-expanded="true"] {
-  background: var(--tdf-hover-bg);
+#tdf-rail .tdf-rail-glyph,
+#tdf-rail .tdf-rail-caret {
+  display: inline-flex;
+  line-height: 1;
+}
+
+#tdf-rail .tdf-rail-icon-btn svg {
+  width: 18px;
+  height: 18px;
 }
 
 #tdf-rail .tdf-rail-slot {
@@ -93,153 +122,285 @@ body:has(#tdf-rail:not(.tdf-rail-failed)) #userContainer {
 
 #tdf-rail .tdf-rail-error {
   padding: 6px 10px;
-  border-bottom: 1px solid var(--tdf-border);
-  border-left: 3px solid var(--tdf-border);
+  border-left: 3px solid #e5484d;
+  border-radius: 6px;
+  background: var(--tdf-rail-chip-bg);
   cursor: pointer;
 }
 
-#tdf-rail .tdf-rail-error[hidden] {
+/* Rooms: the current one fills the height; the others sit at the bottom. */
+#tdf-rail .tdf-rail-current {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+#tdf-rail .tdf-rail-others {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#tdf-rail .tdf-rail-others:empty {
   display: none;
 }
 
-/* The always-visible list: room heading, users (scrolling), other rooms. */
-#tdf-rail .tdf-rail-docked {
+#tdf-rail .tdf-rail-room {
   display: flex;
   flex-direction: column;
-  flex: 1;
+  gap: 4px;
   min-height: 0;
+}
+
+#tdf-rail .tdf-rail-current > .tdf-rail-room {
+  flex: 1 1 auto;
+}
+
+#tdf-rail .tdf-rail-current > .tdf-rail-room:not(.tdf-open) {
+  flex: 0 0 auto;
+}
+
+#tdf-rail .tdf-rail-room-chip,
+#tdf-rail .tdf-rail-join {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  box-sizing: border-box;
+  color: var(--tdf-fg);
+  background: var(--tdf-rail-chip-bg);
+  border: 1px solid var(--tdf-rail-chip-border);
+  border-radius: 999px;
+  text-align: left;
+  cursor: pointer;
+}
+
+#tdf-rail .tdf-rail-room-chip {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+#tdf-rail .tdf-rail-room-chip:hover,
+#tdf-rail .tdf-rail-join:hover {
+  border-color: var(--tdf-link);
+}
+
+#tdf-rail .tdf-rail-join {
+  justify-content: center;
+  color: var(--tdf-link);
 }
 
 #tdf-rail .tdf-rail-room-name {
-  padding: 6px 10px 2px;
-  font-weight: 600;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-#tdf-rail .tdf-rail-room-name[hidden] {
-  display: none;
-}
-
-#tdf-rail .tdf-rail-flyout {
-  position: absolute;
-  top: 0;
-  right: 100%;
-  width: 280px;
-  max-height: 100%;
-  overflow-y: auto;
-  box-sizing: border-box;
-  background: var(--tdf-bg);
-  border: 1px solid var(--tdf-border);
-  border-radius: 8px 0 0 8px;
-}
-
-#tdf-rail .tdf-rail-flyout[hidden] {
-  display: none;
-}
-
-#tdf-rail .tdf-rail-title {
-  padding: 8px 10px;
-  font-weight: 600;
-  border-bottom: 1px solid var(--tdf-border);
-}
-
-#tdf-rail .tdf-rail-field {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+#tdf-rail .tdf-rail-room-count {
   color: var(--tdf-muted);
+  font-weight: 400;
 }
 
-#tdf-rail select {
-  font: inherit;
-  color: var(--tdf-fg);
-  background: var(--tdf-bg);
-  border: 1px solid var(--tdf-border);
-  border-radius: 4px;
+#tdf-rail .tdf-rail-caret svg {
+  width: 12px;
+  height: 12px;
+  transition: transform 0.15s;
+}
+
+#tdf-rail .tdf-rail-room.tdf-open > .tdf-rail-room-chip .tdf-rail-caret svg {
+  transform: rotate(180deg);
 }
 
 #tdf-rail .tdf-rail-users {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  list-style: none;
-  margin: 0;
-  padding: 4px 0;
 }
 
-#tdf-rail .tdf-rail-user-name,
-#tdf-rail .tdf-rail-action,
-#tdf-rail .tdf-rail-rooms-toggle {
+/* An expanded other room scrolls within a share of the sidebar, not the whole of it. */
+#tdf-rail .tdf-rail-others .tdf-rail-users {
+  max-height: 180px;
+}
+
+#tdf-rail .tdf-rail-users ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#tdf-rail .tdf-rail-user {
   display: flex;
   align-items: center;
-  width: 100%;
-  gap: 6px;
-  padding: 4px 10px;
-  font: inherit;
-  text-align: left;
-  color: var(--tdf-fg);
-  background: transparent;
-  border: 0;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
   cursor: pointer;
 }
 
-#tdf-rail .tdf-rail-user-name:hover,
-#tdf-rail .tdf-rail-action:hover,
-#tdf-rail .tdf-rail-rooms-toggle:hover,
-#tdf-rail .tdf-rail-user-name[aria-expanded="true"] {
+#tdf-rail .tdf-rail-user:hover {
   background: var(--tdf-hover-bg);
+}
+
+#tdf-rail .tdf-rail-avatar {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  object-fit: cover;
+  background: var(--tdf-hover-bg);
+}
+
+#tdf-rail .tdf-rail-user-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #tdf-rail .tdf-rail-user-status {
   color: var(--tdf-muted);
-}
-
-#tdf-rail .tdf-rail-menu {
-  padding: 2px 0 4px 14px;
-  border-left: 2px solid var(--tdf-border);
-  margin-left: 10px;
-}
-
-#tdf-rail .tdf-rail-rooms {
-  border-top: 1px solid var(--tdf-border);
-}
-
-#tdf-rail .tdf-rail-rooms-toggle {
-  color: var(--tdf-muted);
-}
-
-#tdf-rail .tdf-rail-caret svg {
-  width: 14px;
-  height: 14px;
-  transform: rotate(-90deg);
-}
-
-#tdf-rail .tdf-rail-rooms-toggle[aria-expanded="true"] .tdf-rail-caret svg {
-  transform: none;
-}
-
-#tdf-rail .tdf-rail-room-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 0 10px 8px;
-}
-
-#tdf-rail .tdf-rail-room {
-  padding: 2px 8px;
-  font: inherit;
-  color: var(--tdf-fg);
-  background: transparent;
-  border: 1px solid var(--tdf-border);
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-#tdf-rail .tdf-rail-room:hover {
-  background: var(--tdf-hover-bg);
+  font-size: 12px;
 }
 
 #tdf-rail .tdf-rail-empty {
-  padding: 4px 10px;
+  padding: 4px 8px;
   color: var(--tdf-muted);
   font-style: italic;
+}
+
+/* Logout: a red outline button under the last room. */
+#tdf-rail .tdf-rail-logout {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  color: #e5484d;
+  background: none;
+  border: 1px solid #e5484d;
+  border-radius: 999px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#tdf-rail .tdf-rail-logout svg {
+  width: 15px;
+  height: 15px;
+}
+
+#tdf-rail .tdf-rail-logout:hover {
+  background: rgba(229, 72, 77, 0.16);
+}
+
+/* Flyouts grow leftward from the sidebar's left edge, over the message view: as tall as
+   their content, up to the sidebar's height. Closed, one is tucked against the sidebar and
+   invisible; visibility flips only after the slide back, so a closing one stays drawn
+   while it moves. Its contents fade in once the slide ends (tdf-settled). */
+#tdf-rail .tdf-rail-flyout {
+  position: absolute;
+  top: 0;
+  right: calc(100% + 6px);
+  display: flex;
+  flex-direction: column;
+  width: var(--tdf-flyout-w);
+  max-height: 100%;
+  box-sizing: border-box;
+  color: var(--tdf-fg);
+  background: var(--tdf-rail-bg);
+  border: 1px solid var(--tdf-rail-chip-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  opacity: 0;
+  transform: translateX(24px);
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 180ms ease-out,
+    visibility 0s linear 220ms;
+}
+
+#tdf-rail .tdf-rail-flyout.tdf-open {
+  opacity: 1;
+  transform: none;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 180ms ease-out,
+    visibility 0s;
+}
+
+#tdf-rail .tdf-rail-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+  opacity: 0;
+}
+
+#tdf-rail .tdf-rail-flyout.tdf-settled .tdf-rail-body {
+  opacity: 1;
+  transition: opacity 160ms ease-out;
+}
+
+/* The name menu, opened leftward from the pointer (placed by nameMenu.js). */
+#tdf-rail .tdf-rail-menu {
+  position: fixed;
+  z-index: 11;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--tdf-rail-bg);
+  border: 1px solid var(--tdf-rail-chip-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+#tdf-rail .tdf-rail-menu-title {
+  padding: 4px 8px 6px;
+  color: var(--tdf-muted);
+  font-size: 12px;
+}
+
+#tdf-rail .tdf-rail-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  color: var(--tdf-fg);
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+#tdf-rail .tdf-rail-menu-item svg {
+  width: 16px;
+  height: 16px;
+}
+
+#tdf-rail .tdf-rail-menu-item:hover:not(:disabled) {
+  background: var(--tdf-hover-bg);
+}
+
+#tdf-rail .tdf-rail-menu-item:disabled {
+  color: var(--tdf-muted);
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #tdf-rail .tdf-rail-flyout,
+  #tdf-rail .tdf-rail-flyout.tdf-open,
+  #tdf-rail .tdf-rail-flyout.tdf-settled .tdf-rail-body,
+  #tdf-rail .tdf-rail-caret svg {
+    transition: none !important;
+  }
 }

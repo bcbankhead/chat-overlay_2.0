@@ -10,7 +10,7 @@ function page(html = '', globals = {}) {
   return { win, engine: createEngine(win, win.document) };
 }
 
-test('flags read the engine globals, the credit counter and the whisper target', () => {
+test('flags read the engine globals and the credit counter', () => {
   const { engine } = page('<span id="eCreditsID">0</span><input id="whisperID" value="bob">', {
     uID: 7, admin: 1, profileRef: 2, lang33: 'PM',
   });
@@ -18,11 +18,9 @@ test('flags read the engine globals, the credit counter and the whisper target',
   assert.equal(flags.uID, 7);
   assert.equal(flags.admin, 1);
   assert.equal(flags.noCredits, true);
-  assert.equal(flags.whispering, true);
   assert.equal(flags.lang.lang33, 'PM');
   const none = page('<span id="eCreditsID">3</span><input id="whisperID" value="">').engine.flags();
   assert.equal(none.noCredits, false);
-  assert.equal(none.whispering, false);
 });
 
 test('call makes the calls in order and refuses a function outside the menu set or missing', () => {
@@ -40,44 +38,15 @@ test('call makes the calls in order and refuses a function outside the menu set 
   assert.equal(made.length, 2, 'a missing function stops the sequence');
 });
 
-test('statuses decode userStatusMes from index 1, with the engine default when absent', () => {
-  assert.deepEqual(page('', { userStatusMes: ['select', 'Here', 'Be%20right%20back'] }).engine.statuses(), [
-    { index: 1, label: 'Here' },
-    { index: 2, label: 'Be right back' },
-  ]);
-  assert.deepEqual(page().engine.statuses().map((s) => s.label), ['Here', 'BRB', 'Away']);
-});
-
-test('selectedStatus reads the engine selector only once it is built and set', () => {
-  assert.equal(page().engine.selectedStatus(), null);
-  assert.equal(page('<select id="selectStatusID"><option value="0">select</option></select>').engine.selectedStatus(), null);
-  assert.equal(page('<select id="selectStatusID"><option value="3" selected>Away</option></select>').engine.selectedStatus(), 3);
-});
-
-test('sendStatus and changeRooms call the engine, and refuse when it has neither', () => {
+test('changeRooms calls the engine, and refuses when it has none', () => {
   const made = [];
-  const { engine } = page('', { sendStatus: (i) => made.push(['status', i]), changeRooms: (r) => made.push(['room', r]), roomID: 4 });
-  engine.sendStatus(2);
+  const { engine } = page('', { changeRooms: (r) => made.push(['room', r]), roomID: 4 });
   engine.changeRooms('9');
-  assert.deepEqual(made, [['status', 2], ['room', '9']]);
+  assert.deepEqual(made, [['room', '9']]);
   assert.equal(engine.roomID(), '4');
   const bare = page().engine;
-  assert.throws(() => bare.sendStatus(1), /no sendStatus\(\)/);
   assert.throws(() => bare.changeRooms('1'), /no changeRooms\(\)/);
   assert.equal(bare.roomID(), '');
   assert.equal(bare.uID(), '');
 });
 
-test('sendStatus refuses while the engine request is in flight, and sends once it is done', () => {
-  const made = [];
-  const { win, engine } = page('<select id="selectStatusID"><option value="1" selected>Here</option><option value="3">Away</option></select>', {
-    sendStatus: (i) => made.push(i),
-    sendReq: { readyState: 1 },
-  });
-  assert.throws(() => engine.sendStatus(3), /busy sending/);
-  assert.deepEqual(made, []);
-  assert.equal(win.document.getElementById('selectStatusID').value, '1');
-  win.sendReq.readyState = 4;
-  engine.sendStatus(3);
-  assert.deepEqual(made, [3]);
-});
