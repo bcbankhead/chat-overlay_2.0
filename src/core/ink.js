@@ -22,14 +22,16 @@ export const NEUTRAL_CHROMA = 0.02;
 export const THEME_BG = /** @type {const} */ ({ light: '#ffffff', dark: '#16191d' });
 
 /**
- * A `#rgb`, `#rrggbb` or `rgb()` colour as sRGB channels in [0, 1], or null.
+ * A `#rgb`, `#rrggbb` or `rgb()` colour as sRGB channels in [0, 1], or null. An `rgb()`
+ * channel above 255 is clamped, as the browser clamps it when it paints the colour.
  * @param {string} color
  * @returns {Triple | null}
  */
 export function parseColor(color) {
-  const fn = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i.exec(color);
-  if (fn) return [Number(fn[1]) / 255, Number(fn[2]) / 255, Number(fn[3]) / 255];
-  const hex = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(color).trim());
+  const text = String(color).trim();
+  const fn = /^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i.exec(text);
+  if (fn) return /** @type {Triple} */ (fn.slice(1, 4).map((v) => Math.min(Number(v), 255) / 255));
+  const hex = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(text);
   if (!hex) return null;
   const h = hex[1].length === 3 ? hex[1].replace(/./g, '$&$&') : hex[1];
   return [parseInt(h.slice(0, 2), 16) / 255, parseInt(h.slice(2, 4), 16) / 255, parseInt(h.slice(4, 6), 16) / 255];
@@ -99,8 +101,11 @@ function lchToRgb(L, C, h) {
   return /** @type {Triple} */ (lin.map((c) => toGamma(Math.min(1, Math.max(0, c)))));
 }
 
-/** @param {Triple} rgb */
-function luminance(rgb) {
+/**
+ * WCAG relative luminance of sRGB channels in [0, 1].
+ * @param {Triple} rgb
+ */
+export function luminance(rgb) {
   const [r, g, b] = rgb.map(toLinear);
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }

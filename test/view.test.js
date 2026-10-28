@@ -103,6 +103,14 @@ test('low-contrast sender colours are shifted per theme, never chipped', async (
   }
 });
 
+test('a record with no sender colour sets no ink, so the line takes the theme text', async () => {
+  const { view, root } = await setup();
+  view.append(rec({ color: '' }));
+  const line = root.querySelector('.tdf-line');
+  assert.equal(line.style.getPropertyValue('--tdf-ink-light'), '');
+  assert.equal(line.style.getPropertyValue('--tdf-ink-dark'), '');
+});
+
 test('notices never take a sender colour, an avatar or a group', async () => {
   const { view, root } = await setup();
   for (const kind of ['entry', 'exit', 'system']) view.append(rec({ id: kind, kind, color: '#003366' }));
@@ -158,6 +166,12 @@ test('a head row carries avatar, name and time; a placeholder avatar has no src'
   assert.equal(avatar.hasAttribute('src'), false);
 });
 
+test('a sender-supplied avatar name is encoded into one path segment', async () => {
+  const { view, root } = await setup();
+  view.append(rec({ avatar: '../x.php?a=1#b' }));
+  assert.equal(root.querySelector('.tdf-avatar').getAttribute('src'), 'avatars/40/..%2Fx.php%3Fa%3D1%23b');
+});
+
 test('a pending message is timed by receipt and regrouped when confirmed', async () => {
   const { view, root } = await setup();
   view.append(rec({ id: '1', mTime: '1000' }));
@@ -195,6 +209,20 @@ test('posted images are tagged once loaded; smilies are not', async () => {
   for (const img of [posted, smilie]) img.dispatchEvent(new win.Event('load'));
   assert.ok(posted.classList.contains('tdf-posted'));
   assert.ok(!smilie.classList.contains('tdf-posted'));
+});
+
+test('a tall, narrow image is posted; an image outside the body (the avatar) never is', async () => {
+  const { win, view, root } = await setup();
+  view.append(rec({ text: '[[img src=tall.jpg]]' }));
+  const tall = root.querySelector('.tdf-body img');
+  const avatar = root.querySelector('.tdf-avatar');
+  Object.defineProperty(tall, 'naturalWidth', { value: 20 });
+  Object.defineProperty(tall, 'naturalHeight', { value: 480 });
+  Object.defineProperty(avatar, 'naturalWidth', { value: 640 });
+  Object.defineProperty(avatar, 'naturalHeight', { value: 640 });
+  for (const img of [tall, avatar]) img.dispatchEvent(new win.Event('load'));
+  assert.ok(tall.classList.contains('tdf-posted'));
+  assert.ok(!avatar.classList.contains('tdf-posted'));
 });
 
 test('an image already loaded at render (cached) is tagged without a load event', async () => {

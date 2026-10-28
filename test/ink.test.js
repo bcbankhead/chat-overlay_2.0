@@ -35,6 +35,17 @@ test('an unparseable colour is returned unchanged', () => {
   assert.equal(adapt('teal', THEME_BG.dark), 'teal');
 });
 
+test('an unparseable background leaves the colour unchanged', () => {
+  assert.equal(adapt('#003366', 'transparent'), '#003366');
+});
+
+test('rgb() is read only at the start, and a channel above 255 is clamped as painted', () => {
+  assert.deepEqual(parseColor('rgb(0, 0, 999)'), [0, 0, 1]);
+  assert.equal(parseColor('xrgb(0, 0, 0)'), null);
+  // Clamped, rgb(0,0,999) paints as pure blue, which fails on dark and must shift.
+  assert.equal(adapt('rgb(0, 0, 999)', THEME_BG.dark), '#427aff');
+});
+
 test('every shifted colour reaches the minimum contrast on both themes', () => {
   const samples = ['#003366', '#ff69b4', '#ffff00', '#00ff00', '#0000ff', '#ff0000', '#800080', '#cc6600', '#66ccff', '#336633'];
   for (const bg of Object.values(THEME_BG)) {

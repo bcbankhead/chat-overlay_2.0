@@ -5,7 +5,7 @@ import { describeError } from './errors.js';
 import { expand } from './expand.js';
 import { clockHHMM, continuesGroup, groupTime } from './group.js';
 import { DEFAULT_REPLAY_LIMIT } from './history.js';
-import { adapt, THEME_BG } from './ink.js';
+import { adapt, luminance, parseColor, THEME_BG } from './ink.js';
 import { safeDecodeURIComponent } from './parse.js';
 import { sanitize } from './sanitize.js';
 
@@ -58,35 +58,14 @@ function regroup(el) {
 }
 
 /**
- * Relative luminance of a `#rgb`, `#rrggbb` or `rgb()` colour, or null.
- * @param {string} color
- */
-function luminance(color) {
-  let rgb = null;
-  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim());
-  if (hex) {
-    const h = hex[1].length === 3 ? [...hex[1]].map((c) => c + c).join('') : hex[1];
-    rgb = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
-  } else {
-    const fn = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(color.trim());
-    if (fn) rgb = fn.slice(1, 4).map(Number);
-  }
-  if (!rgb) return null;
-  const [r, g, b] = rgb.map((v) => {
-    const s = v / 255;
-    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-
-/**
  * Theme-independent ink class: which background the sender colour is illegible on. The
  * view no longer uses it (messages take ink.js's colour shift); the composer still does.
  * @param {string} color
  */
 export function inkClass(color) {
-  const l = luminance(color);
-  if (l === null) return null;
+  const rgb = parseColor(color);
+  if (!rgb) return null;
+  const l = luminance(rgb);
   if (l < 0.13) return 'tdf-ink-dark'; // under 3:1 against the dark background
   if (l > 0.3) return 'tdf-ink-light'; // under 3:1 against the light background
   return null;
@@ -200,7 +179,7 @@ export function createView({ doc, win, container, theme, css }) {
       // A failed avatar falls back to the neutral square, as a missing one does. Expected and
       // harmless: a deleted or broken avatar file loses only the picture, never the message.
       avatar.addEventListener('error', () => avatar.removeAttribute('src'));
-      if (record.avatar) avatar.src = `avatars/40/${record.avatar}`;
+      if (record.avatar) avatar.src = `avatars/40/${encodeURIComponent(record.avatar)}`;
       el.appendChild(avatar);
     }
 
