@@ -105,6 +105,11 @@ export function createEngine(win, doc) {
     /** @param {number} index into `userStatusMes` */
     sendStatus(index) {
       if (typeof w.sendStatus !== 'function') throw new Error('the chat engine has no sendStatus()');
+      // sendStatus drops the status unsent while a request is in flight (functions.js.php:991).
+      const state = w.sendReq?.readyState;
+      if (state !== undefined && state !== 0 && state !== 4) {
+        throw new Error('the chat engine is busy sending; the status was not changed');
+      }
       w.sendStatus(index);
       // Keep the engine's own selector, when built, in step with the rail's.
       const sel = /** @type {HTMLSelectElement | null} */ (doc.getElementById('selectStatusID'));

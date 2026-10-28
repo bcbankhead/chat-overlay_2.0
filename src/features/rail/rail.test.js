@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { Window } from 'happy-dom';
 import { listPanels, registerRailPanel, registerUserMenuAction } from './api.js';
 import { startRail } from './rail.js';
+import { createUserStore } from './userList.js';
 
 const row = (uuID, uUser, roomID) =>
   `<div id="userlist_${uuID}${roomID}" class="userlist"><div><span style='float:left;'><img id='avatar_${uuID}' src='avatars/a.gif'>&nbsp;<span onclick='userPanel("me","${uUser}","${uuID}","${roomID}","9${uuID}","a.gif","1","1.1.1.${uuID}")'>${uUser}</span><span id='ustatusID_${uuID}'></span></span></div></div>`;
@@ -11,7 +12,7 @@ const room = (roomID, name, rows) =>
 
 const nextFrame = () => new Promise((r) => setTimeout(r, 30));
 
-function setup({ host = true, extra = '' } = {}) {
+function setup({ host = true, extra = '', prepare = (_doc) => {} } = {}) {
   const win = new Window();
   const doc = win.document;
   doc.body.innerHTML =
@@ -30,6 +31,7 @@ function setup({ host = true, extra = '' } = {}) {
     calls.push(['whisperUser', name]);
     doc.getElementById('whisperID').value = decodeURI(name);
   };
+  prepare(doc);
   assert.equal(startRail({ doc, win, css: '/* rail */' }), true);
   // Removing #tdf-chat is the rail's teardown path (a failed start); tests use it to clean up.
   const teardown = async () => {
@@ -159,8 +161,8 @@ test('the rail waits for #tdf-chat, mounts once with its style, and tears down w
   await nextFrame();
   assert.ok(t.doc.querySelector('#tdf-chat > #tdf-rail'));
   assert.equal(t.doc.getElementById('tdf-rail-style').textContent, '/* rail */');
-  // A second copy of the script finds the rail mounted.
-  startRail({ doc: t.doc, win: t.win, css: '' });
+  // A second copy of the script does not start a rail of its own.
+  assert.equal(startRail({ doc: t.doc, win: t.win, css: '' }), false);
   await nextFrame();
   assert.equal(t.doc.querySelectorAll('#tdf-rail').length, 1);
   assert.deepEqual(listPanels().map((p) => p.id), ['users']);
@@ -247,5 +249,105 @@ test('an open panel replaced under its id re-opens; one unregistered closes', as
   off1();
   off2();
   assert.equal(t.doc.querySelector('.tdf-rail-flyout').hidden, true);
+  await t.teardown();
+});
+
+test('a Users panel that cannot mount is reported and leaves the engine panel showing', async () => {
+  const t = setup({
+    prepare: (doc) => {
+      Object.defineProperty(doc.getElementById('userContainer'), 'children', {
+        get() {
+          throw new Error('unreadable');
+        },
+      });
+    },
+  });
+  assert.ok(t.doc.getElementById('tdf-rail').classList.contains('tdf-rail-failed'));
+  assert.deepEqual(t.errors(), ['Rail: unreadable']);
+  assert.deepEqual(listPanels(), []);
+  await t.teardown();
+  assert.equal(t.doc.getElementById('tdf-rail'), null);
+});
+
+test('the user store reports an unreadable list and a throwing subscriber, and still tells the rest', async () => {
+  const win = new Window();
+  const doc = win.document;
+  doc.body.innerHTML = `<div id="userContainer">${room('1', 'Lobby', [row('7', 'me', '1')])}</div>`;
+  const container = doc.getElementById('userContainer');
+  const errors = [];
+  const store = createUserStore(win, container, (e) => errors.push(e.message));
+  let told = 0;
+  store.subscribe(() => {
+    throw new Error('bad subscriber');
+  });
+  store.subscribe(() => told++);
+  doc.getElementById('room_1').insertAdjacentHTML('beforeend', row('8', 'Al', '1'));
+  await nextFrame();
+  assert.deepEqual(errors, ['bad subscriber']);
+  assert.equal(told, 1);
+  Object.defineProperty(container, 'children', {
+    get() {
+      throw new Error('unreadable');
+    },
+  });
+  doc.getElementById('room_1').insertAdjacentHTML('beforeend', row('9', 'Bo', '1'));
+  await nextFrame();
+  assert.deepEqual(errors, ['bad subscriber', 'unreadable']);
+  assert.equal(told, 1);
+  assert.deepEqual(store.rooms()[0].users.map((u) => u.name), ['me', 'Al']);
+  store.disconnect();
+});
+
+test('the open panel button closes it, and a click inside the rail keeps it open', async () => {
+  const t = setup();
+  t.openUsers();
+  t.doc.querySelector('.tdf-rail-users').dispatchEvent(new t.win.MouseEvent('mousedown', { bubbles: true }));
+  assert.equal(t.doc.querySelector('.tdf-rail-flyout').hidden, false);
+  t.openUsers();
+  assert.equal(t.doc.querySelector('.tdf-rail-flyout').hidden, true);
+  await t.teardown();
+});
+
+test('rail slot cleanups run on every re-render and on teardown; a throwing slot is reported', async () => {
+  const t = setup();
+  let cleaned = 0;
+  const off = registerRailPanel({ id: 's', title: 'S', icon: 'S', render() {}, renderRailSlot: () => () => cleaned++ });
+  const offBad = registerRailPanel({
+    id: 'x', title: 'X', icon: 'X', render() {},
+    renderRailSlot: () => {
+      throw new Error('slot broke');
+    },
+  });
+  assert.equal(cleaned, 1, 'the second registration re-rendered the column');
+  assert.deepEqual(t.errors(), ['Rail: slot broke']);
+  offBad();
+  assert.equal(cleaned, 2);
+  // Teardown unregisters the Users panel (one re-render), then destroys the rail.
+  await t.teardown();
+  assert.equal(cleaned, 4);
+  off();
+  assert.equal(cleaned, 4, 'a destroyed rail no longer renders');
+});
+
+test('the rail mounts again when #tdf-chat comes back', async () => {
+  const t = setup();
+  await t.teardown();
+  t.doc.body.insertAdjacentHTML('afterbegin', '<div id="tdf-chat"></div>');
+  await nextFrame();
+  assert.ok(t.doc.querySelector('#tdf-chat > #tdf-rail'));
+  assert.deepEqual(listPanels().map((p) => p.id), ['users']);
+  await t.teardown();
+});
+
+test('a status the engine is too busy to send is reported and the picker stays on the real one', async () => {
+  const t = setup();
+  t.win.sendReq = { readyState: 1 };
+  t.openUsers();
+  const sel = t.doc.querySelector('.tdf-rail-status');
+  sel.value = '3';
+  sel.dispatchEvent(new t.win.Event('change'));
+  assert.deepEqual(t.calls, []);
+  assert.deepEqual(t.errors(), ['Rail: the chat engine is busy sending; the status was not changed']);
+  assert.equal(t.doc.querySelector('.tdf-rail-status').value, '1');
   await t.teardown();
 });

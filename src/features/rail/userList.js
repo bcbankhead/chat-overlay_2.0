@@ -113,11 +113,14 @@ export function createUsersPanel({ doc, engine, store, onError }) {
             doc,
             statuses,
             current: status,
-            onPick: (index) =>
+            // Re-rendered either way: a refused pick puts the picker back on the real status.
+            onPick: (index) => {
               attempt(() => {
                 engine.sendStatus(index);
                 chosenStatus = index;
-              }),
+              });
+              render();
+            },
           }),
         );
 
@@ -200,7 +203,7 @@ export function createUsersPanel({ doc, engine, store, onError }) {
 
       render();
       const offStore = store.subscribe(render);
-      const offRegistry = onRegistryChange(render);
+      const offRegistry = onRegistryChange(render, onError);
       return () => {
         offStore();
         offRegistry();

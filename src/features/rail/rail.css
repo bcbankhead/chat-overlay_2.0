@@ -2,9 +2,10 @@
    tokens (src/core/theme.css); no literal colours here. */
 
 /* The engine's panel stays in the DOM, still patched by the poll; it is hidden only while
-   the rail exists, so a failed start leaves the original panel showing. resizeDivs writes
-   only inline width/height, which cannot override this. */
-body:has(#tdf-rail) #userContainer {
+   a working rail exists, so a failed start, or a rail whose Users panel failed to mount,
+   leaves the original panel showing. resizeDivs writes only inline width/height, which
+   cannot override this. */
+body:has(#tdf-rail:not(.tdf-rail-failed)) #userContainer {
   display: none !important;
 }
 

@@ -136,11 +136,20 @@ export function mountRail({ doc, host }) {
   };
   doc.addEventListener('keydown', onKey);
   doc.addEventListener('mousedown', onPointer);
-  const unsubscribe = onRegistryChange(renderColumn);
+  const unsubscribe = onRegistryChange(renderColumn, report);
   renderColumn();
 
   return {
     report,
+    /**
+     * Report a failure that leaves the rail without its Users panel, and stop hiding the
+     * engine's own panel (rail.css), so the user list is never lost.
+     * @param {unknown} err
+     */
+    fail(err) {
+      report(err);
+      root.classList.add('tdf-rail-failed');
+    },
     /** Remove the rail and everything it attached. */
     destroy() {
       close();
@@ -159,18 +168,23 @@ export function mountRail({ doc, host }) {
  * exists, so the rail never mounts when the overlay did not start. If #tdf-chat is later
  * removed (the bootstrap undoing a failed start), the rail tears itself down.
  * @param {{ doc: Document, win: Window, css: string }} deps
- * @returns {boolean} false when this page has no user list
+ * @returns {boolean} false when this page has no user list, or another copy of the script
+ *   already started the rail
  */
 export function startRail({ doc, win, css }) {
+  const w = /** @type {any} */ (win);
+  // Only the first copy of the script (userscript plus site include) starts the rail, so the
+  // registry it reads is the one that copy's other slices register into.
+  if (w.__tdfRailStarted) return false;
   const userContainer = doc.getElementById('userContainer');
   if (!userContainer) return false;
+  w.__tdfRailStarted = true;
 
   /** @type {(() => void) | null} */
   let teardown = null;
 
   const mount = () => {
     const host = doc.getElementById('tdf-chat');
-    // A second copy of the script (userscript plus site include) finds the rail mounted.
     if (!host || doc.getElementById('tdf-rail')) return;
     if (!doc.getElementById('tdf-rail-style')) {
       const style = doc.createElement('style');
@@ -179,15 +193,20 @@ export function startRail({ doc, win, css }) {
       doc.head.appendChild(style);
     }
     const rail = mountRail({ doc, host });
-    const engine = createEngine(win, doc);
-    const store = createUserStore(win, userContainer, rail.report);
-    const offUsers = registerRailPanel(createUsersPanel({ doc, engine, store, onError: rail.report }));
+    /** @type {Array<() => void>} undone in reverse */
+    const undo = [() => rail.destroy()];
     teardown = () => {
-      offUsers();
-      store.disconnect();
-      rail.destroy();
+      for (const fn of undo.reverse()) fn();
       teardown = null;
     };
+    try {
+      const engine = createEngine(win, doc);
+      const store = createUserStore(win, userContainer, rail.report);
+      undo.push(() => store.disconnect());
+      undo.push(registerRailPanel(createUsersPanel({ doc, engine, store, onError: rail.report })));
+    } catch (err) {
+      rail.fail(err);
+    }
   };
 
   mount();

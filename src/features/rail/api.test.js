@@ -42,7 +42,7 @@ test('user menu actions sort by order and filter by isVisible; a throwing isVisi
 
 test('every registration and unregistration notifies', () => {
   let calls = 0;
-  const unsubscribe = onRegistryChange(() => calls++);
+  const unsubscribe = onRegistryChange(() => calls++, () => {});
   const off = registerUserMenuAction(action('n'));
   off();
   off();
@@ -55,4 +55,20 @@ test('registrations without an id or callback are refused', () => {
   assert.throws(() => registerRailPanel({ title: 't', icon: 'i', render() {} }), TypeError);
   assert.throws(() => registerRailPanel({ id: 'p', title: 't', icon: 'i' }), TypeError);
   assert.throws(() => registerUserMenuAction({ id: 'a', label: 'l' }), TypeError);
+});
+
+test('a throwing listener goes to its own sink, and neither skips the rest nor fails the registration', () => {
+  const errors = [];
+  let calls = 0;
+  const offA = onRegistryChange(() => {
+    throw new Error('listener broke');
+  }, (e) => errors.push(e.message));
+  const offB = onRegistryChange(() => calls++, () => {});
+  const off = registerRailPanel(panel('ok'));
+  assert.equal(calls, 1);
+  assert.deepEqual(errors, ['listener broke']);
+  assert.deepEqual(listPanels().map((p) => p.id), ['ok']);
+  offA();
+  off();
+  offB();
 });

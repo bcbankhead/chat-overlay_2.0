@@ -67,3 +67,17 @@ test('sendStatus and changeRooms call the engine, and refuse when it has neither
   assert.equal(bare.roomID(), '');
   assert.equal(bare.uID(), '');
 });
+
+test('sendStatus refuses while the engine request is in flight, and sends once it is done', () => {
+  const made = [];
+  const { win, engine } = page('<select id="selectStatusID"><option value="1" selected>Here</option><option value="3">Away</option></select>', {
+    sendStatus: (i) => made.push(i),
+    sendReq: { readyState: 1 },
+  });
+  assert.throws(() => engine.sendStatus(3), /busy sending/);
+  assert.deepEqual(made, []);
+  assert.equal(win.document.getElementById('selectStatusID').value, '1');
+  win.sendReq.readyState = 4;
+  engine.sendStatus(3);
+  assert.deepEqual(made, [3]);
+});

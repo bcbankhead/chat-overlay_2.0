@@ -40,11 +40,19 @@ let seq = 0;
 const panels = new Map();
 /** @type {Map<string, Entry<UserMenuAction>>} */
 const actions = new Map();
-/** @type {Set<() => void>} */
-const listeners = new Set();
+/** @type {Map<() => void, (err: unknown) => void>} listener → where its failures go */
+const listeners = new Map();
 
+// A failing listener neither skips the rest nor throws out of the registering caller, whose
+// registration has already gone through.
 function notify() {
-  for (const fn of listeners) fn();
+  for (const [fn, onError] of listeners) {
+    try {
+      fn();
+    } catch (err) {
+      onError(err);
+    }
+  }
 }
 
 /**
@@ -123,10 +131,11 @@ export function listUserMenuActions(user, onError) {
 /**
  * Called after every registration and unregistration.
  * @param {() => void} fn
+ * @param {(err: unknown) => void} onError  receives what `fn` throws
  * @returns {() => void} unsubscribe
  */
-export function onRegistryChange(fn) {
-  listeners.add(fn);
+export function onRegistryChange(fn, onError) {
+  listeners.set(fn, onError);
   return () => {
     listeners.delete(fn);
   };
