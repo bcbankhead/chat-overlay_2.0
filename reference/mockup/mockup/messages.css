@@ -1,0 +1,102 @@
+/* Message layout mockup (harness only): avatar + grouped. Overrides theme.css's one-line
+   rows; colours come from #tdf-chat's own tokens. */
+
+#tdf-chat .tdf-msg.m-head,
+#tdf-chat .tdf-msg.m-cont {
+  position: relative;
+  padding-left: 70px;
+  padding-right: 12px;
+}
+
+#tdf-chat .tdf-msg.m-head {
+  margin-top: 10px;
+  padding-top: 2px;
+}
+
+/* A one-message group is shorter than its avatar; keep the avatar inside its own row.
+   Longer groups already clear it, and padding their first row would open a gap. */
+#tdf-chat .tdf-msg.m-head:not(:has(+ .m-cont)) {
+  min-height: 52px;
+  box-sizing: border-box;
+}
+
+#tdf-chat .tdf-msg.m-cont {
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
+
+#tdf-chat .m-avatar {
+  position: absolute;
+  left: 12px;
+  top: 4px;
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--tdf-hover-bg);
+}
+
+/* Name (and time) on their own line above the text; the name keeps the sender colour. */
+#tdf-chat .m-head .tdf-user {
+  display: inline-block;
+  margin-bottom: 1px;
+}
+
+#tdf-chat .m-head .tdf-user.tdf-sep::after,
+#tdf-chat .m-cont .tdf-user.tdf-sep::after {
+  content: none;
+}
+
+#tdf-chat .m-head .m-time {
+  margin-left: 8px;
+  color: var(--tdf-muted);
+  font-size: 11px;
+  font-weight: 400;
+  font-style: normal;
+}
+
+#tdf-chat .m-head .m-time + .tdf-body,
+#tdf-chat .m-head .tdf-user + .tdf-body {
+  display: block;
+}
+
+#tdf-chat .m-cont .tdf-user {
+  display: none;
+}
+
+/* Join/leave and system notices: small, muted, centred on the avatar column's indent. */
+#tdf-chat .tdf-msg.m-notice {
+  margin: 6px 0;
+  padding: 0 12px 0 70px;
+  font-size: 12px;
+  color: var(--tdf-muted);
+}
+
+#tdf-chat .tdf-msg.m-notice:hover {
+  background: none;
+}
+
+/* Fonts are ours: every message uses the UI font at the view's size, whatever family or
+   size the sender picked. Only their colour is kept, adapted per theme (ink.js). */
+#tdf-chat .tdf-msg .tdf-line {
+  font-family: var(--tdf-ui-font) !important;
+}
+
+/* The contrast chip is replaced by the colour shift. */
+#tdf-chat[data-theme] .tdf-msg .tdf-line,
+#tdf-chat[data-theme] .tdf-msg .tdf-body pre {
+  background: none !important;
+  padding: 0 !important;
+}
+
+/* Same rounded corners as the sidebar and its flyouts. */
+#tdf-chat {
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+/* The light/dark toggle moved to the sidebar's icon row; the overlay's own stays in the
+   page, hidden, and the sidebar presses it. */
+#tdf-chat .tdf-theme-toggle {
+  display: none;
+}

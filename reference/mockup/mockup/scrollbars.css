@@ -1,0 +1,38 @@
+/* Floating scrollbars (harness only): native bars hidden, scrollbars.js draws the thumb. */
+
+#tdf-chat .tdf-list,
+#tdf-side .side-flyout,
+#tdf-side .side-users {
+  scrollbar-width: none;
+}
+
+#tdf-chat .tdf-list::-webkit-scrollbar,
+#tdf-side .side-flyout::-webkit-scrollbar,
+#tdf-side .side-users::-webkit-scrollbar {
+  display: none;
+}
+
+.fs-thumb {
+  position: absolute;
+  top: 0;
+  right: 3px;
+  z-index: 2;
+  width: 6px;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.55);
+  opacity: 0;
+  transition: opacity 300ms ease-out, width 120ms ease-out;
+  cursor: pointer;
+}
+
+.fs-thumb.visible {
+  opacity: 1;
+  transition: opacity 120ms ease-out, width 120ms ease-out;
+}
+
+/* Wider under the pointer, so it is easy to grab. */
+.fs-thumb:hover,
+.fs-thumb.dragging {
+  width: 9px;
+  background: rgba(128, 128, 128, 0.8);
+}

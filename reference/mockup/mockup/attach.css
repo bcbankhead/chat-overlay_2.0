@@ -1,0 +1,280 @@
+/* Image attach on the message box (harness only); attach.js places these. */
+
+/* Room on the right for the + button; with an image attached, room on the left for its
+   thumbnail, which sits where the text starts. */
+#optionsBar.at-bar {
+  box-sizing: border-box;
+  padding-right: 52px !important;
+  padding-bottom: 20px !important; /* clear of the instruction line */
+  scrollbar-width: none; /* still scrolls; a textarea cannot hold a floating thumb */
+}
+
+#optionsBar.at-bar::-webkit-scrollbar {
+  display: none;
+}
+
+#optionsBar.at-bar.at-has {
+  padding-left: 62px !important;
+}
+
+#optionsBar.at-over {
+  outline: 2px dashed #2f81f7;
+  outline-offset: -4px;
+}
+
+/* Upload: a grey icon, no background. */
+.at-plus {
+  position: absolute;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #8b949e;
+  cursor: pointer;
+}
+
+.at-plus svg {
+  width: 20px;
+  height: 20px;
+}
+
+.at-plus:hover {
+  color: #0969da;
+}
+
+#optionsContainer:has(#optionsBar[data-tdf-theme="dark"]) .at-plus:hover {
+  color: #58a6ff;
+}
+
+.at-hint {
+  position: absolute;
+  z-index: 6;
+  color: #8b949e;
+  font: 11px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+
+
+.at-thumb {
+  position: absolute;
+  z-index: 6;
+  width: 44px;
+  height: 44px;
+}
+
+.at-thumb[hidden] {
+  display: none;
+}
+
+.at-thumb img {
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  object-fit: cover;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.at-drop {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #3d444d;
+  color: #ffffff;
+  font: 13px/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+
+/* Composer layout: the engine's icon row is gone (smilies.js puts one smiley button in
+   its place), so the box sits lower and grows to 75px; Send matches its height and
+   corners. Container stays the engine's 120px. */
+#optionsBar[data-tdf-theme] {
+  bottom: 10px !important;
+  height: 75px !important;
+}
+
+#optionsSend {
+  bottom: 10px !important;
+  height: 75px !important;
+  border: 0 !important;
+  border-radius: 6px !important;
+  background: #2da44e !important;
+  color: #ffffff !important;
+  font: 600 15px/1 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif !important;
+}
+
+#optionsSend:hover {
+  background: #2c974b !important;
+}
+
+.sm-button {
+  position: absolute;
+  left: 8px;
+  bottom: 89px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: #3d444d;
+  cursor: pointer;
+}
+
+.sm-button svg {
+  width: 22px;
+  height: 22px;
+}
+
+.sm-button:hover {
+  color: #0969da;
+}
+
+#optionsContainer:has(#optionsBar[data-tdf-theme="dark"]) .sm-button {
+  color: #d1d5db;
+}
+
+#optionsContainer:has(#optionsBar[data-tdf-theme="dark"]) .sm-button:hover {
+  color: #58a6ff;
+}
+
+/* Smiley picker: the composer's, and image reactions'. */
+.sm-picker {
+  position: absolute;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(5, 32px);
+  gap: 2px;
+  padding: 6px;
+  background: #ffffff;
+  border: 1px solid #d1d9e0;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.sm-picker[hidden] {
+  display: none;
+}
+
+body:has(#tdf-chat[data-theme="dark"]) .sm-picker {
+  background: #16191d;
+  border-color: #30363d;
+}
+
+.sm-item {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+
+.sm-item:hover {
+  background: rgba(127, 127, 127, 0.18);
+}
+
+.sm-extra {
+  grid-column: 1 / -1;
+}
+
+.sm-extra:empty {
+  display: none;
+}
+
+.sm-action {
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 0;
+  border-top: 1px solid rgba(127, 127, 127, 0.25);
+  background: none;
+  color: inherit;
+  font: 13px system-ui, sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+
+body:has(#tdf-chat[data-theme="dark"]) .sm-action {
+  color: #e6edf3;
+}
+
+.sm-action:hover {
+  background: rgba(127, 127, 127, 0.12);
+}
+
+/* Posted images (reactions.js tags them rx-img) show they can be reacted to: a pointer,
+   and 20% fainter on hover. Smilies in the text are left alone. */
+#tdf-chat .tdf-body img.rx-img {
+  cursor: pointer;
+  transition: opacity 120ms ease-out;
+}
+
+#tdf-chat .tdf-body img.rx-img:hover {
+  opacity: 0.8;
+}
+
+/* A link wrapping a posted image is one line of text tall; its hover background (the
+   message view's link style) would show through the faded image as a bar. */
+#tdf-chat .tdf-body a:has(> img.rx-img),
+#tdf-chat .tdf-body a:has(> img.rx-img):hover {
+  display: inline-block;
+  background: none;
+}
+
+/* Reactions under an image message. */
+#tdf-chat .rx-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0 2px;
+}
+
+#tdf-chat .rx-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px 4px;
+  border: 1px solid var(--tdf-border);
+  border-radius: 999px;
+  background: var(--tdf-hover-bg);
+  color: var(--tdf-fg);
+  font: 12px var(--tdf-ui-font);
+  cursor: pointer;
+}
+
+#tdf-chat .rx-chip img {
+  width: 18px;
+  height: 18px;
+}
+
+#tdf-chat .rx-chip.mine {
+  border-color: var(--tdf-link);
+}
+
+/* Cursor colour per theme: white on dark, black on light. (Its width is the browser's;
+   CSS cannot set it.) */
+#optionsBar[data-tdf-theme="dark"] {
+  caret-color: #ffffff !important;
+}
+
+#optionsBar[data-tdf-theme="light"] {
+  caret-color: #000000 !important;
+}
