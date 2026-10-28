@@ -32,10 +32,10 @@ before(async () => {
 after(() => rmSync(dir, { recursive: true, force: true }));
 
 /** A page with the engine's composer; `sent` counts submitenter's sends. */
-function page({ overlay = false } = {}) {
+function page({ overlay = false, chat = true } = {}) {
   const window = new Window({ url: 'https://dollforum.com/forum/chat/' });
   const { document } = window;
-  document.body.innerHTML = '<textarea id="optionsBar"></textarea>';
+  document.body.innerHTML = chat ? '<div id="chatContainer"></div><textarea id="optionsBar"></textarea>' : '<textarea id="optionsBar"></textarea>';
   const bar = /** @type {any} */ (document.getElementById('optionsBar'));
   const state = { sent: 0 };
   // Stands in for the inline onkeypress="return submitenter(...)", which sends on any Enter.
@@ -166,6 +166,52 @@ test('the composer is not themed while #tdf-chat has no theme', async () => {
   root.dataset.theme = 'dark';
   await settle();
   assert.equal(bar.dataset.tdfTheme, 'dark');
+});
+
+test('a page without the chat installs no theme and observes nothing', async () => {
+  const { document, bar } = page({ chat: false });
+  const root = document.createElement('div');
+  root.id = 'tdf-chat';
+  root.dataset.theme = 'dark';
+  document.body.appendChild(root);
+  await settle();
+  assert.equal(bar.dataset.tdfTheme, undefined);
+  assert.equal(document.getElementById('tdf-composer-style'), null);
+});
+
+test('a paste the browser inserts through execCommand skips the fallback', () => {
+  const { window, document, bar } = page();
+  /** @type {any[]} */
+  const calls = [];
+  document.execCommand = (/** @type {any[]} */ ...args) => {
+    calls.push(args);
+    return true;
+  };
+  let inputs = 0;
+  bar.addEventListener('input', () => {
+    inputs += 1;
+  });
+  bar.value = 'docs';
+  bar.setSelectionRange(0, 4);
+  assert.equal(paste(window, bar, 'https://example.com/').defaultPrevented, true);
+  assert.deepEqual(calls, [['insertText', false, '[[a href=//example.com/ target=_blank]]docs[[/a]]']]);
+  // The stub inserts nothing, so an untouched value proves setRangeText did not run.
+  assert.equal(bar.value, 'docs');
+  assert.equal(inputs, 0);
+});
+
+test('every theme token the composer copies is defined by both themes in theme.css', () => {
+  const source = readFileSync(path.join(here, 'index.js'), 'utf8');
+  const list = /const TOKENS = \[([^\]]*)\]/.exec(source)?.[1];
+  assert.ok(list, 'TOKENS not found in index.js');
+  const tokens = [...list.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  assert.ok(tokens.length > 0);
+  const theme = readFileSync(path.join(here, '..', '..', 'core', 'theme.css'), 'utf8');
+  for (const name of ['light', 'dark']) {
+    const block = new RegExp(`#tdf-chat\\[data-theme="${name}"\\] \\{([^}]*)\\}`).exec(theme)?.[1];
+    assert.ok(block, `no ${name} block in theme.css`);
+    for (const token of tokens) assert.match(block, new RegExp(`${token}:`), `${token} missing from ${name}`);
+  }
 });
 
 test('the sender colour sets the ink class, and follows the engine restyling it', async () => {

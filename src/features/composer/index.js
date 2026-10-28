@@ -3,11 +3,13 @@
 // in place. Sending is untouched — the inline submitenter still calls addMessage, so whisper,
 // silence, the length limit and the repeat filter keep applying.
 
+import { MAIN_DIV } from '../../core/parse.js';
 import { inkClass } from '../../core/view.js';
 import css from './composer.css';
 import { buildLabelledLink, isSingleHttpUrl } from './link.js';
 
 const BAR = 'optionsBar';
+// A copy of names theme.css owns; index.test.js fails when the two drift.
 const TOKENS = ['--tdf-bg', '--tdf-fg', '--tdf-muted', '--tdf-border', '--tdf-link', '--tdf-chip-bg'];
 
 const win = /** @type {any} */ (window);
@@ -66,14 +68,9 @@ function onPaste(event) {
  */
 function insert(bar, text) {
   bar.focus();
-  let inserted = false;
-  try {
-    inserted = document.execCommand('insertText', false, text);
-  } catch {
-    // execCommand is deprecated and may be unsupported or throw; setRangeText below inserts
-    // the same text, losing only the paste's undo step.
-  }
-  if (inserted) return;
+  // execCommand is deprecated; where it is missing or declines, setRangeText inserts the same
+  // text, losing only the paste's undo step.
+  if (typeof document.execCommand === 'function' && document.execCommand('insertText', false, text)) return;
   bar.setRangeText(text, bar.selectionStart, bar.selectionEnd, 'end');
   bar.dispatchEvent(new Event('input', { bubbles: true }));
 }
@@ -84,6 +81,8 @@ function insert(bar, text) {
  * the overlay mounts — or if it never does — the composer keeps the engine's look.
  */
 function installTheme() {
+  // Pages under the @match without a chat never mount the overlay: nothing to wait for.
+  if (!document.getElementById(MAIN_DIV)) return;
   const style = document.createElement('style');
   style.id = 'tdf-composer-style';
   document.head.appendChild(style);
