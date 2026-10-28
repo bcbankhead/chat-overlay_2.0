@@ -3,7 +3,9 @@
 
 import { describeError } from './errors.js';
 import { expand } from './expand.js';
+import { clockHHMM, continuesGroup, groupTime } from './group.js';
 import { DEFAULT_REPLAY_LIMIT } from './history.js';
+import { adapt, THEME_BG } from './ink.js';
 import { safeDecodeURIComponent } from './parse.js';
 import { sanitize } from './sanitize.js';
 
@@ -13,6 +15,47 @@ import { sanitize } from './sanitize.js';
  */
 
 const THEME_LABELS = { auto: 'Auto', light: 'Light', dark: 'Dark' };
+
+/** Kinds that are the view's own voice: muted, never in a sender colour. */
+const NOTICE_KINDS = new Set(['entry', 'exit', 'system']);
+
+/** Images larger than this on either side are posted images; smaller ones are smilies. */
+const POSTED_MIN_PX = 48;
+
+/**
+ * Tag a posted image once its size is known, so it takes the pointer and the hover fade.
+ * @param {HTMLImageElement} img
+ */
+function tagPosted(img) {
+  if (img.naturalWidth > POSTED_MIN_PX || img.naturalHeight > POSTED_MIN_PX) {
+    img.classList.add('tdf-posted');
+  }
+}
+
+/**
+ * What grouping reads from a rendered row, or null for a row that is not a record.
+ * @param {HTMLElement} row
+ * @returns {import('./group.js').GroupKey | null}
+ */
+function groupKey(row) {
+  const { kind, user = '', t } = row.dataset;
+  return kind === undefined ? null : { user, kind, t: Number(t) };
+}
+
+/**
+ * Mark a chat row `tdf-head` or `tdf-cont` from the row before it. Notices carry neither,
+ * and break the group for the row after them.
+ * @param {Element | null} el
+ */
+function regroup(el) {
+  const row = /** @type {HTMLElement | null} */ (el);
+  const key = row && groupKey(row);
+  if (!row || !key || (key.kind !== 'public' && key.kind !== 'whisper')) return;
+  const prev = /** @type {HTMLElement | null} */ (row.previousElementSibling);
+  const cont = continuesGroup(prev && groupKey(prev), key);
+  row.classList.toggle('tdf-cont', cont);
+  row.classList.toggle('tdf-head', !cont);
+}
 
 /**
  * Relative luminance of a `#rgb`, `#rrggbb` or `rgb()` colour, or null.
@@ -37,7 +80,8 @@ function luminance(color) {
 }
 
 /**
- * Theme-independent ink class: which background the sender colour is illegible on.
+ * Theme-independent ink class: which background the sender colour is illegible on. The
+ * view no longer uses it (messages take ink.js's colour shift); the composer still does.
  * @param {string} color
  */
 export function inkClass(color) {
@@ -102,6 +146,19 @@ export function createView({ doc, win, container, theme, css }) {
     if (name && typeof whisper === 'function') whisper(name.getAttribute('data-user') ?? '');
   });
 
+  // Posted images are told from smilies by size, known only once loaded. `load` does not
+  // bubble, so it is caught in the capture phase.
+  list.addEventListener(
+    'load',
+    (event) => {
+      const target = /** @type {Element} */ (event.target);
+      if (target.tagName === 'IMG' && target.closest?.('.tdf-body')) {
+        tagPosted(/** @type {HTMLImageElement} */ (target));
+      }
+    },
+    true,
+  );
+
   const expandOptions = {
     smilie: (/** @type {string} */ text) =>
       typeof win.addSmilie === 'function' ? win.addSmilie(text) : text,
@@ -115,15 +172,37 @@ export function createView({ doc, win, container, theme, css }) {
     el.className = `tdf-msg tdf-kind-${record.kind}`;
     if (record.ircFlag === '1') el.classList.add('tdf-irc');
     if (record.confirm) el.classList.add(`tdf-${record.confirm}`);
-    const ink = inkClass(record.color);
-    if (ink) el.classList.add(ink);
     if (record.id !== null) el.dataset.id = record.id;
     if (record.mTime) el.dataset.mtime = record.mTime;
+    const t = groupTime(record);
+    el.dataset.kind = record.kind;
+    el.dataset.user = record.user;
+    el.dataset.t = String(t);
+    const chat = record.kind === 'public' || record.kind === 'whisper';
 
+    // Sender family and size are ignored: every message uses the UI font (theme.css).
     const line = doc.createElement('span');
     line.className = 'tdf-line';
-    if (record.color) line.style.color = record.color;
-    if (record.family) line.style.fontFamily = record.family;
+    // The sender colour, shifted per theme until legible; theme.css picks the theme's.
+    // '' leaves the property unset, so the line takes the theme's text colour.
+    if (record.color && !NOTICE_KINDS.has(record.kind)) {
+      for (const theme of /** @type {const} */ (['light', 'dark'])) {
+        const ink = adapt(record.color, THEME_BG[theme]);
+        if (ink) line.style.setProperty(`--tdf-ink-${theme}`, ink);
+      }
+    }
+
+    if (chat) {
+      const avatar = doc.createElement('img');
+      avatar.className = 'tdf-avatar';
+      avatar.alt = '';
+      avatar.setAttribute('loading', 'lazy');
+      // A failed avatar falls back to the neutral square, as a missing one does. Expected and
+      // harmless: a deleted or broken avatar file loses only the picture, never the message.
+      avatar.addEventListener('error', () => avatar.removeAttribute('src'));
+      if (record.avatar) avatar.src = `avatars/40/${record.avatar}`;
+      el.appendChild(avatar);
+    }
 
     const showName = record.user && record.kind !== 'entry' && record.kind !== 'exit';
     if (showName) {
@@ -132,6 +211,12 @@ export function createView({ doc, win, container, theme, css }) {
       name.dataset.user = record.user;
       name.textContent = safeDecodeURIComponent(record.user);
       line.appendChild(name);
+    }
+    if (chat) {
+      const time = doc.createElement('span');
+      time.className = 'tdf-time';
+      time.textContent = clockHHMM(t);
+      line.appendChild(time);
     }
 
     const body = doc.createElement('span');
@@ -146,6 +231,7 @@ export function createView({ doc, win, container, theme, css }) {
     }
     line.appendChild(body);
     el.appendChild(line);
+    for (const img of body.querySelectorAll('img')) if (img.complete) tagPosted(img);
     return el;
   }
 
@@ -199,10 +285,15 @@ export function createView({ doc, win, container, theme, css }) {
     }
   }
 
-  /** @param {HTMLElement} el */
+  /**
+   * Remove a row; the row after it may now head its own group.
+   * @param {HTMLElement} el
+   */
   function remove(el) {
+    const next = el.nextElementSibling;
     unindex(el);
     el.remove();
+    regroup(next);
   }
 
   // The list keeps no more than a replay shows; the oldest entries go first.
@@ -229,7 +320,9 @@ export function createView({ doc, win, container, theme, css }) {
   return {
     /** @param {ViewRecord} record */
     append(record) {
-      list.appendChild(add(record));
+      const el = add(record);
+      list.appendChild(el);
+      regroup(el);
       trim();
       autoscroll();
     },
@@ -244,6 +337,7 @@ export function createView({ doc, win, container, theme, css }) {
         frag.appendChild(el);
       }
       list.appendChild(frag);
+      for (const el of els) regroup(el);
       trim();
       autoscroll();
     },
@@ -256,7 +350,10 @@ export function createView({ doc, win, container, theme, css }) {
     confirm(pendingId, record) {
       for (const el of entries('id', pendingId)) {
         unindex(el);
-        el.replaceWith(add(record));
+        const replacement = add(record);
+        el.replaceWith(replacement);
+        regroup(replacement);
+        regroup(replacement.nextElementSibling);
       }
     },
 

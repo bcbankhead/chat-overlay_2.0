@@ -23,7 +23,7 @@ function fakeSettings(initial = {}, { failSet = false } = {}) {
 const settle = () => new Promise((r) => setTimeout(r, 10));
 
 async function setup({ dark = false, settings = fakeSettings(), autoScroll = true, globals = {} } = {}) {
-  const win = new Window();
+  const win = new Window({ url: 'https://example.test/chat/' });
   Object.assign(win, globals);
   const doc = win.document;
   doc.body.innerHTML = `<div id="chatContainer"></div><input type="checkbox" id="autoScrollID" ${autoScroll ? 'checked' : ''}>`;
@@ -59,13 +59,15 @@ test('mounts over the hidden engine container with its styles', async () => {
   assert.equal(doc.getElementById('tdf-chat-style').textContent, '#tdf-chat{}');
 });
 
-test('an entry keeps sender colour and family, not size, and expands smilies', async () => {
+test('an entry keeps its sender colour per theme, not family or size, and expands smilies', async () => {
   const { view, root } = await setup();
   view.append(rec({ text: 'love :h' }));
   const [el] = msgs(root);
   const line = el.querySelector('.tdf-line');
-  assert.equal(line.style.color, '#cc0000');
-  assert.equal(line.style.fontFamily, 'georgia');
+  assert.equal(line.style.getPropertyValue('--tdf-ink-light'), '#cc0000');
+  assert.equal(line.style.getPropertyValue('--tdf-ink-dark'), '#f13e2f');
+  assert.equal(line.style.color, '');
+  assert.equal(line.style.fontFamily, '');
   assert.equal(line.style.fontSize, '');
   assert.equal(el.querySelector('.tdf-user').textContent, 'bob');
   assert.ok(el.querySelector('.tdf-user').classList.contains('tdf-sep'));
@@ -85,18 +87,127 @@ test('entry/exit lines show no name; irc lines show no separator; line breaks us
   assert.equal(multi.querySelector('.tdf-body pre').textContent, 'a\nb');
 });
 
-test('low-contrast sender colours get a theme-independent ink class', async () => {
+test('low-contrast sender colours are shifted per theme, never chipped', async () => {
   const { view, root } = await setup();
   view.append(rec({ id: 'k', color: '#000000' }));
-  view.append(rec({ id: 'y', color: 'rgb(255, 255, 0)' }));
-  view.append(rec({ id: 'm', color: '#e06666' }));
-  view.append(rec({ id: 'n', color: 'teal' }));
-  const [black, yellow, mid, named] = msgs(root);
-  assert.ok(black.classList.contains('tdf-ink-dark'));
-  assert.ok(yellow.classList.contains('tdf-ink-light'));
-  for (const el of [mid, named]) {
-    assert.ok(!el.classList.contains('tdf-ink-dark') && !el.classList.contains('tdf-ink-light'));
+  view.append(rec({ id: 'b', color: '#003366' }));
+  view.append(rec({ id: 'p', color: '#ff69b4' }));
+  const [black, blue, pink] = msgs(root);
+  const ink = (el, theme) => el.querySelector('.tdf-line').style.getPropertyValue(`--tdf-ink-${theme}`);
+  assert.equal(ink(black, 'light'), '#000000');
+  assert.equal(ink(black, 'dark'), ''); // unset: the theme's text colour
+  assert.equal(ink(blue, 'dark'), '#5585be');
+  assert.equal(ink(pink, 'light'), '#cd3a89');
+  for (const el of msgs(root)) {
+    assert.ok(![...el.classList].some((c) => c.startsWith('tdf-ink')));
   }
+});
+
+test('notices never take a sender colour, an avatar or a group', async () => {
+  const { view, root } = await setup();
+  for (const kind of ['entry', 'exit', 'system']) view.append(rec({ id: kind, kind, color: '#003366' }));
+  for (const el of msgs(root)) {
+    const line = el.querySelector('.tdf-line');
+    assert.equal(line.style.getPropertyValue('--tdf-ink-light'), '');
+    assert.equal(line.style.getPropertyValue('--tdf-ink-dark'), '');
+    assert.equal(el.querySelector('.tdf-avatar'), null);
+    assert.ok(!el.classList.contains('tdf-head') && !el.classList.contains('tdf-cont'));
+  }
+});
+
+const heads = (root) => msgs(root).map((el) => (el.classList.contains('tdf-cont') ? 'c' : el.classList.contains('tdf-head') ? 'h' : '-'));
+
+test('a run from one sender groups under one header; a gap, sender change or whisper breaks it', async () => {
+  const { view, root } = await setup();
+  view.replay([
+    rec({ id: '1', mTime: '1000' }),
+    rec({ id: '2', mTime: '1100' }),
+    rec({ id: '3', mTime: '1400' }), // 300 s after 2: still the run
+    rec({ id: '4', mTime: '1701' }), // 301 s: new group
+    rec({ id: '5', mTime: '1702', user: 'alice' }),
+    rec({ id: '6', mTime: '1703', user: 'alice', kind: 'whisper' }),
+    rec({ id: '7', mTime: '1704', user: 'alice' }),
+  ]);
+  assert.deepEqual(heads(root), ['h', 'c', 'c', 'h', 'h', 'h', 'h']);
+  view.append(rec({ id: '8', mTime: '1705', user: 'alice' }));
+  assert.equal(heads(root).at(-1), 'c');
+});
+
+test('a notice breaks a group; the next message heads its own', async () => {
+  const { view, root } = await setup();
+  view.append(rec({ id: '1', mTime: '1000' }));
+  view.append(rec({ id: 'e', mTime: '1001', kind: 'entry', user: 'carol' }));
+  view.append(rec({ id: '2', mTime: '1002' }));
+  view.notice('Chat history not saved: x');
+  view.append(rec({ id: '3', mTime: '1003' }));
+  assert.deepEqual(heads(root), ['h', '-', 'h', '-', 'h']);
+});
+
+test('a head row carries avatar, name and time; a placeholder avatar has no src', async () => {
+  const { view, root } = await setup();
+  const t = new Date(2026, 0, 2, 9, 7).getTime() / 1000;
+  view.append(rec({ id: '1', mTime: String(t), avatar: 'bob.gif' }));
+  view.append(rec({ id: '2', mTime: String(t + 1), user: 'alice', avatar: '' }));
+  const [bob, alice] = msgs(root);
+  assert.equal(bob.querySelector('.tdf-avatar').getAttribute('src'), 'avatars/40/bob.gif');
+  assert.equal(bob.querySelector('.tdf-avatar').getAttribute('loading'), 'lazy');
+  assert.equal(bob.querySelector('.tdf-time').textContent, '09:07');
+  assert.equal(alice.querySelector('.tdf-avatar').hasAttribute('src'), false);
+  const avatar = bob.querySelector('.tdf-avatar');
+  avatar.dispatchEvent(new root.ownerDocument.defaultView.Event('error'));
+  assert.equal(avatar.hasAttribute('src'), false);
+});
+
+test('a pending message is timed by receipt and regrouped when confirmed', async () => {
+  const { view, root } = await setup();
+  view.append(rec({ id: '1', mTime: '1000' }));
+  view.append(rec({ id: 'local-1', mTime: '', receivedAt: 1_000_500, confirm: 'pending' }));
+  assert.deepEqual(heads(root), ['h', 'c']);
+  view.append(rec({ id: '3', mTime: '1002' }));
+  view.confirm('local-1', rec({ id: '2', mTime: '1001', user: 'alice' }));
+  assert.deepEqual(heads(root), ['h', 'h', 'h']);
+});
+
+test('removing or trimming a group\'s first message leaves the next one heading it', async () => {
+  const { view, root } = await setup();
+  view.replay([rec({ id: '1', mTime: '1000' }), rec({ id: '2', mTime: '1001' }), rec({ id: '3', mTime: '1002' })]);
+  view.removeByMTime('1000');
+  assert.deepEqual(heads(root), ['h', 'c']);
+  assert.equal(msgs(root)[0].dataset.id, '2');
+
+  const capped = await setup();
+  capped.view.replay(Array.from({ length: DEFAULT_REPLAY_LIMIT }, (_, i) => rec({ id: `r${i}`, mTime: String(1000 + i) })));
+  assert.equal(heads(capped.root)[0], 'h');
+  assert.equal(heads(capped.root)[1], 'c');
+  capped.view.append(rec({ id: 'x', mTime: String(1000 + DEFAULT_REPLAY_LIMIT) }));
+  assert.equal(msgs(capped.root)[0].dataset.id, 'r1');
+  assert.equal(heads(capped.root)[0], 'h');
+});
+
+test('posted images are tagged once loaded; smilies are not', async () => {
+  const { win, view, root } = await setup();
+  view.append(rec({ text: 'look [[img src=pic.jpg]] :h' }));
+  const [posted, smilie] = root.querySelectorAll('.tdf-body img');
+  Object.defineProperty(posted, 'naturalWidth', { value: 640 });
+  Object.defineProperty(posted, 'naturalHeight', { value: 480 });
+  Object.defineProperty(smilie, 'naturalWidth', { value: 20 });
+  Object.defineProperty(smilie, 'naturalHeight', { value: 20 });
+  for (const img of [posted, smilie]) img.dispatchEvent(new win.Event('load'));
+  assert.ok(posted.classList.contains('tdf-posted'));
+  assert.ok(!smilie.classList.contains('tdf-posted'));
+});
+
+test('an image already loaded at render (cached) is tagged without a load event', async () => {
+  const { win, view, root } = await setup();
+  const proto = win.HTMLImageElement.prototype;
+  const big = (img) => (img.getAttribute('src') ?? '').endsWith('pic.jpg');
+  Object.defineProperty(proto, 'complete', { configurable: true, get: () => true });
+  Object.defineProperty(proto, 'naturalWidth', { configurable: true, get() { return big(this) ? 640 : 20; } });
+  Object.defineProperty(proto, 'naturalHeight', { configurable: true, get() { return big(this) ? 480 : 20; } });
+  view.append(rec({ text: 'look [[img src=pic.jpg]] :h' }));
+  const [posted, smilie] = root.querySelectorAll('.tdf-body img');
+  assert.ok(posted.classList.contains('tdf-posted'));
+  assert.ok(!smilie.classList.contains('tdf-posted'));
 });
 
 test('message html is sanitised before insertion', async () => {

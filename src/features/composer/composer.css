@@ -23,8 +23,9 @@
 }
 
 /* A sender colour too close to the theme background keeps its colour on a contrasting
-   ground, as the message view's chip does. The caret follows the sender colour there: the
-   theme foreground can match the chip itself. */
+   ground. (The message view dropped its chip for ink.js's colour shift; TDF-0009.10 moves
+   the box to it too.) The caret follows the sender colour there: the theme foreground can
+   match the chip itself. */
 #optionsBar[data-tdf-theme="dark"][data-tdf-ink="tdf-ink-dark"],
 #optionsBar[data-tdf-theme="light"][data-tdf-ink="tdf-ink-light"] {
   background: var(--tdf-chip-bg);

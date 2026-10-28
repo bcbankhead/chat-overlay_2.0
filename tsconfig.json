@@ -14,6 +14,8 @@
   "include": [
     "src/core/parse.js",
     "src/core/expand.js",
+    "src/core/group.js",
+    "src/core/ink.js",
     "src/core/reconcile.js",
     "src/features/composer/link.js"
   ]

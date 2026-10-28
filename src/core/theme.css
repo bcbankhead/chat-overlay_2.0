@@ -1,5 +1,7 @@
-/* TDF Chat 2.0 theme tokens and message view. Font size is normalised; sender colour and
-   font family are set per entry. */
+/* TDF Chat 2.0 theme tokens and message view. Every message uses the UI font at the view's
+   size; only the sender colour is kept, shifted per theme (ink.js) into --tdf-ink-light and
+   --tdf-ink-dark on each line. Rows group by sender (group.js): a tdf-head shows avatar,
+   name and time, a tdf-cont is indented beneath it. */
 
 #tdf-chat {
   --tdf-msg-size: 13px;
@@ -101,11 +103,20 @@
   background: var(--tdf-whisper-bg);
 }
 
+/* Join/leave and system notices: small, muted, at the text indent. */
 #tdf-chat .tdf-kind-entry,
 #tdf-chat .tdf-kind-exit,
 #tdf-chat .tdf-kind-system {
+  margin: 6px 0;
+  padding: 0 12px 0 70px;
+  font-size: 12px;
   color: var(--tdf-muted);
-  font-style: italic;
+}
+
+#tdf-chat .tdf-kind-entry:hover,
+#tdf-chat .tdf-kind-exit:hover,
+#tdf-chat .tdf-kind-system:hover {
+  background: none;
 }
 
 #tdf-chat .tdf-pending {
@@ -118,13 +129,99 @@
   font-size: 0.85em;
 }
 
-/* Sender colours too close to the theme background keep their colour on a contrasting
-   chip, so they stay legible without being changed. */
-#tdf-chat[data-theme="dark"] .tdf-ink-dark .tdf-line,
-#tdf-chat[data-theme="light"] .tdf-ink-light .tdf-line {
-  background: var(--tdf-chip-bg);
-  border-radius: 4px;
-  padding: 0 4px;
+/* Fonts are ours: the sender's family and size are ignored. */
+#tdf-chat .tdf-line {
+  font-family: var(--tdf-ui-font);
+}
+
+/* The sender colour, as shifted for this theme; unset means the theme's text colour. */
+#tdf-chat[data-theme="light"] .tdf-line {
+  color: var(--tdf-ink-light, inherit);
+}
+
+#tdf-chat[data-theme="dark"] .tdf-line {
+  color: var(--tdf-ink-dark, inherit);
+}
+
+/* Grouped rows: avatar, name and time once per run, the rest indented beneath. */
+#tdf-chat .tdf-head,
+#tdf-chat .tdf-cont {
+  position: relative;
+  padding-left: 70px;
+  padding-right: 12px;
+}
+
+#tdf-chat .tdf-head {
+  margin-top: 10px;
+  padding-top: 2px;
+}
+
+/* A one-message group is shorter than its avatar; keep the avatar inside its own row. */
+#tdf-chat .tdf-head:not(:has(+ .tdf-cont)) {
+  min-height: 52px;
+  box-sizing: border-box;
+}
+
+#tdf-chat .tdf-cont {
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
+
+/* A missing or failed avatar has no src and shows as the neutral square. */
+#tdf-chat .tdf-avatar {
+  position: absolute;
+  left: 12px;
+  top: 4px;
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--tdf-hover-bg);
+}
+
+#tdf-chat .tdf-head .tdf-user {
+  display: inline-block;
+  margin-bottom: 1px;
+}
+
+#tdf-chat .tdf-head .tdf-user.tdf-sep::after {
+  content: none;
+}
+
+#tdf-chat .tdf-time {
+  margin-left: 8px;
+  color: var(--tdf-muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+#tdf-chat .tdf-head .tdf-time + .tdf-body {
+  display: block;
+}
+
+#tdf-chat .tdf-cont .tdf-avatar,
+#tdf-chat .tdf-cont .tdf-user,
+#tdf-chat .tdf-cont .tdf-time {
+  display: none;
+}
+
+/* Posted images (not smilies): a pointer and a fade on hover. A wrapping link is sized to
+   the image and never takes the link-hover background, which showed through the fade. */
+#tdf-chat .tdf-body img.tdf-posted {
+  cursor: pointer;
+  transition: opacity 120ms;
+}
+
+#tdf-chat .tdf-body img.tdf-posted:hover {
+  opacity: 0.8;
+}
+
+#tdf-chat .tdf-body a:has(> img.tdf-posted) {
+  display: inline-block;
+}
+
+#tdf-chat .tdf-body a:has(> img.tdf-posted):hover {
+  background: none;
 }
 
 #tdf-chat .tdf-theme-toggle {

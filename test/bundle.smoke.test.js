@@ -89,8 +89,10 @@ test('the built userscript overlays the chat, stores messages and replays them o
   assert.equal(entries.length, 2);
   assert.equal(overlay.querySelector('script'), null);
   const line = entries[0].querySelector('.tdf-line');
-  assert.equal(line.style.color, '#ff0000');
-  assert.equal(line.style.fontFamily, 'georgia');
+  // #ff0000 is under 4.5:1 on both backgrounds: darker on light, lighter on dark.
+  assert.equal(line.style.getPropertyValue('--tdf-ink-light'), '#ec0000');
+  assert.equal(line.style.getPropertyValue('--tdf-ink-dark'), '#ff2117');
+  assert.equal(line.style.fontFamily, '');
   assert.equal(line.style.fontSize, '');
 
   // The theme toggle cycles auto → light and persists across reloads.
