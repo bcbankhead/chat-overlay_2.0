@@ -20,6 +20,7 @@
     "src/core/reconcile.js",
     "src/core/smiliefix.js",
     "src/features/composer/link.js",
-    "src/features/composer/sharetext.js"
+    "src/features/composer/sharetext.js",
+    "src/features/profile/textStyle.js"
   ]
 }
