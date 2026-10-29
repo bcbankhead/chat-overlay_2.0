@@ -286,3 +286,33 @@ test('toggling Include my images writes the setting; a failed write says so', as
   const hint = /** @type {HTMLElement} */ (box.closest('label')?.nextElementSibling);
   assert.equal(hint.textContent, 'Could not apply: write failed');
 });
+
+test('an Include my images read that fails says so under the checkbox row', async () => {
+  const { container } = setup({ settings: stubSettings({}, { fail: true }) });
+  await settle();
+  const box = /** @type {HTMLInputElement} */ (container.querySelector('input.tdf-opt-check'));
+  const hint = /** @type {HTMLElement} */ (box.closest('label')?.nextElementSibling);
+  assert.equal(hint.textContent, 'Could not read settings: read failed');
+});
+
+test('an Include my images read or failed write that settles after close is not written', async () => {
+  /** @type {(v: boolean) => void} */
+  let resolveRead = () => {};
+  /** @type {(e: Error) => void} */
+  let rejectWrite = () => {};
+  const settings = stubSettings();
+  const read = settings.get;
+  settings.get = async (key) => (key === 'includeMyImages' ? new Promise((r) => (resolveRead = r)) : read(key));
+  settings.set = () => new Promise((_, reject) => (rejectWrite = reject));
+  const { win, container, cleanup } = setup({ settings });
+  await settle();
+  const box = /** @type {HTMLInputElement} */ (container.querySelector('input.tdf-opt-check'));
+  const hint = /** @type {HTMLElement} */ (box.closest('label')?.nextElementSibling);
+  box.dispatchEvent(new win.Event('change'));
+  cleanup();
+  resolveRead(true);
+  rejectWrite(new Error('write failed'));
+  await settle();
+  assert.equal(box.checked, false);
+  assert.equal(hint.textContent, '');
+});

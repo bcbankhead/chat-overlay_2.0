@@ -153,6 +153,15 @@ test('put refuses bytes already stored under another id; findByHash finds them',
   assert.equal(await store.findByHash('none'), undefined);
 });
 
+test('markBroken drops the hash, so the same bytes under a new id are stored', async () => {
+  const store = await fresh();
+  await store.put(image({ id: 'a', hash: 'h1' }));
+  await store.markBroken('a', 'HTTP 404');
+  assert.equal('hash' in ((await store.get('a')) ?? {}), false);
+  assert.equal(await store.findByHash('h1'), undefined);
+  assert.equal(await store.put(image({ id: 'b', hash: 'h1' })), true);
+});
+
 test('repair stores the hash a retry computed', async () => {
   const store = await fresh();
   await store.put(image({ id: 'a', broken: true, brokenReason: 'HTTP 404' }));

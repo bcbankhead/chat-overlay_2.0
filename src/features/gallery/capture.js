@@ -30,6 +30,8 @@ import { extractShareIds } from './shareParse.js';
 export function startCapture({ ready, onInbound, fetch, makeThumb, base, report, timeoutMs, self, hash = sha256Hex }) {
   /** @type {Set<string>} ids queued or being fetched */
   const queued = new Set();
+  /** @type {Map<string, string>} ids skipped as a duplicate of another id's bytes, to their hash */
+  const duplicates = new Map();
   /** @type {Promise<void>} */
   let queue = Promise.resolve();
 
@@ -42,6 +44,12 @@ export function startCapture({ ready, onInbound, fetch, makeThumb, base, report,
     // Read per share, so a toggle applies from the next share; own images stored before stay.
     const me = self();
     if (me !== '' && message.user === me && !(await settings.get('includeMyImages'))) return;
+    // A known duplicate is not fetched again while the bytes it duplicates are still stored.
+    const known = duplicates.get(id);
+    if (known !== undefined) {
+      if (await store.findByHash(known)) return;
+      duplicates.delete(id);
+    }
     const existing = await store.get(id);
     if (existing && !existing.broken) return;
     /** @type {import('./store.js').ImageRecord} */
@@ -82,9 +90,13 @@ export function startCapture({ ready, onInbound, fetch, makeThumb, base, report,
       if (same && same.id !== id) {
         // The same bytes under another share id. A new one is skipped; a broken retry is
         // removed as the duplicate, unless it is a favourite, which is never deleted.
-        if (!existing) return;
+        if (!existing) {
+          duplicates.set(id, record.hash);
+          return;
+        }
         if (!existing.favorite) {
           await store.remove(id);
+          duplicates.set(id, record.hash);
           return;
         }
       }

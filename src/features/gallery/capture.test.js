@@ -224,6 +224,16 @@ test('the same bytes under two share ids yield one entry; different bytes yield 
   await settle();
   assert.deepEqual((await h.store.list()).map((r) => r.id), [ID]);
   assert.match(String((await get(h.store, ID))?.hash), /^[0-9a-f]{64}$/);
+  // The skipped duplicate id, shared again, is not fetched again.
+  h.deliver({ id: '3', text: SHARE(OTHER), receivedAt: 3 });
+  await settle();
+  assert.equal(h.fetched.filter((u) => u.includes(OTHER)).length, 1);
+  // Once the bytes it duplicated are gone, the next share of it is fetched and stored.
+  await h.store.remove(ID);
+  h.deliver({ id: '4', text: SHARE(OTHER), receivedAt: 4 });
+  await settle();
+  assert.equal(h.fetched.filter((u) => u.includes(OTHER)).length, 2);
+  assert.deepEqual((await h.store.list()).map((r) => r.id), [OTHER]);
 
   const d = await harness();
   d.state.bytes[OTHER] = 7;

@@ -173,7 +173,11 @@ export function createImageStore(db) {
      * @param {string} reason
      */
     markBroken(id, reason) {
-      return update(id, (r) => ({ ...r, broken: true, brokenReason: reason }));
+      // A broken record takes no part in dedup, so it drops the hash its bytes once had.
+      return update(id, (r) => {
+        const { hash: _gone, ...rest } = r;
+        return { ...rest, broken: true, brokenReason: reason };
+      });
     },
 
     /**

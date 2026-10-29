@@ -1,6 +1,6 @@
 // Seeds the overlay's local history (IndexedDB `tdf-chat-2`) from the messages the saved
 // page carries in the engine's #chatContainer, so the overlay replays them on start.
-// Runs before the overlay loads. The schema below copies src/core/db.js at version 1;
+// Runs before the overlay loads. The schema below copies src/core/db.js at version 2;
 // if that changes, this must too. Re-running is harmless: records are keyed and put.
 window.__seedHistory = function () {
   var container = document.getElementById('chatContainer');
@@ -52,9 +52,13 @@ window.__seedHistory = function () {
   records = records.concat(fictionalUsers(records, roomID, base));
 
   return new Promise(function (resolve, reject) {
-    var req = indexedDB.open('tdf-chat-2', 1);
+    var req = indexedDB.open('tdf-chat-2', 2);
     req.onupgradeneeded = function (event) {
-      if (event.oldVersion >= 1) return;
+      if (event.oldVersion >= 2) return;
+      if (event.oldVersion === 1) {
+        req.transaction.objectStore('images').createIndex('hash', 'hash');
+        return;
+      }
       var db = req.result;
       var messages = db.createObjectStore('messages', { keyPath: 'id' });
       messages.createIndex('roomID', 'roomID');
@@ -66,6 +70,7 @@ window.__seedHistory = function () {
       var images = db.createObjectStore('images', { keyPath: 'id' });
       images.createIndex('user', 'user');
       images.createIndex('receivedAt', 'receivedAt');
+      images.createIndex('hash', 'hash');
       var tags = db.createObjectStore('tags', { keyPath: 'id', autoIncrement: true });
       tags.createIndex('imageId', 'imageId');
       tags.createIndex('sourceMessageId', 'sourceMessageId');
