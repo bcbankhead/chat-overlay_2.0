@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import 'fake-indexeddb/auto';
 import { STORES, openDb, request } from '../../core/db.js';
 import { createHistory } from '../../core/history.js';
-import { SMILIE_CODES_FIXTURE as CODES } from './reactions.js';
+import { SMILIE_CODES_FIXTURE as CODES } from './smilieCodes.fixture.js';
 import { deriveTags } from './infer.js';
 import { createTagStore } from './store.js';
 
@@ -99,6 +99,25 @@ test('applyInbound re-derives the room, and holds what arrives before the first 
   assert.deepEqual(store.reactionsFor(A).map((r) => r.code), [':h', ':L']);
   assert.deepEqual((await rows()).map((r) => r.code), [':h', ':L']);
   assert.deepEqual(changes, [1, 2]);
+});
+
+test('an inbound message that changes no tag neither rewrites the rows nor notifies', async () => {
+  const { db, history, store } = await fresh();
+  await history.put(msg('alice', img(A)));
+  await history.put(msg('bob', ':h'));
+  await store.rebuildRoom();
+  let changes = 0;
+  store.onChange(() => changes++);
+  /** @type {string[]} */
+  const opened = [];
+  const transaction = db.transaction.bind(db);
+  db.transaction = /** @type {any} */ ((/** @type {any} */ names, /** @type {any} */ mode) => (opened.push(String(mode)), transaction(names, mode)));
+  await store.applyInbound(msg('carol', 'hello'));
+  assert.equal(changes, 0);
+  assert.deepEqual(opened, [], 'no tags write');
+  await store.applyInbound(msg('me', ':L ^111111'));
+  assert.equal(changes, 1);
+  assert.deepEqual(opened, ['readwrite']);
 });
 
 test('a reaction whose echo is later marked unconfirmed is gone after a rebuild', async () => {

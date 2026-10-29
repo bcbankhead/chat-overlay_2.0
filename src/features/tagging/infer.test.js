@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { countReactions, deriveTags } from './infer.js';
-import { SMILIE_CODES_FIXTURE as CODES } from './reactions.js';
+import { SMILIE_CODES_FIXTURE as CODES } from './smilieCodes.fixture.js';
 
 const A = '100000000111111';
 const B = '100000000222222';

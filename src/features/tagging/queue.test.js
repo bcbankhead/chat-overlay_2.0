@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import { createReactionQueue } from './queue.js';
 
 const READY_RETRY_MS = 1000;
-const CONFIRM_TIMEOUT_MS = 30_000;
+// The engine hook's echo wait (PENDING_TTL_MS), plus the queue's 1 s margin past it.
+const CONFIRM_TIMEOUT_MS = 61_000;
 
 const A = '100000000111111';
 const B = '100000000222222';
@@ -148,7 +149,7 @@ test('a non-2xx answer re-queues once with the repeat filter reset, then fails',
   assert.equal(h.sent.length, 2);
 });
 
-test('no answer within 30 s counts as a failed attempt', () => {
+test('no answer within 61 s counts as a failed attempt', () => {
   const h = harness();
   h.queue.toggle(A, ':h', false);
   h.advance(0);
@@ -232,7 +233,7 @@ test('a failed reaction carries why: refused, a non-2xx answer, or no answer', (
   const silent = harness();
   silent.queue.toggle(A, ':h', false);
   silent.advance(CONFIRM_TIMEOUT_MS);
-  assert.equal(silent.queue.entriesFor(A)[0].reason, 'no answer within 30 s');
+  assert.equal(silent.queue.entriesFor(A)[0].reason, 'no answer within 61 s');
 });
 
 test('with no send request to watch, an accepted send counts as a failed attempt', () => {

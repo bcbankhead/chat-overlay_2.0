@@ -5,10 +5,14 @@
 // The server never echoes own messages, so delivery is judged by the reaction's own request
 // (B4): 2xx is sent; anything else, or no answer in time, re-queues once, then fails.
 
+import { PENDING_TTL_MS } from '../../core/reconcile.js';
 import { reactionText } from './reactions.js';
 
 const READY_RETRY_MS = 1000;
-const CONFIRM_TIMEOUT_MS = 30_000;
+// Past the engine hook's own wait for the echo (it marks it unconfirmed at PENDING_TTL_MS + 1),
+// so a timed-out attempt's re-derive already sees it unconfirmed, and no answer the hook would
+// still take as sent arrives after the queue has given up on it.
+const CONFIRM_TIMEOUT_MS = PENDING_TTL_MS + 1000;
 /** The first send and its one re-queue. */
 const MAX_ATTEMPTS = 2;
 

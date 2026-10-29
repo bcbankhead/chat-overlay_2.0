@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { SMILIE_CODES_FIXTURE as CODES, parseReaction, reactionText } from './reactions.js';
+import { parseReaction, reactionText } from './reactions.js';
+import { SMILIE_CODES_FIXTURE as CODES } from './smilieCodes.fixture.js';
 
 test('a bare code is a bare reaction, with surrounding whitespace stripped', () => {
   assert.deepEqual(parseReaction(':h', CODES), { code: ':h', suffix: null, retract: false });
@@ -10,6 +11,14 @@ test('a bare code is a bare reaction, with surrounding whitespace stripped', () 
 test('a token names the image by the share id suffix', () => {
   assert.deepEqual(parseReaction(':L ^123456', CODES), { code: ':L', suffix: '123456', retract: false });
   assert.deepEqual(parseReaction('-:L ^123456', CODES), { code: ':L', suffix: '123456', retract: true });
+});
+
+test('a sender text style wrapping the message is not part of it (message.js.php addMessage)', () => {
+  assert.deepEqual(parseReaction('[b]:h ^111111 [/b]', CODES), { code: ':h', suffix: '111111', retract: false });
+  assert.deepEqual(parseReaction('[u][i][b]-:L ^123456 [/b] [/i] [/u]', CODES), { code: ':L', suffix: '123456', retract: true });
+  assert.deepEqual(parseReaction('[i]:d [/i]', CODES), { code: ':d', suffix: null, retract: false });
+  assert.equal(parseReaction('[b]:h[/i]', CODES), null, 'mismatched wrapper');
+  assert.equal(parseReaction('[b]:h nice [/b]', CODES), null, 'extra text inside the wrapper');
 });
 
 test('anything else is not a reaction', () => {

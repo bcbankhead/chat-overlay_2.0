@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
 import { createReactionQueue } from './queue.js';
-import { SMILIE_CODES_FIXTURE as CODES } from './reactions.js';
+import { SMILIE_CODES_FIXTURE as CODES } from './smilieCodes.fixture.js';
 import { installReactionUi } from './ui.js';
 
 const A = '100000000111111';
@@ -100,6 +100,20 @@ test('clicking a posted image opens the picker below the pointer; a pick queues 
   assert.equal(chip.querySelector('img').getAttribute('src'), 'smilies/9.gif');
   // The chip sits under the image, inside its message.
   assert.equal(chip.closest('.tdf-msg')?.getAttribute('data-id'), '1');
+});
+
+test('a chip row that grows a list scrolled to the bottom keeps it at the bottom', () => {
+  for (const [scrollTop, expected] of [[100, 260], [40, 40]]) {
+    const p = page();
+    const list = p.doc.querySelector('.tdf-list');
+    Object.defineProperty(list, 'clientHeight', { get: () => 100 });
+    // Each chip row grows the list by 60px.
+    Object.defineProperty(list, 'scrollHeight', { get: () => 200 + 60 * list.querySelectorAll('.tdf-rx-row').length });
+    list.scrollTop = scrollTop;
+    p.store.set([{ code: ':h', count: 1, mine: false, senders: ['bob'] }]);
+    // happy-dom does not clamp scrollTop, so a pinned list reads the full scrollHeight.
+    assert.equal(list.scrollTop, expected, `from scrollTop ${scrollTop}`);
+  }
 });
 
 test('the queued reaction is sent as its token', () => {

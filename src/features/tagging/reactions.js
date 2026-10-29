@@ -2,12 +2,8 @@
 // code, `<code> ^<last 6 digits of the share id>` naming the image, or `-<code> ^<suffix>`
 // taking the sender's reaction back. Codes are the engine's own `mySmilies`, matched
 // case-sensitively as the engine does; the stored text keeps the raw code, since smilies are
-// expanded only at render.
-
-/** The engine's 15 smilie codes (reference/ANALYSIS.md, Smilies), for tests. */
-export const SMILIE_CODES_FIXTURE = Object.freeze([
-  ':)', ';)', ':P', ':7', ';(', ':(', ':V', '[(', '[x', ':h', '*R', '8)', ':d', ':L', ':o',
-]);
+// expanded only at render. A sender's text style wraps the whole message in `[b]…[/b]`,
+// `[i]…[/i]` or `[u]…[/u]` (message.js.php addMessage), so those wrappers are not part of it.
 
 /** Digits of the share id a token carries. */
 const SUFFIX_LENGTH = 6;
@@ -20,6 +16,19 @@ const SUFFIX_LENGTH = 6;
  */
 
 const TOKEN = /^(.+?)\s+\^(\d{6})$/;
+/** One text-style wrapper the engine adds: `[b]<message> [/b]`, and the same for i and u. */
+const STYLE = /^\[([biu])\]([\s\S]*)\[\/\1\]$/;
+
+/**
+ * The text without its text-style wrappers, trimmed.
+ * @param {string} text
+ * @returns {string}
+ */
+function unstyled(text) {
+  let t = String(text).trim();
+  for (let m = STYLE.exec(t); m; m = STYLE.exec(t)) t = m[2].trim();
+  return t;
+}
 
 /**
  * The reaction a message's text is, or null when it is anything else.
@@ -28,7 +37,7 @@ const TOKEN = /^(.+?)\s+\^(\d{6})$/;
  * @returns {Reaction | null}
  */
 export function parseReaction(text, codes) {
-  const t = String(text).trim();
+  const t = unstyled(text);
   if (codes.includes(t)) return { code: t, suffix: null, retract: false };
   const m = TOKEN.exec(t);
   if (!m) return null;

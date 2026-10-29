@@ -9,6 +9,22 @@ import { countReactions, deriveTags } from './infer.js';
 /** @typedef {import('./infer.js').Tag} Tag */
 
 /**
+ * @param {Tag[]} a
+ * @param {Tag[]} b
+ */
+const sameTags = (a, b) =>
+  a.length === b.length &&
+  a.every(
+    (t, i) =>
+      t.imageId === b[i].imageId &&
+      t.code === b[i].code &&
+      t.sender === b[i].sender &&
+      t.roomID === b[i].roomID &&
+      t.sourceMessageId === b[i].sourceMessageId &&
+      t.certain === b[i].certain,
+  );
+
+/**
  * @param {{
  *   db: IDBDatabase,
  *   history: import('../../core/history.js').History,
@@ -94,7 +110,10 @@ export function createTagStore({ db, history, roomID, me, codes }) {
         return Promise.resolve();
       }
       upsert(record);
-      tags = deriveTags(messages, me, codes);
+      const next = deriveTags(messages, me, codes);
+      // Most messages are neither images nor reactions: no rewrite, no re-render for those.
+      if (sameTags(next, tags)) return Promise.resolve();
+      tags = next;
       changed();
       return persist(tags, false);
     },

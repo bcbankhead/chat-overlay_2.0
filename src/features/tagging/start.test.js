@@ -6,8 +6,8 @@ import { Window } from 'happy-dom';
 import { openDb } from '../../core/db.js';
 import { emitInbound } from '../../core/events.js';
 import { createHistory } from '../../core/history.js';
-import { SMILIE_CODES_FIXTURE as CODES } from './reactions.js';
-import { startTagging } from './start.js';
+import { SMILIE_CODES_FIXTURE as CODES } from './smilieCodes.fixture.js';
+import { reporter, startTagging } from './start.js';
 
 const A = '100000000111111';
 const settle = () => new Promise((r) => setTimeout(r, 50));
@@ -126,4 +126,44 @@ test('a failure to start is shown in the message list', async () => {
     console.error = logged;
   }
   assert.equal(doc.querySelector('.tdf-notice')?.textContent, 'Image reactions: storage is disabled');
+});
+
+test('a failure before the view mounts is held until the list appears, and each text shows once', async () => {
+  const win = /** @type {any} */ (new Window({ url: 'https://dollforum.com/forum/chat/index.php' }));
+  const doc = win.document;
+  const logged = console.error;
+  /** @type {unknown[]} */
+  const logs = [];
+  console.error = (/** @type {unknown} */ m) => logs.push(m);
+  try {
+    const fail = reporter(doc, win);
+    fail(new Error('early'));
+    fail(new Error('early'));
+    assert.equal(doc.querySelector('.tdf-notice'), null);
+    doc.body.innerHTML = '<div id="tdf-chat"><div class="tdf-list"></div></div>';
+    await settle();
+    fail(new Error('early'));
+    fail(new Error('later'));
+    assert.deepEqual(
+      [...doc.querySelectorAll('.tdf-notice')].map((n) => n.textContent),
+      ['Image reactions: early', 'Image reactions: later'],
+    );
+    assert.equal(logs.length, 4, 'every failure is still logged');
+  } finally {
+    console.error = logged;
+  }
+});
+
+test('non-string or empty entries in mySmilies are not reaction codes', async () => {
+  const { win, doc, chips } = chatPage();
+  win.mySmilies = [':h', '', 5, null];
+  const indexedDB = new IDBFactory();
+  const history = createHistory(await openDb({ indexedDB }));
+  await history.put(record('1', 'alice', `[[img src="plugins/share/view.php?id=${A}"]]`, 1));
+  await history.put(record('2', 'bob', '', 2));
+  await history.put(record('3', 'carol', `[[img src="plugins/share/view.php?id=${A}"]]`, 3));
+  await history.put(record('4', 'dave', ':h', 4));
+  await startTagging({ win, doc, css: '', indexedDB, openSmileyPicker: () => () => {} });
+  await settle();
+  assert.deepEqual(chips(), [':h 1']);
 });

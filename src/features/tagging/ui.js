@@ -111,9 +111,22 @@ export function installReactionUi({ doc, win, store, queue, openSmileyPicker }) 
     }
   };
 
-  const renderAll = () => {
-    for (const msg of doc.querySelectorAll('#tdf-chat .tdf-msg')) render(msg);
+  /**
+   * Run `fn`, which may add chip rows. A list scrolled to the bottom (the view's autoscroll ran
+   * before the rows grew it) stays at the bottom, so the newest message is not pushed down.
+   * @param {() => void} fn
+   */
+  const keepPinned = (fn) => {
+    const list = doc.querySelector('#tdf-chat .tdf-list');
+    const pinned = list !== null && list.scrollHeight - list.scrollTop - list.clientHeight <= 1;
+    fn();
+    if (pinned && list) list.scrollTop = list.scrollHeight;
   };
+
+  const renderAll = () =>
+    keepPinned(() => {
+      for (const msg of doc.querySelectorAll('#tdf-chat .tdf-msg')) render(msg);
+    });
 
   /** @param {MouseEvent} event */
   const onClick = (event) => {
@@ -140,14 +153,16 @@ export function installReactionUi({ doc, win, store, queue, openSmileyPicker }) 
   doc.addEventListener('click', onClick, true);
 
   // Rows the view adds (live, replayed, or replaced on confirm) get their chips.
-  const observer = new win.MutationObserver((/** @type {MutationRecord[]} */ records) => {
-    for (const record of records) {
-      for (const node of record.addedNodes) {
-        const el = /** @type {Element} */ (node);
-        if (el.nodeType === 1 && el.classList.contains('tdf-msg') && el.closest('#tdf-chat')) render(el);
+  const observer = new win.MutationObserver((/** @type {MutationRecord[]} */ records) =>
+    keepPinned(() => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          const el = /** @type {Element} */ (node);
+          if (el.nodeType === 1 && el.classList.contains('tdf-msg') && el.closest('#tdf-chat')) render(el);
+        }
       }
-    }
-  });
+    }),
+  );
   observer.observe(doc.body, { childList: true, subtree: true });
 
   const offStore = store.onChange(renderAll);
