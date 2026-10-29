@@ -15,12 +15,13 @@ import { overLimit } from './shareParse.js';
  * @property {string} mTime         unix seconds, '' for an own pending echo
  * @property {string} roomID
  * @property {number} receivedAt
- * @property {string} contentType   as served; '' when the fetch failed
+ * @property {string} contentType   as served; '' when the image never loaded
  * @property {Blob | null} thumb    128×128 centre crop, made once at capture
  * @property {Blob} [blob]          the full image, only with `storeImagesOffline` on
  * @property {number} bytes         stored on disk for this record: blob (if kept) plus thumb
  * @property {boolean} favorite
  * @property {boolean} broken       the server copy failed to load (capture or Save)
+ * @property {string} [brokenReason] why it failed, shown on the tile's badge
  */
 
 /** Refused by `remove` for a favourite. */
@@ -107,6 +108,14 @@ export function createImageStore(db) {
     },
 
     /**
+     * @param {string} id
+     * @returns {Promise<ImageRecord | undefined>}
+     */
+    get(id) {
+      return request(tx('readonly').objectStore(STORES.images).get(id));
+    },
+
+    /**
      * Store a newly captured image. An id already stored is kept as it is, so a repeated
      * share never resets a favourite or replaces the first capture.
      * @param {ImageRecord} record
@@ -145,9 +154,25 @@ export function createImageStore(db) {
       return update(id, (r) => ({ ...r, favorite }));
     },
 
-    /** @param {string} id */
-    markBroken(id) {
-      return update(id, (r) => ({ ...r, broken: true }));
+    /**
+     * @param {string} id
+     * @param {string} reason
+     */
+    markBroken(id, reason) {
+      return update(id, (r) => ({ ...r, broken: true, brokenReason: reason }));
+    },
+
+    /**
+     * The server copy loaded again: clear the broken state, merging what the new fetch made
+     * (a capture retry's thumbnail, for one). A favourite stays a favourite.
+     * @param {string} id
+     * @param {Partial<Pick<ImageRecord, 'contentType' | 'thumb' | 'blob' | 'bytes'>>} [fields]
+     */
+    repair(id, fields = {}) {
+      return update(id, (r) => {
+        const { brokenReason: _gone, ...rest } = r;
+        return { ...rest, ...fields, broken: false };
+      });
     },
 
     /**

@@ -1,9 +1,11 @@
 // Live capture: every share id in an inbound message (core's onInbound, live records only)
 // is fetched once, on a serial queue, and stored with its thumbnail. The full image is kept
-// only with `storeImagesOffline` on. A failed fetch stores the record broken, without a
-// thumbnail. No backfill: images are captured only while the script runs.
+// only with `storeImagesOffline` on. A failed fetch stores the record broken, with its reason
+// and without a thumbnail; the same id shared again retries it, so a passing network fault
+// does not break an image for good. No backfill: images are captured only while the script runs.
 
-import { extractShareIds, shareUrl } from './shareParse.js';
+import { fetchShare } from './fetchShare.js';
+import { extractShareIds } from './shareParse.js';
 
 /**
  * @typedef {object} CaptureDeps
@@ -13,13 +15,14 @@ import { extractShareIds, shareUrl } from './shareParse.js';
  * @property {(blob: Blob) => Promise<Blob>} makeThumb
  * @property {() => string} base      the chat page's address, to derive share URLs from
  * @property {(err: unknown) => void} report
+ * @property {number} [timeoutMs]    per share fetch; fetchShare's default when absent
  */
 
 /**
  * Start capturing. Records arriving before the database opens wait on the queue.
  * @param {CaptureDeps} deps
  */
-export function startCapture({ ready, onInbound, fetch, makeThumb, base, report }) {
+export function startCapture({ ready, onInbound, fetch, makeThumb, base, report, timeoutMs }) {
   /** @type {Set<string>} ids queued or being fetched */
   const queued = new Set();
   /** @type {Promise<void>} */
@@ -31,7 +34,8 @@ export function startCapture({ ready, onInbound, fetch, makeThumb, base, report 
    */
   async function captureOne(id, message) {
     const { store, settings } = await ready;
-    if (await store.has(id)) return;
+    const existing = await store.get(id);
+    if (existing && !existing.broken) return;
     /** @type {import('./store.js').ImageRecord} */
     const record = {
       id,
@@ -46,20 +50,19 @@ export function startCapture({ ready, onInbound, fetch, makeThumb, base, report 
       favorite: false,
       broken: false,
     };
-    /** @type {Blob} */
-    let blob;
+    /** @type {{ blob: Blob, contentType: string }} */
+    let fetched;
     try {
-      const res = await fetch(shareUrl(id, base()), { credentials: 'same-origin' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      blob = await res.blob();
-      record.contentType = res.headers.get('content-type') ?? blob.type ?? '';
-      // The plugin answers some refusals 200 with text ("no access"): not an image.
-      if (!/^image\//i.test(record.contentType)) throw new Error(`not an image: ${record.contentType}`);
-    } catch {
-      // Not an error to report: the image is stored broken, and its tile shows that.
-      await store.put({ ...record, broken: true });
+      fetched = await fetchShare(id, { base: base(), fetch, timeoutMs });
+    } catch (err) {
+      // Not an error to report: the image is stored broken, and its tile shows why.
+      const reason = err instanceof Error ? err.message : String(err);
+      if (existing) await store.markBroken(id, reason);
+      else await store.put({ ...record, broken: true, brokenReason: reason });
       return;
     }
+    const { blob, contentType } = fetched;
+    record.contentType = contentType;
     try {
       record.thumb = await makeThumb(blob);
     } catch (err) {
@@ -68,7 +71,11 @@ export function startCapture({ ready, onInbound, fetch, makeThumb, base, report 
     }
     if (await settings.get('storeImagesOffline')) record.blob = blob;
     record.bytes = (record.blob?.size ?? 0) + (record.thumb?.size ?? 0);
-    await store.put(record);
+    // A retry keeps the first capture's message and favourite, and takes what this fetch made.
+    if (existing) {
+      const { contentType: type, thumb, blob: kept, bytes } = record;
+      await store.repair(id, { contentType: type, thumb, bytes, ...(kept ? { blob: kept } : {}) });
+    } else await store.put(record);
   }
 
   onInbound((message) => {

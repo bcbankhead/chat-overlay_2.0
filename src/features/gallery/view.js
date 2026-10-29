@@ -42,6 +42,7 @@ const ICONS = {
  * @property {HTMLElement} el
  * @property {HTMLButtonElement} star
  * @property {HTMLButtonElement} trash
+ * @property {HTMLElement} badge   the broken-link badge, titled with the failure's reason
  * @property {import('./store.js').ImageRecord} item
  * @property {string | null} url   the thumbnail's object URL
  */
@@ -140,6 +141,10 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, sav
     el.className = 'tdf-gallery-tile';
     el.dataset.id = item.id;
     el.title = `${item.user} — click to save`;
+    // Save is the tile's own action, so the tile is a keyboard-reachable button.
+    el.tabIndex = 0;
+    el.setAttribute('role', 'button');
+    el.setAttribute('aria-label', `Save image from ${item.user}`);
     /** @type {string | null} */
     let url = null;
     if (item.thumb) {
@@ -159,7 +164,6 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, sav
     }
     const badge = doc.createElement('span');
     badge.className = 'tdf-gallery-broken';
-    badge.title = 'The server copy no longer loads';
     badge.innerHTML = ICONS.broken;
     const trash = doc.createElement('button');
     trash.type = 'button';
@@ -198,7 +202,7 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, sav
     }
 
     /** @type {Tile} */
-    const tile = { el, star, trash, item, url };
+    const tile = { el, star, trash, badge, item, url };
 
     star.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -220,6 +224,12 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, sav
     el.addEventListener('click', () => {
       save(tile.item).catch(report);
     });
+    el.addEventListener('keydown', (event) => {
+      // Enter or Space on the tile itself; its own buttons handle their keys.
+      if (event.target !== el || (event.key !== 'Enter' && event.key !== ' ')) return;
+      event.preventDefault();
+      save(tile.item).catch(report);
+    });
 
     for (const decorate of listGalleryItemDecorations()) {
       try {
@@ -236,6 +246,9 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, sav
     const { item } = tile;
     tile.el.classList.toggle('tdf-fav', item.favorite);
     tile.el.classList.toggle('tdf-broken', item.broken);
+    tile.badge.title = item.brokenReason
+      ? `The server copy no longer loads: ${item.brokenReason}`
+      : 'The server copy no longer loads';
     tile.star.setAttribute('aria-pressed', String(item.favorite));
     const starLabel = item.favorite ? 'Remove from favourites' : 'Add to favourites';
     tile.star.title = starLabel;

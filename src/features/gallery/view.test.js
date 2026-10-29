@@ -146,10 +146,16 @@ test('a broken image shows the broken state; an empty gallery says so', async ()
   const empty = /** @type {HTMLElement} */ (g.container.querySelector('.tdf-gallery-empty'));
   assert.equal(empty.hidden, false);
   assert.equal(empty.textContent, 'No images yet');
-  await g.store.put(image({ id: 'a', broken: true }));
+  await g.store.put(image({ id: 'a', broken: true, brokenReason: 'HTTP 404' }));
   await settle();
   assert.equal(empty.hidden, true);
   assert.ok(g.tiles()[0].classList.contains('tdf-broken'));
+  const badge = /** @type {HTMLElement} */ (g.tiles()[0].querySelector('.tdf-gallery-broken'));
+  assert.equal(badge.title, 'The server copy no longer loads: HTTP 404');
+  await g.store.repair('a');
+  await settle();
+  assert.equal(g.tiles()[0].classList.contains('tdf-broken'), false);
+  assert.equal(badge.title, 'The server copy no longer loads');
   cleanup();
   assert.equal(g.container.children.length, 0);
 });
@@ -250,4 +256,58 @@ test('registrations are validated', () => {
   assert.deepEqual(listGalleryItemActions().map((a) => a.label), ['new']);
   offNew();
   assert.deepEqual(listGalleryItemActions(), []);
+});
+
+test('a stored thumbnail renders as an img whose URL is revoked when its tile goes, and on close', async () => {
+  const g = await open();
+  /** @type {string[]} */
+  const created = [];
+  /** @type {string[]} */
+  const revoked = [];
+  g.win.URL.createObjectURL = () => {
+    const url = `blob:thumb-${created.length}`;
+    created.push(url);
+    return url;
+  };
+  g.win.URL.revokeObjectURL = (/** @type {string} */ url) => void revoked.push(url);
+  const thumb = new Blob([new Uint8Array(500)], { type: 'image/webp' });
+  await g.store.put(image({ id: 'a', receivedAt: 1, thumb, bytes: 500 }));
+  await g.store.put(image({ id: 'b', receivedAt: 2, thumb, bytes: 500 }));
+  const cleanup = g.mount();
+  await settle();
+  const imgs = g.tiles().map((t) => /** @type {HTMLImageElement | null} */ (t.querySelector('img.tdf-gallery-thumb')));
+  assert.deepEqual(imgs.map((i) => i?.getAttribute('src')), ['blob:thumb-0', 'blob:thumb-1']);
+  assert.deepEqual(imgs.map((i) => i?.alt), ['Image from alice', 'Image from alice']);
+  assert.equal(g.container.querySelectorAll('.tdf-gallery-placeholder').length, 0);
+  const stats = /** @type {HTMLElement} */ (g.container.querySelector('.tdf-gallery-stats'));
+  assert.equal(stats.textContent, '2 images · 1000 B');
+  assert.match(stats.title, /^Originals: 0 B · Thumbnails: 1000 B · Favourites: 0$/);
+
+  await g.store.remove('b');
+  await settle();
+  assert.deepEqual(revoked, ['blob:thumb-0'], 'the removed tile (b, drawn first) gives its URL back');
+  cleanup();
+  assert.deepEqual(revoked, ['blob:thumb-0', 'blob:thumb-1']);
+  assert.deepEqual(g.errors, []);
+});
+
+test('a tile is a focusable button: Enter and Space save it, keys on its own buttons do not', async () => {
+  const g = await open();
+  await g.store.put(image({ id: 'a' }));
+  const cleanup = g.mount();
+  await settle();
+  const tile = /** @type {HTMLElement} */ (g.tiles()[0]);
+  assert.equal(tile.tabIndex, 0);
+  assert.equal(tile.getAttribute('role'), 'button');
+  assert.equal(tile.getAttribute('aria-label'), 'Save image from alice');
+  const press = (/** @type {Element} */ el, /** @type {string} */ key) =>
+    el.dispatchEvent(new g.win.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  press(tile, 'Enter');
+  press(tile, ' ');
+  press(tile, 'a');
+  press(/** @type {Element} */ (tile.querySelector('.tdf-gallery-star')), 'Enter');
+  await settle();
+  assert.deepEqual(g.saved, ['a', 'a']);
+  cleanup();
+  assert.deepEqual(g.errors, []);
 });

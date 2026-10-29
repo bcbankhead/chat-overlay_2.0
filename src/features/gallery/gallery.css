@@ -149,9 +149,13 @@
   border: 1px dashed var(--tdf-rail-chip-border);
 }
 
-:root[data-tdf-theme] #tdf-rail .tdf-gallery-tile:hover .tdf-gallery-thumb {
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-tile:is(:hover, :focus-visible) .tdf-gallery-thumb {
   outline: 2px solid var(--tdf-link);
   outline-offset: 1px;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-tile:focus-visible {
+  outline: none;
 }
 
 :root[data-tdf-theme] #tdf-rail .tdf-gallery-btn,
@@ -199,7 +203,7 @@
   gap: 4px;
 }
 
-:root[data-tdf-theme] #tdf-rail .tdf-rail-flyout.tdf-settled .tdf-gallery-tile:hover :is(.tdf-gallery-btn, .tdf-gallery-action),
+:root[data-tdf-theme] #tdf-rail .tdf-rail-flyout.tdf-settled .tdf-gallery-tile:is(:hover, :focus-within) :is(.tdf-gallery-btn, .tdf-gallery-action),
 :root[data-tdf-theme] #tdf-rail .tdf-rail-flyout.tdf-settled .tdf-gallery-tile.tdf-fav .tdf-gallery-star {
   opacity: 1;
 }
@@ -216,8 +220,8 @@
   background: #cf222e;
 }
 
-/* A favourite's trash shows dimmed on hover: there, but refused. */
-:root[data-tdf-theme] #tdf-rail .tdf-rail-flyout.tdf-settled .tdf-gallery-tile:hover .tdf-gallery-trash:disabled {
+/* A favourite's trash shows dimmed on hover or focus: there, but refused. */
+:root[data-tdf-theme] #tdf-rail .tdf-rail-flyout.tdf-settled .tdf-gallery-tile:is(:hover, :focus-within) .tdf-gallery-trash:disabled {
   opacity: 0.35;
   cursor: not-allowed;
 }

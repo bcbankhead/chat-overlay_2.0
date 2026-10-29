@@ -68,10 +68,12 @@ test('the size limit never deletes a favourite; enforceLimit resolves to the rem
 
 test('stats split originals and thumbnails and count favourites', async () => {
   const store = await fresh();
-  await store.put(image({ id: 'a', favorite: true }));
-  await store.put(image({ id: 'b' }));
+  const bytes = (/** @type {number} */ size) => new Blob([new Uint8Array(size)]);
+  await store.put(image({ id: 'a', favorite: true, blob: bytes(1000), thumb: bytes(30) }));
+  await store.put(image({ id: 'b', thumb: bytes(20) }));
+  await store.put(image({ id: 'c' }));
   const totals = await store.stats();
-  assert.deepEqual(totals, { count: 2, originals: 0, thumbs: 0, favorites: 1 });
+  assert.deepEqual(totals, { count: 3, originals: 1000, thumbs: 50, favorites: 1 });
 });
 
 test('markBroken flags the record, and every write notifies', async () => {
@@ -79,11 +81,28 @@ test('markBroken flags the record, and every write notifies', async () => {
   let changes = 0;
   const off = onImagesChange(() => changes++);
   await store.put(image({ id: 'a' }));
-  await store.markBroken('a');
-  await store.markBroken('missing');
+  await store.markBroken('a', 'HTTP 404');
+  await store.markBroken('missing', 'HTTP 404');
   off();
   assert.equal((await get(store, 'a'))?.broken, true);
+  assert.equal((await get(store, 'a'))?.brokenReason, 'HTTP 404');
   assert.equal(changes, 2);
+});
+
+test('repair clears the broken state and its reason, merges new fields, and keeps a favourite', async () => {
+  const store = await fresh();
+  await store.put(image({ id: 'a', broken: true, brokenReason: 'HTTP 503', favorite: true, thumb: null, bytes: 0 }));
+  const thumb = new Blob([new Uint8Array(40)]);
+  await store.repair('a', { thumb, bytes: 40, contentType: 'image/jpeg' });
+  await store.repair('missing');
+  const row = await store.get('a');
+  assert.equal(row?.broken, false);
+  assert.equal('brokenReason' in (row ?? {}), false);
+  assert.equal(row?.favorite, true);
+  assert.equal(row?.thumb?.size, 40);
+  assert.equal(row?.bytes, 40);
+  assert.equal(row?.contentType, 'image/jpeg');
+  assert.equal(await store.get('missing'), undefined);
 });
 
 test('removing an id that is not stored changes nothing and does not notify', async () => {

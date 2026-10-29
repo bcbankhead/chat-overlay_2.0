@@ -1,8 +1,10 @@
-// Save (Locked decision): the stored Blob, else a fresh same-origin fetch of the share; the
+// Save (Locked decision): the stored Blob, else a fresh fetch of the share (fetchShare); the
 // save dialog through showSaveFilePicker where the browser has it, else an `<a download>`.
-// A failed fetch marks the image broken and opens no dialog.
+// A failed fetch marks the image broken, opens no dialog, and rejects with its reason; a
+// fetch that succeeds clears an earlier broken state.
 
-import { buildFilename, extFromType, shareUrl } from './shareParse.js';
+import { fetchShare } from './fetchShare.js';
+import { buildFilename, extFromType } from './shareParse.js';
 
 /**
  * @typedef {object} SaveDeps
@@ -12,10 +14,13 @@ import { buildFilename, extFromType, shareUrl } from './shareParse.js';
  * @property {typeof globalThis.fetch} fetch
  */
 
+/** The picker needs a fresh click; after a slow fetch the browser refuses it with these. */
+const ACTIVATION_LOST = new Set(['SecurityError', 'NotAllowedError']);
+
 /**
  * @param {import('./store.js').ImageRecord} item
  * @param {SaveDeps} deps
- * @returns {Promise<'saved' | 'broken' | 'cancelled'>}
+ * @returns {Promise<'saved' | 'cancelled'>}
  */
 export async function saveImage(item, { store, win, doc, fetch }) {
   /** @type {Blob} */
@@ -26,14 +31,13 @@ export async function saveImage(item, { store, win, doc, fetch }) {
     contentType ||= blob.type;
   } else {
     try {
-      const res = await fetch(shareUrl(item.id, win.location.href), { credentials: 'same-origin' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      blob = await res.blob();
-      contentType = res.headers.get('content-type') ?? blob.type ?? contentType;
-    } catch {
-      await store.markBroken(item.id);
-      return 'broken';
+      ({ blob, contentType } = await fetchShare(item.id, { base: win.location.href, fetch }));
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      await store.markBroken(item.id, reason);
+      throw new Error(`gallery: could not save image ${item.id}: ${reason}`);
     }
+    if (item.broken) await store.repair(item.id);
   }
   const suggestedName = buildFilename({
     sender: item.user,
@@ -57,9 +61,11 @@ export async function saveImage(item, { store, win, doc, fetch }) {
       await writable.close();
       return 'saved';
     } catch (err) {
+      const name = /** @type {{ name?: string }} */ (err)?.name;
       // The user closed the dialog: nothing failed.
-      if (/** @type {{ name?: string }} */ (err)?.name === 'AbortError') return 'cancelled';
-      throw err;
+      if (name === 'AbortError') return 'cancelled';
+      // Refused for want of a fresh click: the download below needs none.
+      if (!name || !ACTIVATION_LOST.has(name)) throw err;
     }
   }
 
