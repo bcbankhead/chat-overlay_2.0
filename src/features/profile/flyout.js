@@ -150,7 +150,6 @@ export function renderProfile(container, { doc, engine, currentTheme, onThemeCha
     creditValue.textContent = source ? (source.textContent ?? '').trim() : '–';
   };
   syncCredits();
-  if (source) cleanups.push(observe(source, syncCredits));
   credits.addEventListener('click', () => guarded(() => engine.openCredits()));
 
   // Text style.
@@ -226,6 +225,8 @@ export function renderProfile(container, { doc, engine, currentTheme, onThemeCha
     }
   }
   paint();
+  // Subscriptions last: a render that throws above returns no cleanup, so nothing may be attached yet.
+  if (source) cleanups.push(observe(source, syncCredits));
   cleanups.push(onThemeChange(paintPreview));
 
   root.append(head, error, status, credits, style);

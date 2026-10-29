@@ -116,6 +116,43 @@ test('status defaults to Here when the engine has no select value', () => {
   assert.deepEqual($$('.tdf-profile-seg').map((s) => s.getAttribute('aria-pressed')), ['true', 'false', 'false']);
 });
 
+test('with no engine select a status choice still calls sendStatus', () => {
+  const { $, $$, calls } = setup({ select: null });
+  $('.tdf-profile-seg[data-status="3"]').click();
+  assert.deepEqual(calls, [['sendStatus', '3']]);
+  assert.equal($('.tdf-profile-error').hidden, true);
+  assert.deepEqual($$('.tdf-profile-seg').map((s) => s.getAttribute('aria-pressed')), ['false', 'false', 'true']);
+});
+
+test('a render that throws attaches no eCredits observer or theme listener', () => {
+  const win = new Window();
+  const doc = win.document;
+  doc.body.innerHTML = `<span id="eCreditsID">42</span>`;
+  const engine = createEngine(/** @type {any} */ (win), /** @type {any} */ (doc));
+  engine.colors = () => {
+    throw new Error('bad colours');
+  };
+  const theme = stubTheme();
+  let observed = 0;
+  assert.throws(
+    () =>
+      renderProfile(doc.createElement('div'), {
+        doc: /** @type {any} */ (doc),
+        engine,
+        currentTheme: theme.currentTheme,
+        onThemeChange: theme.onThemeChange,
+        shift: (color) => color,
+        observe() {
+          observed++;
+          return () => {};
+        },
+      }),
+    /bad colours/,
+  );
+  assert.equal(observed, 0);
+  assert.equal(theme.listeners.size, 0);
+});
+
 test('eCredits shows the engine value, follows it, and opens the engine box', async () => {
   const { $, doc, calls, cleanup, observers } = setup();
   assert.equal($('.tdf-profile-value').textContent, '42');
@@ -229,6 +266,15 @@ test('a style choice with no changeMessBoxStyle reports it and leaves the engine
   $('.tdf-profile-font[data-font="Impact"]').click();
   assert.match($('.tdf-profile-error').textContent ?? '', /changeMessBoxStyle/);
   assert.equal(/** @type {any} */ (win).textFamily, 'verdana');
+  assert.deepEqual(calls, []);
+});
+
+test('a style choice with no createCookie reports it and leaves the engine untouched', () => {
+  const { $, win, calls } = setup();
+  delete (/** @type {any} */ (win)).createCookie;
+  $('.tdf-profile-color[data-color="#00000a"]').click();
+  assert.match($('.tdf-profile-error').textContent ?? '', /createCookie/);
+  assert.equal(/** @type {any} */ (win).textColor, '#000080');
   assert.deepEqual(calls, []);
 });
 
