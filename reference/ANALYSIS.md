@@ -27,7 +27,7 @@ Source snapshot: `reference/site-js/` (fetched unauthenticated; `settings.js.php
 - Idle timeout 900 s, idle logout 3600 s.
 
 ## Images
-- No inline image upload in the composer. **Share Files** plugin: `plugins/share/index.php`, multipart POST `shareID` (public/private radio), `shareWithUser`, `uploadedfile`.
+- No inline image upload in the composer. **Share Files** plugin: `plugins/share/index.php`, multipart POST `shareID` (public/private radio), `shareWithUser`, `uploadedfile`. Live form (observed 2026-10-28): `action="index.php"`, `shareID` radios valued `1` (Public) and `2` (Private), each named only by bare text in its own table cell (no `<label>`), and a named submit `submit=Upload File`.
 - **Observed share message** (public, 2026-10-26). Body has only 5 `|` fields (no irc/lineBreak flags); text field:
   `[[br]][[a href="plugins/share/view.php?id=<15 digits>" target="_blank"]][[img src="plugins/share/view.php?id=<same>" style="max-width:250px; max-height:250px;" border="0"]][[/a]]`
   Quotes are `"`. Detect images by `plugins/share/view.php?id=` in the text field.

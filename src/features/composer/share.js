@@ -31,6 +31,9 @@ export async function uploadShare(file, toUser = '') {
     const hidden = /** @type {HTMLInputElement} */ (input);
     data.set(hidden.name, hidden.value);
   }
+  // A native submit sends its named button, and the plugin may test for it.
+  const submit = /** @type {HTMLInputElement | null} */ (form.querySelector('input[type=submit][name]'));
+  if (submit) data.set(submit.name, submit.value);
   data.set('shareID', scope(form, Boolean(toUser)));
   data.set('shareWithUser', toUser);
   data.set('uploadedfile', file, file.name);
@@ -66,8 +69,10 @@ async function shareFetch(url, init) {
 
 /**
  * The form's own shareID value for a private or public share, matched on the radio's value,
- * id or a label naming only that radio. A private share fails closed: with no radio that names it, the
- * upload is refused rather than risk posting a whispered image to the room.
+ * id, a label naming only that radio, or the text of a parent holding only that radio — the live
+ * plugin's form uses values 1/2 with bare text beside each radio in its own table cell. A private
+ * share fails closed: with no radio that names it, the upload is refused rather than risk posting
+ * a whispered image to the room.
  * @param {HTMLFormElement} form
  * @param {boolean} isPrivate
  */
@@ -75,15 +80,24 @@ function scope(form, isPrivate) {
   const want = isPrivate ? /priv/i : /pub/i;
   const radios = /** @type {HTMLInputElement[]} */ ([...form.querySelectorAll('input[name=shareID]')]);
   const labels = [...form.querySelectorAll('label')];
+  // A label or parent wrapping both radios names both, so it names neither.
+  /** @param {Element} el */
+  const namesOne = (el) => el.querySelectorAll('input[name=shareID]').length <= 1;
   /** @param {HTMLInputElement} radio */
   const labelText = (radio) =>
     labels
-      // A label wrapping both radios names both, so it names neither.
-      .filter((label) => label.querySelectorAll('input[name=shareID]').length <= 1)
+      .filter(namesOne)
       .filter((label) => label === radio.closest('label') || (radio.id && label.htmlFor === radio.id))
       .map((label) => label.textContent ?? '')
       .join(' ');
-  const match = radios.find((r) => want.test(r.value) || want.test(r.id) || want.test(labelText(r)));
+  /** @param {HTMLInputElement} radio */
+  const parentText = (radio) => {
+    const parent = radio.parentElement;
+    return parent && namesOne(parent) ? (parent.textContent ?? '') : '';
+  };
+  const match = radios.find(
+    (r) => want.test(r.value) || want.test(r.id) || want.test(labelText(r)) || want.test(parentText(r)),
+  );
   if (match) return match.value;
   if (radios.length || isPrivate) {
     throw new Error(`Upload failed: the Share Files form has no ${isPrivate ? 'private' : 'public'} choice`);

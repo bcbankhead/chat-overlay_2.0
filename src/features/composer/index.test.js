@@ -614,6 +614,7 @@ test('shareID radios named only by their labels, or absent, still choose the sco
   enter(window, bar, false);
   await settle();
   assert.equal(calls[1].body.get('shareID'), 'public', 'no radios: the plain value');
+  assert.equal(calls[1].body.get('submit'), null, 'no named submit button: none is sent');
   assert.match(calls[1].url, /\/plugins\/share\/up\.php$/);
 
   calls = stubShare(win, { formBody: '<form><label>Private <input type="radio" name="shareID" value="p"></label></form>' });
@@ -744,4 +745,39 @@ test('shareID is matched on value, id or a label naming only that radio; a priva
   calls = await send('<form><input type="radio" name="shareID" value="1"><input type="radio" name="shareID" value="2"></form>');
   assert.equal(calls.length, 1, 'radios that name nothing: nothing is posted');
   assert.equal(thumb.title, 'Upload failed: the Share Files form has no public choice');
+});
+
+// The live plugin's form as served (2026-10-28): radios valued 1/2, each named only by bare text
+// in its own table cell, and a named submit button.
+const LIVE_FORM = `<form style="padding: 0 0 0 3px;" enctype="multipart/form-data" name="upload" action="index.php" method="post">
+    <table>
+    <tbody><tr><td>Select who to share files with,</td></tr>
+    <tr><td><input type="radio" name="shareID" value="1" checked="">Public - Share file with the Room? </td></tr>
+    <tr><td><input type="radio" name="shareID" value="2">Private - Share file with another User?</td></tr>
+    <tr><td>Enter User: <input class="sInput" type="text" name="shareWithUser" value=""></td></tr>
+    <tr><td>&nbsp;</td></tr>
+    <tr><td>Select a file to share,</td></tr>
+    <tr><td><input class="sInput" type="file" id="uploadedfile" name="uploadedfile" size="15"></td></tr>
+    <tr><td><input class="button" type="submit" name="submit" value="Upload File"></td></tr>
+    </tbody></table>
+</form>`;
+
+test('the live Share Files form: scope is read from each radio\'s own cell, and the named submit is sent', async () => {
+  const { window, bar, win } = page();
+  let calls = stubShare(win, { formBody: LIVE_FORM });
+  drop(window, bar, new window.File(['x'], 'cat.png', { type: 'image/png' }));
+  enter(window, bar, false);
+  await settle();
+  assert.equal(calls.length, 2, 'the upload is posted');
+  assert.equal(calls[1].body.get('shareID'), '1', 'public');
+  assert.equal(calls[1].body.get('submit'), 'Upload File');
+  assert.match(calls[1].url, /\/plugins\/share\/index\.php$/);
+
+  calls = stubShare(win, { formBody: LIVE_FORM });
+  win.whisperUser('Bob');
+  drop(window, bar, new window.File(['x'], 'cat.png', { type: 'image/png' }));
+  enter(window, bar, false);
+  await settle();
+  assert.equal(calls[1].body.get('shareID'), '2', 'private');
+  assert.equal(calls[1].body.get('shareWithUser'), 'Bob');
 });
