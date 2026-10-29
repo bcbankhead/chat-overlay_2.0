@@ -108,7 +108,21 @@ export function createView({ doc, win, container, css }) {
   // Whether the list rested at its bottom before anything grew it. Stored rather than tested
   // when an image loads, because by then the image has already pushed the bottom away.
   let pinned = true;
-  list.addEventListener('scroll', () => (pinned = atBottom(list)), { passive: true });
+  // Where the view last rested at the bottom. A scroll event arrives a frame after the write that
+  // caused it, possibly after the list has grown again, so only a move above this point unpins.
+  let pinnedTop = 0;
+  const settle = () => {
+    pinnedTop = list.scrollTop;
+    pinned = true;
+  };
+  list.addEventListener(
+    'scroll',
+    () => {
+      if (atBottom(list)) settle();
+      else if (list.scrollTop < pinnedTop - 1) pinned = false;
+    },
+    { passive: true },
+  );
 
   // Posted images are told from smilies by size, known only once loaded. `load` does not
   // bubble, so it is caught in the capture phase. A loaded image grows the list, so a pinned
@@ -119,7 +133,10 @@ export function createView({ doc, win, container, css }) {
       const target = /** @type {Element} */ (event.target);
       if (target.tagName !== 'IMG') return;
       if (target.closest?.('.tdf-body')) tagPosted(/** @type {HTMLImageElement} */ (target));
-      if (pinned && autoOn()) list.scrollTop = list.scrollHeight;
+      if (pinned && autoOn()) {
+        list.scrollTop = list.scrollHeight;
+        settle();
+      }
     },
     true,
   );
@@ -209,9 +226,13 @@ export function createView({ doc, win, container, css }) {
   }
 
   function autoscroll() {
-    if (!autoOn()) return;
+    // With the switch off a row grows the list without a scroll event, so read where it rests.
+    if (!autoOn()) {
+      pinned = atBottom(list);
+      return;
+    }
     list.scrollTop = list.scrollHeight;
-    pinned = true;
+    settle();
   }
 
   /** @type {Set<string>} */

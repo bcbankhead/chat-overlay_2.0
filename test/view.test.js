@@ -393,6 +393,46 @@ test('a late image load does not pull down a user scrolled up', async () => {
   assert.equal(geo.top, 100);
 });
 
+test('a user who scrolls back to the bottom is followed again', async () => {
+  const { win, view, root } = await setup();
+  const list = root.querySelector('.tdf-list');
+  const geo = stubScroll(list);
+  view.append(imgRec({}));
+  geo.top = 100;
+  list.dispatchEvent(new win.Event('scroll'));
+  geo.top = geo.height - 200;
+  list.dispatchEvent(new win.Event('scroll'));
+  geo.height = 750;
+  loadImg(win, root.querySelector('.tdf-body img'));
+  assert.equal(geo.top, 750);
+});
+
+test('a scroll event arriving after the list grew does not unpin', async () => {
+  const { win, view, root } = await setup();
+  const list = root.querySelector('.tdf-list');
+  const geo = stubScroll(list);
+  view.append(imgRec({}));
+  geo.height = 750;
+  list.dispatchEvent(new win.Event('scroll'));
+  loadImg(win, root.querySelector('.tdf-body img'));
+  assert.equal(geo.top, 750);
+});
+
+test('rows added with Auto-scroll off leave the view unpinned when it is turned back on', async () => {
+  const { win, doc, view, root } = await setup();
+  const list = root.querySelector('.tdf-list');
+  const geo = stubScroll(list);
+  view.append(imgRec({}));
+  const auto = doc.getElementById('autoScrollID');
+  auto.checked = false;
+  geo.height = 800;
+  view.append(rec({ id: '2', mTime: '101' }));
+  auto.checked = true;
+  geo.height = 900;
+  loadImg(win, root.querySelector('.tdf-body img'));
+  assert.equal(geo.top, 500);
+});
+
 test('with Auto-scroll off an image load never moves the view', async () => {
   const { win, doc, view, root } = await setup();
   const list = root.querySelector('.tdf-list');
