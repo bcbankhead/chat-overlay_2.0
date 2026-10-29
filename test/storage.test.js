@@ -35,10 +35,10 @@ const msg = (over) => ({
   ...over,
 });
 
-test('opens at version 1 with every store and index', async () => {
+test('opens at version 2 with every store and index', async () => {
   const db = await fresh();
   assert.equal(db.version, DB_VERSION);
-  assert.equal(DB_VERSION, 1);
+  assert.equal(DB_VERSION, 2);
   assert.deepEqual([...db.objectStoreNames].sort(), ['images', 'messages', 'settings', 'tags']);
   const t = db.transaction(['messages', 'images', 'tags'], 'readonly');
   const messages = t.objectStore('messages');
@@ -51,8 +51,60 @@ test('opens at version 1 with every store and index', async () => {
     'user',
   ]);
   assert.deepEqual(messages.index('roomID_receivedAt').keyPath, ['roomID', 'receivedAt']);
-  assert.deepEqual([...t.objectStore('images').indexNames].sort(), ['receivedAt', 'user']);
+  assert.deepEqual([...t.objectStore('images').indexNames].sort(), ['hash', 'receivedAt', 'user']);
   assert.deepEqual([...t.objectStore('tags').indexNames].sort(), ['imageId', 'sourceMessageId']);
+  db.close();
+});
+
+/** @param {IDBRequest | IDBTransaction} r */
+const settled = (r) =>
+  new Promise((resolve, reject) => {
+    if ('oncomplete' in r) {
+      r.oncomplete = () => resolve(undefined);
+      r.onerror = () => reject(r.error);
+    } else {
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    }
+  });
+
+test('a version 1 database upgrades to version 2 with its records intact and a hash index', async () => {
+  const name = `test-v1-${++n}`;
+  // The version 1 schema, as TDF-0009.1 created it.
+  const open = indexedDB.open(name, 1);
+  open.onupgradeneeded = () => {
+    const v1 = open.result;
+    const messages = v1.createObjectStore('messages', { keyPath: 'id' });
+    for (const i of ['roomID', 'mTime', 'user', 'receivedAt']) messages.createIndex(i, i);
+    messages.createIndex('roomID_receivedAt', ['roomID', 'receivedAt']);
+    v1.createObjectStore('settings', { keyPath: 'key' });
+    const images = v1.createObjectStore('images', { keyPath: 'id' });
+    images.createIndex('user', 'user');
+    images.createIndex('receivedAt', 'receivedAt');
+    const tags = v1.createObjectStore('tags', { keyPath: 'id', autoIncrement: true });
+    tags.createIndex('imageId', 'imageId');
+    tags.createIndex('sourceMessageId', 'sourceMessageId');
+  };
+  const v1 = /** @type {IDBDatabase} */ (await settled(open));
+  const w = v1.transaction(['messages', 'settings', 'images', 'tags'], 'readwrite');
+  w.objectStore('messages').put(msg({ id: 'm1' }));
+  w.objectStore('settings').put({ key: 'theme', value: 'dark' });
+  w.objectStore('images').put({ id: 'img1', user: 'alice', receivedAt: 1, favorite: true });
+  w.objectStore('tags').put({ imageId: 'img1', tag: ':h', sourceMessageId: 'm1' });
+  await settled(w);
+  v1.close();
+
+  const db = await openDb({ name });
+  assert.equal(db.version, 2);
+  const t = db.transaction(['messages', 'settings', 'images', 'tags'], 'readonly');
+  const images = t.objectStore('images');
+  assert.deepEqual([...images.indexNames].sort(), ['hash', 'receivedAt', 'user']);
+  assert.equal((await settled(t.objectStore('messages').get('m1'))).text, 'hi');
+  assert.equal((await settled(t.objectStore('settings').get('theme'))).value, 'dark');
+  assert.equal((await settled(images.get('img1'))).favorite, true);
+  assert.equal((await settled(t.objectStore('tags').getAll())).length, 1);
+  // A record from before the upgrade has no hash, so the index does not hold it.
+  assert.equal(await settled(images.index('hash').count()), 0);
   db.close();
 });
 
@@ -139,6 +191,7 @@ test('settings return the contract defaults for absent keys', async () => {
   assert.equal(await s.get('retentionDays'), 30);
   assert.equal(await s.get('galleryLimitMB'), null);
   assert.equal(await s.get('storeImagesOffline'), false);
+  assert.equal(await s.get('includeMyImages'), false);
   assert.equal(await s.get('likeEmoji'), ':h');
   assert.equal(await s.get('likeIntervalSeconds'), 15);
   assert.equal(await s.get('theme'), null);

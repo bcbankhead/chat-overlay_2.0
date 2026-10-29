@@ -35,7 +35,16 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
   // Reported once, above; a flyout opened later reports it again from its own load.
   storeReady.catch(() => {});
 
-  startCapture({ ready, onInbound, fetch, makeThumb: (blob) => makeThumb(blob), base: () => win.location.href, report });
+  startCapture({
+    ready,
+    onInbound,
+    fetch,
+    makeThumb: (blob) => makeThumb(blob),
+    base: () => win.location.href,
+    report,
+    // The form engine-hook.js compares to mUser, which is what images.user stores.
+    self: () => String(/** @type {any} */ (win).userName ?? ''),
+  });
 
   if (!doc.getElementById('tdf-gallery-style')) {
     const style = doc.createElement('style');

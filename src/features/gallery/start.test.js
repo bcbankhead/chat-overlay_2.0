@@ -56,3 +56,28 @@ test('start wires capture, the Gallery panel and the "View images" menu action',
     clearGalleryErrors();
   }
 });
+
+test('capture skips the signed-in user\'s own share, named by win.userName, with the setting off', async () => {
+  const win = /** @type {any} */ (new Window({ url: 'https://dollforum.com/forum/chat/index.php' }));
+  win.userName = 'me';
+  /** @type {string[]} */
+  const fetched = [];
+  win.fetch = async (/** @type {string} */ url) => {
+    fetched.push(String(url));
+    return new Response(new Blob([new Uint8Array(10)]), { headers: { 'content-type': 'image/png' } });
+  };
+  const logged = console.error;
+  console.error = () => {};
+  try {
+    startGallery({ win, doc: win.document, css: '', indexedDB: new IDBFactory() });
+    const share = (/** @type {string} */ id, /** @type {string} */ user) =>
+      emitInbound(/** @type {any} */ ({ id, roomID: '1', mTime: '100', user, receivedAt: 1, text: `[[img src="plugins/share/view.php?id=${id}00000000000"]]` }));
+    share('1111', 'me');
+    share('2222', 'alice');
+    await settle();
+    assert.deepEqual(fetched, ['https://dollforum.com/forum/chat/plugins/share/view.php?id=222200000000000']);
+  } finally {
+    console.error = logged;
+    clearGalleryErrors();
+  }
+});

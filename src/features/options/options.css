@@ -83,6 +83,21 @@
   opacity: 0.5;
 }
 
+/* A plain checkbox row (Include my images), in the theme's link colour. */
+#tdf-rail .tdf-opt-check {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--tdf-link);
+  cursor: pointer;
+}
+
+/* A checkbox row's hint shows only a failure. */
+#tdf-rail .tdf-opt-row + .tdf-opt-hint:empty {
+  display: none;
+}
+
 #tdf-rail .tdf-opt-clear {
   width: 100%;
   margin: 6px 0 2px;

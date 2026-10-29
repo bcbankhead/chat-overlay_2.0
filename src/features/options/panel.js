@@ -1,8 +1,9 @@
 // The Settings flyout (UI design 2026-10-27, Flyouts → Settings). Chat: the Auto-scroll switch
-// over the engine's #autoScrollID, and Clear chat buffer. Storage: Chat history (days) and
-// Gallery size limit (MB). A hint under each field says what the typed value would delete;
-// the setting is written, and the deletion runs, only when the value is committed (change:
-// Enter or leaving the field). The rail gives the flyout body its scrollbar.
+// over the engine's #autoScrollID, and Clear chat buffer. Storage: Chat history (days),
+// Gallery size limit (MB) and Include my images (TDF-0009.13). A hint under each field says
+// what the typed value would delete; the setting is written, and the deletion runs, only when
+// the value is committed (change: Enter or leaving the field). The rail gives the flyout body
+// its scrollbar.
 
 import { describeError } from '../../core/errors.js';
 import { MB_BYTES, parseDays, parseMegabytes } from './selectors.js';
@@ -113,6 +114,30 @@ export function renderSettings(container, { doc, win, settings, limits, galleryB
   const history = field('Chat history (days)', '');
   const gallery = field('Gallery size limit (MB)', 'No limit');
   gallery.input.min = '1';
+
+  // Include my images: whether capture keeps the user's own shares, from the next share.
+  const mineRow = el('label', 'tdf-opt-row');
+  const mine = el('input', 'tdf-opt-check');
+  mine.type = 'checkbox';
+  mineRow.append(el('span', '', 'Include my images'), mine);
+  const mineHint = el('div', 'tdf-opt-hint tdf-warn');
+  mineHint.setAttribute('aria-live', 'polite');
+  root.append(mineRow, mineHint);
+  /** @param {string} text */
+  const mineFailed = (text) => {
+    if (!closed) mineHint.textContent = text;
+  };
+  mine.addEventListener('change', () => {
+    mineHint.textContent = '';
+    settings.set('includeMyImages', mine.checked).catch((err) => mineFailed(`Could not apply: ${describeError(err)}`));
+  });
+  settings.get('includeMyImages').then(
+    (on) => {
+      if (!closed) mine.checked = on;
+    },
+    (err) => mineFailed(`Could not read settings: ${describeError(err)}`),
+  );
+
   container.appendChild(root);
 
   /**

@@ -17,10 +17,21 @@ const get = async (store, id) => (await store.list()).find((r) => r.id === id);
 
 /**
  * @param {{ ok?: boolean, type?: string, offline?: boolean, thumbFails?: boolean, ready?: Promise<any>,
- *   hang?: boolean, timeoutMs?: number }} [opts]
+ *   hang?: boolean, timeoutMs?: number, self?: string, hashFails?: boolean }} [opts]
  */
-async function harness({ ok = true, type = 'image/jpeg', offline = false, thumbFails = false, ready, hang = false, timeoutMs } = {}) {
-  const state = { ok, hang, type };
+async function harness({
+  ok = true,
+  type = 'image/jpeg',
+  offline = false,
+  thumbFails = false,
+  ready,
+  hang = false,
+  timeoutMs,
+  self = '',
+  hashFails = false,
+} = {}) {
+  /** @type {{ ok: boolean, hang: boolean, type: string, self: string, bytes: Record<string, number> }} */
+  const state = { ok, hang, type, self, bytes: {} };
   const db = await openDb({ name: `gallery-capture-${++n}` });
   const store = createImageStore(db);
   const settings = createSettings(db);
@@ -44,7 +55,9 @@ async function harness({ ok = true, type = 'image/jpeg', offline = false, thumbF
         return new Promise((_, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
       }
       if (!state.ok) return new Response('gone', { status: 404 });
-      return new Response(new Blob([new Uint8Array(5000)], { type: state.type }), {
+      // Every share serves the same 5000 bytes unless state.bytes gives it its own fill.
+      const fill = state.bytes[new URL(String(url)).searchParams.get('id') ?? ''] ?? 0;
+      return new Response(new Blob([new Uint8Array(5000).fill(fill)], { type: state.type }), {
         headers: { 'content-type': state.type },
       });
     },
@@ -55,13 +68,21 @@ async function harness({ ok = true, type = 'image/jpeg', offline = false, thumbF
     base: () => 'https://dollforum.com/forum/chat/index.php',
     report: (err) => errors.push(err),
     timeoutMs,
+    self: () => state.self,
+    ...(hashFails
+      ? {
+          hash: async () => {
+            throw new Error('no subtle crypto');
+          },
+        }
+      : {}),
   });
   /** @param {Partial<import('../../core/history.js').MessageRecord>} over */
   const deliver = (over) => {
     const record = { id: '1', roomID: '1', mTime: '100', user: 'alice', receivedAt: 1, text: '', ...over };
     for (const fn of listeners) fn(record);
   };
-  return { store, deliver, fetched, errors, state };
+  return { store, settings, deliver, fetched, errors, state };
 }
 
 test('the same share id twice, in one message and across two, yields one entry and one fetch', async () => {
@@ -148,6 +169,7 @@ test('a broken image shared again is retried, and repaired in place when it load
   assert.equal(rows[0].thumb?.size, 300);
   assert.equal(rows[0].bytes, 300);
   assert.equal(rows[0].contentType, 'image/jpeg');
+  assert.match(String(rows[0].hash), /^[0-9a-f]{64}$/, 'the retry stores the hash');
   assert.equal(h.fetched.length, 2);
 });
 
@@ -191,4 +213,87 @@ test('a database that never opens reports the failure for every queued share', a
   await settle();
   assert.deepEqual(h.errors.map((e) => /** @type {Error} */ (e).message), ['IndexedDB disabled', 'IndexedDB disabled']);
   assert.deepEqual(h.fetched, []);
+});
+
+const OTHER = '999999999999999';
+
+test('the same bytes under two share ids yield one entry; different bytes yield two', async () => {
+  const h = await harness();
+  h.deliver({ id: '1', text: SHARE(ID) });
+  h.deliver({ id: '2', text: SHARE(OTHER), receivedAt: 2 });
+  await settle();
+  assert.deepEqual((await h.store.list()).map((r) => r.id), [ID]);
+  assert.match(String((await get(h.store, ID))?.hash), /^[0-9a-f]{64}$/);
+
+  const d = await harness();
+  d.state.bytes[OTHER] = 7;
+  d.deliver({ id: '1', text: SHARE(ID) });
+  d.deliver({ id: '2', text: SHARE(OTHER), receivedAt: 2 });
+  await settle();
+  assert.deepEqual((await d.store.list()).map((r) => r.id).sort(), [ID, OTHER]);
+  assert.deepEqual(d.errors, []);
+});
+
+test('with Include my images off, an own share is not fetched or stored; another user\'s still is', async () => {
+  const h = await harness({ self: 'me' });
+  h.state.bytes[OTHER] = 7;
+  h.deliver({ id: '1', user: 'me', text: SHARE(ID) });
+  h.deliver({ id: '2', user: 'alice', text: SHARE(OTHER), receivedAt: 2 });
+  await settle();
+  assert.deepEqual((await h.store.list()).map((r) => r.id), [OTHER]);
+  assert.equal(h.fetched.length, 1);
+  assert.match(h.fetched[0], new RegExp(OTHER));
+});
+
+test('with Include my images on, an own share is captured, from the next share without a reload', async () => {
+  const h = await harness({ self: 'me' });
+  h.deliver({ id: '1', user: 'me', text: SHARE(ID) });
+  await settle();
+  assert.equal((await h.store.list()).length, 0);
+  await h.settings.set('includeMyImages', true);
+  h.deliver({ id: '2', user: 'me', text: SHARE(ID), receivedAt: 2 });
+  await settle();
+  assert.deepEqual((await h.store.list()).map((r) => r.user), ['me']);
+});
+
+test('an unknown signed-in user gates nothing', async () => {
+  const h = await harness({ self: '' });
+  h.deliver({ user: '', text: SHARE(ID) });
+  await settle();
+  assert.equal((await h.store.list()).length, 1);
+});
+
+test('a broken retry whose bytes match another image is removed; a favourite one is repaired', async () => {
+  for (const favorite of [false, true]) {
+    const h = await harness();
+    h.state.ok = false;
+    h.deliver({ id: '1', text: SHARE(ID) });
+    await settle();
+    if (favorite) await h.store.setFavorite(ID, true);
+    h.state.ok = true;
+    h.deliver({ id: '2', text: SHARE(OTHER), receivedAt: 2 });
+    await settle();
+    h.deliver({ id: '3', text: SHARE(ID), receivedAt: 3 });
+    await settle();
+    const rows = await h.store.list();
+    if (favorite) {
+      assert.deepEqual(rows.map((r) => r.id).sort(), [ID, OTHER].sort());
+      assert.equal((await get(h.store, ID))?.broken, false);
+    } else {
+      assert.deepEqual(rows.map((r) => r.id), [OTHER]);
+    }
+    assert.deepEqual(h.errors, []);
+  }
+});
+
+test('a hash that fails is reported, and the image is stored without one', async () => {
+  const h = await harness({ hashFails: true });
+  h.deliver({ id: '1', text: SHARE(ID) });
+  h.deliver({ id: '2', text: SHARE(OTHER), receivedAt: 2 });
+  await settle();
+  const rows = await h.store.list();
+  assert.equal(rows.length, 2, 'not deduped without a hash');
+  assert.equal(rows[0].hash, undefined);
+  assert.equal(h.errors.length, 2);
+  assert.match(String(/** @type {Error} */ (h.errors[0]).message), /no hash for image .*: no subtle crypto/);
 });

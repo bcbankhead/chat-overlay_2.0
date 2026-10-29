@@ -22,6 +22,8 @@ import { overLimit } from './shareParse.js';
  * @property {boolean} favorite
  * @property {boolean} broken       the server copy failed to load (capture or Save)
  * @property {string} [brokenReason] why it failed, shown on the tile's badge
+ * @property {string} [hash]        SHA-256 of the fetched bytes, lowercase hex; absent on a
+ *                                  broken record, a failed hash, and captures before schema v2
  */
 
 /** Refused by `remove` for a favourite. */
@@ -116,15 +118,27 @@ export function createImageStore(db) {
     },
 
     /**
+     * The stored image with these bytes, if any.
+     * @param {string} hash
+     * @returns {Promise<ImageRecord | undefined>}
+     */
+    findByHash(hash) {
+      return request(tx('readonly').objectStore(STORES.images).index('hash').get(hash));
+    },
+
+    /**
      * Store a newly captured image. An id already stored is kept as it is, so a repeated
-     * share never resets a favourite or replaces the first capture.
+     * share never resets a favourite or replaces the first capture; so are bytes already
+     * stored under another id, decided in the same transaction as the add.
      * @param {ImageRecord} record
      * @returns {Promise<boolean>} whether it was added
      */
     async put(record) {
       const t = tx('readwrite');
       const store = t.objectStore(STORES.images);
-      const exists = (await request(store.count(record.id))) > 0;
+      const exists =
+        (await request(store.count(record.id))) > 0 ||
+        (record.hash !== undefined && (await request(store.index('hash').count(record.hash))) > 0);
       if (!exists) store.add(record);
       await done(t);
       if (!exists) notify();
@@ -166,7 +180,7 @@ export function createImageStore(db) {
      * The server copy loaded again: clear the broken state, merging what the new fetch made
      * (a capture retry's thumbnail, for one). A favourite stays a favourite.
      * @param {string} id
-     * @param {Partial<Pick<ImageRecord, 'contentType' | 'thumb' | 'blob' | 'bytes'>>} [fields]
+     * @param {Partial<Pick<ImageRecord, 'contentType' | 'thumb' | 'blob' | 'bytes' | 'hash'>>} [fields]
      */
     repair(id, fields = {}) {
       return update(id, (r) => {

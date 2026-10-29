@@ -9,7 +9,7 @@ const settle = () => new Promise((r) => setTimeout(r, 20));
 /** A settings stand-in over a plain object; `fail` makes every read reject. */
 function stubSettings(values = {}, { fail = false } = {}) {
   /** @type {Record<string, unknown>} */
-  const store = { retentionDays: 30, galleryLimitMB: null, ...values };
+  const store = { retentionDays: 30, galleryLimitMB: null, includeMyImages: false, ...values };
   /** @type {unknown[][]} */
   const writes = [];
   return {
@@ -248,4 +248,41 @@ test('a hint read that resolves after close is not written', async () => {
   cleanup();
   await settle();
   assert.deepEqual(hints(), shown);
+});
+
+test('Include my images is a checkbox row after the gallery limit, showing the stored value', async () => {
+  for (const on of [false, true]) {
+    const { container } = setup({ settings: stubSettings({ includeMyImages: on }) });
+    await settle();
+    const box = /** @type {HTMLInputElement} */ (container.querySelector('input.tdf-opt-check'));
+    assert.equal(box.type, 'checkbox');
+    assert.equal(box.classList.contains('tdf-opt-switch'), false);
+    assert.equal(box.checked, on);
+    const row = /** @type {HTMLElement} */ (box.closest('label.tdf-opt-row'));
+    assert.equal(row.textContent, 'Include my images');
+    // Directly after the Gallery size limit field and its hint.
+    const before = row.previousElementSibling;
+    assert.ok(before?.classList.contains('tdf-opt-hint'));
+    assert.match(String(before?.previousElementSibling?.textContent), /Gallery size limit/);
+  }
+});
+
+test('toggling Include my images writes the setting; a failed write says so', async () => {
+  const settings = stubSettings();
+  const { win, container } = setup({ settings });
+  await settle();
+  const box = /** @type {HTMLInputElement} */ (container.querySelector('input.tdf-opt-check'));
+  box.checked = true;
+  box.dispatchEvent(new win.Event('change'));
+  await settle();
+  assert.deepEqual(settings.writes, [['includeMyImages', true]]);
+
+  settings.set = async () => {
+    throw new Error('write failed');
+  };
+  box.checked = false;
+  box.dispatchEvent(new win.Event('change'));
+  await settle();
+  const hint = /** @type {HTMLElement} */ (box.closest('label')?.nextElementSibling);
+  assert.equal(hint.textContent, 'Could not apply: write failed');
 });

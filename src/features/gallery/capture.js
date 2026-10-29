@@ -3,8 +3,11 @@
 // only with `storeImagesOffline` on. A failed fetch stores the record broken, with its reason
 // and without a thumbnail; the same id shared again retries it, so a passing network fault
 // does not break an image for good. No backfill: images are captured only while the script runs.
+// Bytes already stored under another share id are not stored again (TDF-0009.13), and the
+// signed-in user's own shares are skipped unless `includeMyImages` is on.
 
 import { fetchShare } from './fetchShare.js';
+import { sha256Hex } from './hash.js';
 import { extractShareIds } from './shareParse.js';
 
 /**
@@ -16,13 +19,15 @@ import { extractShareIds } from './shareParse.js';
  * @property {() => string} base      the chat page's address, to derive share URLs from
  * @property {(err: unknown) => void} report
  * @property {number} [timeoutMs]    per share fetch; fetchShare's default when absent
+ * @property {() => string} self      the signed-in user, in the engine's raw form; '' when unknown
+ * @property {(blob: Blob) => Promise<string>} [hash]  content hash; sha256Hex when absent
  */
 
 /**
  * Start capturing. Records arriving before the database opens wait on the queue.
  * @param {CaptureDeps} deps
  */
-export function startCapture({ ready, onInbound, fetch, makeThumb, base, report, timeoutMs }) {
+export function startCapture({ ready, onInbound, fetch, makeThumb, base, report, timeoutMs, self, hash = sha256Hex }) {
   /** @type {Set<string>} ids queued or being fetched */
   const queued = new Set();
   /** @type {Promise<void>} */
@@ -34,6 +39,9 @@ export function startCapture({ ready, onInbound, fetch, makeThumb, base, report,
    */
   async function captureOne(id, message) {
     const { store, settings } = await ready;
+    // Read per share, so a toggle applies from the next share; own images stored before stay.
+    const me = self();
+    if (me !== '' && message.user === me && !(await settings.get('includeMyImages'))) return;
     const existing = await store.get(id);
     if (existing && !existing.broken) return;
     /** @type {import('./store.js').ImageRecord} */
@@ -64,6 +72,24 @@ export function startCapture({ ready, onInbound, fetch, makeThumb, base, report,
     const { blob, contentType } = fetched;
     record.contentType = contentType;
     try {
+      record.hash = await hash(blob);
+    } catch (err) {
+      // Stored without a hash, so not deduped; capture is never blocked by it.
+      report(new Error(`gallery: no hash for image ${id}: ${err instanceof Error ? err.message : String(err)}`));
+    }
+    if (record.hash !== undefined) {
+      const same = await store.findByHash(record.hash);
+      if (same && same.id !== id) {
+        // The same bytes under another share id. A new one is skipped; a broken retry is
+        // removed as the duplicate, unless it is a favourite, which is never deleted.
+        if (!existing) return;
+        if (!existing.favorite) {
+          await store.remove(id);
+          return;
+        }
+      }
+    }
+    try {
       record.thumb = await makeThumb(blob);
     } catch (err) {
       // Kept without a thumbnail: Save still works, the tile shows a placeholder.
@@ -73,8 +99,14 @@ export function startCapture({ ready, onInbound, fetch, makeThumb, base, report,
     record.bytes = (record.blob?.size ?? 0) + (record.thumb?.size ?? 0);
     // A retry keeps the first capture's message and favourite, and takes what this fetch made.
     if (existing) {
-      const { contentType: type, thumb, blob: kept, bytes } = record;
-      await store.repair(id, { contentType: type, thumb, bytes, ...(kept ? { blob: kept } : {}) });
+      const { contentType: type, thumb, blob: kept, bytes, hash: sum } = record;
+      await store.repair(id, {
+        contentType: type,
+        thumb,
+        bytes,
+        ...(kept ? { blob: kept } : {}),
+        ...(sum !== undefined ? { hash: sum } : {}),
+      });
     } else await store.put(record);
   }
 

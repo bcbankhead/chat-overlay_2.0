@@ -1,8 +1,10 @@
 // The one IndexedDB database (TDF-0009 Shared Contract). Every store and index is created
-// here at version 1; no later slice bumps the version without amending the contract.
+// here; no slice bumps the version without amending the contract. Version 1 created every
+// store; version 2 (TDF-0009.13) adds the images `hash` index, with no data migration:
+// records captured before it carry no hash, and the index skips them.
 
 export const DB_NAME = 'tdf-chat-2';
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 
 export const STORES = Object.freeze({
   messages: 'messages',
@@ -25,6 +27,7 @@ function createSchema(db) {
   const images = db.createObjectStore(STORES.images, { keyPath: 'id' });
   images.createIndex('user', 'user');
   images.createIndex('receivedAt', 'receivedAt');
+  images.createIndex('hash', 'hash');
 
   const tags = db.createObjectStore(STORES.tags, { keyPath: 'id', autoIncrement: true });
   tags.createIndex('imageId', 'imageId');
@@ -41,6 +44,7 @@ export function openDb({ indexedDB = globalThis.indexedDB, name = DB_NAME } = {}
     const req = indexedDB.open(name, DB_VERSION);
     req.onupgradeneeded = (event) => {
       if (event.oldVersion < 1) createSchema(req.result);
+      else if (event.oldVersion < 2) req.transaction?.objectStore(STORES.images).createIndex('hash', 'hash');
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);

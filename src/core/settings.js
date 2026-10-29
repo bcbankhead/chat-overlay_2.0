@@ -10,6 +10,8 @@ export const DEFAULTS = Object.freeze({
   // The gallery's size limit in MB; null is no limit.
   galleryLimitMB: /** @type {number | null} */ (null),
   storeImagesOffline: false,
+  // Whether the gallery captures the signed-in user's own shares.
+  includeMyImages: false,
   likeEmoji: ':h',
   likeIntervalSeconds: 15,
   // The chosen theme; null follows the system until the first toggle.

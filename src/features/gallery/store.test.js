@@ -139,3 +139,23 @@ test('a failing change listener is recorded for the flyout, and the others still
   assert.deepEqual(listGalleryErrors(), ['listener broke']);
   clearGalleryErrors();
 });
+
+test('put refuses bytes already stored under another id; findByHash finds them', async () => {
+  const store = await fresh();
+  assert.equal(await store.put(image({ id: 'a', hash: 'h1' })), true);
+  assert.equal(await store.put(image({ id: 'b', hash: 'h1' })), false);
+  assert.equal(await store.put(image({ id: 'c', hash: 'h2' })), true);
+  // A record without a hash (broken, or a failed hash) never collides.
+  assert.equal(await store.put(image({ id: 'd' })), true);
+  assert.equal(await store.put(image({ id: 'e' })), true);
+  assert.deepEqual((await store.list()).map((r) => r.id).sort(), ['a', 'c', 'd', 'e']);
+  assert.equal((await store.findByHash('h1'))?.id, 'a');
+  assert.equal(await store.findByHash('none'), undefined);
+});
+
+test('repair stores the hash a retry computed', async () => {
+  const store = await fresh();
+  await store.put(image({ id: 'a', broken: true, brokenReason: 'HTTP 404' }));
+  await store.repair('a', { hash: 'h1' });
+  assert.equal((await store.findByHash('h1'))?.id, 'a');
+});
