@@ -94,7 +94,8 @@ function page({ chat = true, theme = /** @type {'light' | 'dark' | null} */ ('da
   // The engine's globals, as functions.js.php / message.js.php / userlist.js.php define them.
   const win = /** @type {any} */ (window);
   win.mySmilies = [...SMILIES, ''];
-  win.mySmiliesImg = SMILIES.map((_, i) => `<img src='smilies/${i}.gif' border='0'>`);
+  // :d keeps its real file name, so the picker shows its cleaned copy (smiliefix.js).
+  win.mySmiliesImg = SMILIES.map((code, i) => `<img src='smilies/${code === ':d' ? 'biggrin' : i}.gif' border='0'>`);
   win.addsmiley = (/** @type {string} */ id, /** @type {string} */ code) => {
     const el = /** @type {any} */ (document.getElementById(id));
     el.value += code;
@@ -302,6 +303,8 @@ test('the smiley button opens a 5-wide picker of the 15 smilies; a pick inserts 
   const items = picker.querySelectorAll('.tdf-sm-item');
   assert.equal(items.length, 15, 'the empty trailing code is filtered out');
   assert.equal(items[0].querySelector('img').getAttribute('src'), 'smilies/0.gif');
+  assert.match(items[12].querySelector('img').getAttribute('src'), /^data:image\/gif;base64,/, ':d shows its cleaned copy');
+  assert.equal(items[12].dataset.src, 'smilies/biggrin.gif', 'a pick still reports the site source');
   bar.value = 'hi ';
   items[9].click();
   assert.equal(bar.value, 'hi :h');

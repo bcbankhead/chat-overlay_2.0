@@ -7,6 +7,7 @@ import { DEFAULT_REPLAY_LIMIT } from './history.js';
 import { adapt, THEME_BG } from './ink.js';
 import { safeDecodeURIComponent } from './parse.js';
 import { sanitize } from './sanitize.js';
+import { fixedSmilieSrc } from './smiliefix.js';
 import { attachScrollbar } from './shell.js';
 
 /**
@@ -173,6 +174,14 @@ export function createView({ doc, win, container, css }) {
     const body = doc.createElement('span');
     body.className = 'tdf-body';
     const content = sanitize(expand(record.text, expandOptions), doc);
+    // After sanitising, which keeps only http(s) sources: the cleaned smilies are data URIs.
+    for (const img of content.querySelectorAll('img')) {
+      const src = img.getAttribute('src');
+      if (src !== null) {
+        const fixed = fixedSmilieSrc(src);
+        if (fixed !== src) img.setAttribute('src', fixed);
+      }
+    }
     if (record.lineBreakFlag === '1') {
       const pre = doc.createElement('pre');
       pre.appendChild(content);

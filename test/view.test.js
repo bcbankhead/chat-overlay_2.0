@@ -48,6 +48,16 @@ test('an entry keeps its sender colour per theme, not family or size, and expand
   assert.ok(el.classList.contains('tdf-kind-public'));
 });
 
+test('a smilie with a white matte shows its cleaned copy; others keep the site source', async () => {
+  const { win, view, root } = await setup();
+  const heart = win.addSmilie;
+  win.addSmilie = (t) => heart(t).split(':d').join("<img src='smilies/biggrin.gif'>");
+  view.append(rec({ text: ':d :h' }));
+  const [fixed, plain] = msgs(root)[0].querySelectorAll('.tdf-body img');
+  assert.match(fixed.getAttribute('src'), /^data:image\/gif;base64,/);
+  assert.equal(plain.getAttribute('src'), 'smilies/heart.gif');
+});
+
 test('entry/exit lines show no name; irc lines show no separator; line breaks use pre', async () => {
   const { view, root } = await setup();
   view.append(rec({ id: 'e', kind: 'entry', avatar: '1', text: '** bob has joined the room ...' }));
