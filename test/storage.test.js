@@ -136,7 +136,8 @@ test('deleteByMTime removes only the room\'s earliest-received record with that 
 test('settings return the contract defaults for absent keys', async () => {
   const s = createSettings(await fresh());
   assert.equal(await s.get('historyEnabled'), true);
-  assert.equal(await s.get('retentionDays'), null);
+  assert.equal(await s.get('retentionDays'), 30);
+  assert.equal(await s.get('galleryLimitMB'), null);
   assert.equal(await s.get('storeImagesOffline'), false);
   assert.equal(await s.get('likeEmoji'), ':h');
   assert.equal(await s.get('likeIntervalSeconds'), 15);

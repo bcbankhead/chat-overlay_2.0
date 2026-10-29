@@ -5,7 +5,10 @@ import { STORES, done, request } from './db.js';
 
 export const DEFAULTS = Object.freeze({
   historyEnabled: true,
-  retentionDays: /** @type {number | null} */ (null),
+  // Chat history kept, in days; 0 keeps none. A stored legacy null keeps everything.
+  retentionDays: /** @type {number | null} */ (30),
+  // The gallery's size limit in MB; null is no limit.
+  galleryLimitMB: /** @type {number | null} */ (null),
   storeImagesOffline: false,
   likeEmoji: ':h',
   likeIntervalSeconds: 15,

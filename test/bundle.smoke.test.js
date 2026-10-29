@@ -188,9 +188,11 @@ test('a stored record that will not render is skipped with a notice; the rest re
   const indexedDB = new IDBFactory();
   const db = await openDb({ indexedDB });
   const base = { roomID: '1', mTime: '', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '', size: '', family: '', ircFlag: '0', lineBreakFlag: '0' };
+  // Recent, so the default 30-day Chat history limit (features/options) keeps them.
+  const now = Date.now();
   const t = db.transaction('messages', 'readwrite');
-  t.objectStore('messages').put({ ...base, id: 'good', mTime: '100', text: 'fine', receivedAt: 1 });
-  t.objectStore('messages').put({ ...base, id: 'bad', mTime: '101', text: 42, receivedAt: 2 });
+  t.objectStore('messages').put({ ...base, id: 'good', mTime: '100', text: 'fine', receivedAt: now - 2 });
+  t.objectStore('messages').put({ ...base, id: 'bad', mTime: '101', text: 42, receivedAt: now - 1 });
   await new Promise((resolve) => (t.oncomplete = resolve));
   db.close();
 
