@@ -142,10 +142,20 @@ export function renderSettings(container, { doc, win, settings, limits, galleryB
   const showHistory = hinter(history.hint);
   const showGallery = hinter(gallery.hint);
 
-  /** @param {string} input */
+  /** @type {number | null} the committed Chat history days; null is a stored legacy no-limit */
+  let storedDays = null;
+
+  // A number input the browser cannot parse ('-', 'e') reports '' — read as invalid, not empty.
+  /** @param {HTMLInputElement} input */
+  const valueOf = (input) => (input.validity?.badInput ? null : input.value);
+
+  /** @param {string | null} input */
   const historyText = async (input) => {
-    if (input.trim() === '') return { text: 'Keeping all history. Enter 0 or more days to set a limit.' };
-    const parsed = parseDays(input);
+    if (input !== null && input.trim() === '') {
+      if (storedDays === null) return { text: 'Keeping all history. Enter 0 or more days to set a limit.' };
+      return { text: `Enter 0 or more whole days. The current ${plural(storedDays, 'day')} limit stays.`, warn: true };
+    }
+    const parsed = input === null ? { ok: /** @type {const} */ (false) } : parseDays(input);
     if (!parsed.ok) return { text: 'Enter 0 or more whole days.', warn: true };
     const days = parsed.value;
     const n = await limits.previewHistory(days);
@@ -154,9 +164,9 @@ export function renderSettings(container, { doc, win, settings, limits, galleryB
     return { text: base + (n ? ` This removes ${plural(n, 'line')} now.` : ''), warn: n > 0 };
   };
 
-  /** @param {string} input */
+  /** @param {string | null} input */
   const galleryText = async (input) => {
-    const parsed = parseMegabytes(input);
+    const parsed = input === null ? { ok: /** @type {const} */ (false) } : parseMegabytes(input);
     if (!parsed.ok) return { text: 'Enter 1 MB or more, or leave empty for no limit.', warn: true };
     const used = `${megabytes(await galleryBytes())} used`;
     const preview = await limits.previewGallery(parsed.value);
@@ -167,9 +177,9 @@ export function renderSettings(container, { doc, win, settings, limits, galleryB
     return { text: `${used}. Oldest images go first; favorites are kept.${removes}`, warn: preview.count > 0 };
   };
 
-  /** @param {string} input */
+  /** @param {string | null} input */
   const historyHint = (input) => showHistory(() => historyText(input));
-  /** @param {string} input */
+  /** @param {string | null} input */
   const galleryHint = (input) => showGallery(() => galleryText(input));
 
   /**
@@ -188,11 +198,12 @@ export function renderSettings(container, { doc, win, settings, limits, galleryB
       return text();
     });
 
-  history.input.addEventListener('input', () => historyHint(history.input.value));
-  gallery.input.addEventListener('input', () => galleryHint(gallery.input.value));
+  history.input.addEventListener('input', () => historyHint(valueOf(history.input)));
+  gallery.input.addEventListener('input', () => galleryHint(valueOf(gallery.input)));
 
   history.input.addEventListener('change', () => {
-    const value = history.input.value;
+    const value = valueOf(history.input);
+    if (value === null) return;
     const parsed = parseDays(value);
     if (!parsed.ok) return;
     const days = parsed.value;
@@ -200,6 +211,7 @@ export function renderSettings(container, { doc, win, settings, limits, galleryB
       showHistory,
       async () => {
         await settings.set('retentionDays', days);
+        storedDays = days;
         await limits.pruneHistory(days);
       },
       () => historyText(value),
@@ -207,7 +219,8 @@ export function renderSettings(container, { doc, win, settings, limits, galleryB
   });
 
   gallery.input.addEventListener('change', () => {
-    const value = gallery.input.value;
+    const value = valueOf(gallery.input);
+    if (value === null) return;
     const parsed = parseMegabytes(value);
     if (!parsed.ok) return;
     const mb = parsed.value;
@@ -224,6 +237,7 @@ export function renderSettings(container, { doc, win, settings, limits, galleryB
   Promise.all([settings.get('retentionDays'), settings.get('galleryLimitMB')]).then(
     ([days, mb]) => {
       if (closed) return;
+      storedDays = days;
       history.input.value = days === null ? '' : String(days);
       gallery.input.value = mb === null ? '' : String(mb);
       historyHint(history.input.value);

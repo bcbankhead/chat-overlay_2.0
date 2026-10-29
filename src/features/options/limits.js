@@ -18,31 +18,6 @@ import { historyCutoff, megabytesToBytes, tagsToDelete } from './selectors.js';
  */
 export function createLimits({ db, doc, gallery, now = Date.now }) {
   /**
-   * Ids of the messages `days` would delete, oldest first.
-   * @param {number | null} days
-   * @returns {Promise<string[]>}
-   */
-  async function expired(days) {
-    const cutoff = historyCutoff(days, now());
-    if (cutoff === null) return [];
-    const t = db.transaction(STORES.messages, 'readonly');
-    const index = t.objectStore(STORES.messages).index('receivedAt');
-    /** @type {string[]} */
-    const ids = [];
-    await new Promise((resolve, reject) => {
-      const req = index.openKeyCursor(IDBKeyRange.upperBound(cutoff, true));
-      req.onerror = () => reject(req.error);
-      req.onsuccess = () => {
-        const cursor = req.result;
-        if (!cursor) return resolve(undefined);
-        ids.push(/** @type {string} */ (cursor.primaryKey));
-        cursor.continue();
-      };
-    });
-    return ids;
-  }
-
-  /**
    * Delete the tags left pointing at removed records, in an open readwrite transaction.
    * @param {IDBTransaction} t
    * @param {string[]} messageIds
@@ -69,7 +44,11 @@ export function createLimits({ db, doc, gallery, now = Date.now }) {
      * @param {number | null} days
      */
     async previewHistory(days) {
-      return (await expired(days)).length;
+      const cutoff = historyCutoff(days, now());
+      if (cutoff === null) return 0;
+      const t = db.transaction(STORES.messages, 'readonly');
+      const index = t.objectStore(STORES.messages).index('receivedAt');
+      return request(index.count(IDBKeyRange.upperBound(cutoff, true)));
     },
 
     /**

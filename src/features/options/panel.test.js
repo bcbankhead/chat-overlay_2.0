@@ -138,6 +138,35 @@ test('an invalid typed value is refused in the hint, and committing it does noth
   assert.ok(!limits.calls.some(([name]) => String(name).startsWith('prune')));
 });
 
+test('emptying the history field over a stored limit warns that the limit stays, and commits nothing', async () => {
+  const { history, hints, type, settings, limits } = setup();
+  await settle();
+  type(history, '');
+  await settle();
+  assert.equal(hints()[0], 'Enter 0 or more whole days. The current 30 days limit stays.');
+  type(history, '', 'change');
+  await settle();
+  assert.deepEqual(settings.writes, []);
+  assert.ok(!limits.calls.some(([name]) => String(name).startsWith('prune')));
+});
+
+test('a number the browser cannot parse is refused, not read as empty', async () => {
+  const { history, gallery, hints, type, settings, limits } = setup({
+    settings: stubSettings({ retentionDays: null, galleryLimitMB: 50 }),
+  });
+  await settle();
+  for (const input of [history, gallery]) Object.defineProperty(input, 'validity', { value: { badInput: true } });
+  type(history, '');
+  type(gallery, '');
+  await settle();
+  assert.deepEqual(hints(), ['Enter 0 or more whole days.', 'Enter 1 MB or more, or leave empty for no limit.']);
+  type(history, '', 'change');
+  type(gallery, '', 'change');
+  await settle();
+  assert.deepEqual(settings.writes, []);
+  assert.ok(!limits.calls.some(([name]) => String(name).startsWith('prune')));
+});
+
 test('committing writes the setting, then applies the limit', async () => {
   const { history, gallery, type, settings, limits } = setup();
   await settle();
