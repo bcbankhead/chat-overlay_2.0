@@ -6,6 +6,7 @@
 
 import { fixedSmilieSrc } from '../../core/smiliefix.js';
 import { safeDecodeURIComponent } from '../../core/parse.js';
+import { atBottom } from '../../core/scroll.js';
 import { extractShareIds } from '../gallery/shareParse.js';
 
 const ROW = 'tdf-rx-row';
@@ -118,7 +119,7 @@ export function installReactionUi({ doc, win, store, queue, openSmileyPicker }) 
    */
   const keepPinned = (fn) => {
     const list = doc.querySelector('#tdf-chat .tdf-list');
-    const pinned = list !== null && list.scrollHeight - list.scrollTop - list.clientHeight <= 1;
+    const pinned = list !== null && atBottom(list);
     fn();
     if (pinned && list) list.scrollTop = list.scrollHeight;
   };

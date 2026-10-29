@@ -333,6 +333,77 @@ test('autoscroll follows the engine checkbox', async () => {
   assert.equal(set, 500);
 });
 
+// A list whose height the test grows by hand, as a loading image would.
+function stubScroll(list) {
+  const geo = { height: 500, top: 0 };
+  Object.defineProperty(list, 'scrollHeight', { get: () => geo.height });
+  Object.defineProperty(list, 'clientHeight', { get: () => 200 });
+  Object.defineProperty(list, 'scrollTop', { get: () => geo.top, set: (v) => (geo.top = v) });
+  return geo;
+}
+const imgRec = (over) => rec({ text: '<img src="https://example.test/p.jpg">', ...over });
+const loadImg = (win, img) => img.dispatchEvent(new win.Event('load'));
+
+test('a pinned view follows an image that loads after its row is added', async () => {
+  const { win, view, root } = await setup();
+  const list = root.querySelector('.tdf-list');
+  const geo = stubScroll(list);
+  view.append(imgRec({}));
+  assert.equal(geo.top, 500);
+  geo.height = 750;
+  loadImg(win, root.querySelector('.tdf-body img'));
+  assert.equal(geo.top, 750);
+});
+
+test('a pinned view follows any list image, avatars included, but no other load', async () => {
+  const { win, view, root } = await setup();
+  const list = root.querySelector('.tdf-list');
+  const geo = stubScroll(list);
+  view.append(rec({}));
+  geo.height = 600;
+  root.querySelector('.tdf-msg').dispatchEvent(new win.Event('load'));
+  assert.equal(geo.top, 500);
+  loadImg(win, root.querySelector('.tdf-avatar'));
+  assert.equal(geo.top, 600);
+  assert.equal(root.querySelector('.tdf-avatar').classList.contains('tdf-posted'), false);
+});
+
+test('a replay with images ends at the bottom once they load', async () => {
+  const { win, view, root } = await setup();
+  const list = root.querySelector('.tdf-list');
+  const geo = stubScroll(list);
+  view.replay([imgRec({ id: '1' }), imgRec({ id: '2', mTime: '101' })]);
+  const imgs = root.querySelectorAll('.tdf-body img');
+  geo.height = 800;
+  loadImg(win, imgs[0]);
+  geo.height = 1100;
+  loadImg(win, imgs[1]);
+  assert.equal(geo.top, 1100);
+});
+
+test('a late image load does not pull down a user scrolled up', async () => {
+  const { win, view, root } = await setup();
+  const list = root.querySelector('.tdf-list');
+  const geo = stubScroll(list);
+  view.append(imgRec({}));
+  geo.top = 100;
+  list.dispatchEvent(new win.Event('scroll'));
+  geo.height = 750;
+  loadImg(win, root.querySelector('.tdf-body img'));
+  assert.equal(geo.top, 100);
+});
+
+test('with Auto-scroll off an image load never moves the view', async () => {
+  const { win, doc, view, root } = await setup();
+  const list = root.querySelector('.tdf-list');
+  const geo = stubScroll(list);
+  view.append(imgRec({}));
+  doc.getElementById('autoScrollID').checked = false;
+  geo.height = 750;
+  loadImg(win, root.querySelector('.tdf-body img'));
+  assert.equal(geo.top, 500);
+});
+
 test('clicking a sender name whispers them', async () => {
   const { view, root, whispered } = await setup();
   view.append(rec({ user: 'bob%20b' }));

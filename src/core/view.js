@@ -7,6 +7,7 @@ import { DEFAULT_REPLAY_LIMIT } from './history.js';
 import { adapt, THEME_BG } from './ink.js';
 import { safeDecodeURIComponent } from './parse.js';
 import { sanitize } from './sanitize.js';
+import { atBottom } from './scroll.js';
 import { fixedSmilieSrc } from './smiliefix.js';
 import { attachScrollbar } from './shell.js';
 
@@ -98,15 +99,27 @@ export function createView({ doc, win, container, css }) {
     if (name && typeof whisper === 'function') whisper(name.getAttribute('data-user') ?? '');
   });
 
+  // The engine's Auto-scroll checkbox; absent means on.
+  const autoOn = () => {
+    const auto = /** @type {HTMLInputElement | null} */ (doc.getElementById('autoScrollID'));
+    return !auto || auto.checked;
+  };
+
+  // Whether the list rested at its bottom before anything grew it. Stored rather than tested
+  // when an image loads, because by then the image has already pushed the bottom away.
+  let pinned = true;
+  list.addEventListener('scroll', () => (pinned = atBottom(list)), { passive: true });
+
   // Posted images are told from smilies by size, known only once loaded. `load` does not
-  // bubble, so it is caught in the capture phase.
+  // bubble, so it is caught in the capture phase. A loaded image grows the list, so a pinned
+  // view follows it back down.
   list.addEventListener(
     'load',
     (event) => {
       const target = /** @type {Element} */ (event.target);
-      if (target.tagName === 'IMG' && target.closest?.('.tdf-body')) {
-        tagPosted(/** @type {HTMLImageElement} */ (target));
-      }
+      if (target.tagName !== 'IMG') return;
+      if (target.closest?.('.tdf-body')) tagPosted(/** @type {HTMLImageElement} */ (target));
+      if (pinned && autoOn()) list.scrollTop = list.scrollHeight;
     },
     true,
   );
@@ -196,8 +209,9 @@ export function createView({ doc, win, container, css }) {
   }
 
   function autoscroll() {
-    const auto = /** @type {HTMLInputElement | null} */ (doc.getElementById('autoScrollID'));
-    if (!auto || auto.checked) list.scrollTop = list.scrollHeight;
+    if (!autoOn()) return;
+    list.scrollTop = list.scrollHeight;
+    pinned = true;
   }
 
   /** @type {Set<string>} */
