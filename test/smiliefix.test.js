@@ -13,7 +13,7 @@ test('the three matted smilies have cleaned GIF copies', () => {
 
 test('fixedSmilieSrc swaps a matted smilie by file name, wherever it is served from', () => {
   assert.equal(fixedSmilieSrc('smilies/biggrin.gif'), FIXED_SMILIES['biggrin.gif']);
-  assert.equal(fixedSmilieSrc('https://dollforum.com/forum/chat/smilies/omg.gif?v=2'), FIXED_SMILIES['omg.gif']);
+  assert.equal(fixedSmilieSrc('https://chat.example.com/forum/chat/smilies/omg.gif?v=2'), FIXED_SMILIES['omg.gif']);
   assert.equal(fixedSmilieSrc('../smilies/loveit.gif'), FIXED_SMILIES['loveit.gif']);
 });
 

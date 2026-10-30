@@ -6,7 +6,7 @@ import { saveImage } from './save.js';
 const item = (over = {}) => ({
   id: '123456789012345',
   messageId: '1',
-  user: 'Dolly Belle',
+  user: 'Chat User1',
   mTime: '1761696000',
   roomID: '1',
   receivedAt: 0,
@@ -20,7 +20,7 @@ const item = (over = {}) => ({
 
 /** @param {{ picker?: (opts: any) => Promise<any>, ok?: boolean, respond?: () => any }} [opts] */
 function harness({ picker, ok = true, respond } = {}) {
-  const page = /** @type {any} */ (new Window({ url: 'https://dollforum.com/forum/chat/index.php' }));
+  const page = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   /** @type {string[]} */
   const broken = [];
   /** @type {string[]} */
@@ -77,8 +77,8 @@ test('without a stored Blob, Save fetches the share and names the file from the 
   withUtc(async () => {
     const h = harness();
     assert.equal(await saveImage(item(), h.deps), 'saved');
-    assert.deepEqual(h.fetched, ['https://dollforum.com/forum/chat/plugins/share/view.php?id=123456789012345']);
-    assert.deepEqual(h.clicked, [{ download: 'Dolly_Belle_2025-10-29_000000_123456789012345.jpg', href: 'blob:x' }]);
+    assert.deepEqual(h.fetched, ['https://chat.example.com/forum/chat/plugins/share/view.php?id=123456789012345']);
+    assert.deepEqual(h.clicked, [{ download: 'Chat_User1_2025-10-29_000000_123456789012345.jpg', href: 'blob:x' }]);
   }));
 
 test('a stored Blob is saved without a fetch', () =>
@@ -87,7 +87,7 @@ test('a stored Blob is saved without a fetch', () =>
     const blob = new Blob([new Uint8Array(3)], { type: 'image/gif' });
     assert.equal(await saveImage(item({ blob, contentType: '' }), h.deps), 'saved');
     assert.deepEqual(h.fetched, []);
-    assert.equal(h.clicked[0].download, 'Dolly_Belle_2025-10-29_000000_123456789012345.gif');
+    assert.equal(h.clicked[0].download, 'Chat_User1_2025-10-29_000000_123456789012345.gif');
   }));
 
 test('a failed fetch marks the image broken with its reason, opens no dialog, and rejects with why', async () => {
@@ -119,7 +119,7 @@ test('with no content-type header, the served Blob type names the file', () =>
       }),
     });
     assert.equal(await saveImage(item({ contentType: 'image/png' }), h.deps), 'saved');
-    assert.equal(h.clicked[0].download, 'Dolly_Belle_2025-10-29_000000_123456789012345.webp');
+    assert.equal(h.clicked[0].download, 'Chat_User1_2025-10-29_000000_123456789012345.webp');
   }));
 
 test('a broken image that loads again on Save is repaired; one that was never broken is left alone', async () => {
@@ -149,7 +149,7 @@ test('showSaveFilePicker opens the dialog with the name and type; closing it is 
   const writable = { write: async (/** @type {unknown} */ b) => void written.push(b), close: async () => {} };
   const h = harness({ picker: async (o) => (opened.push(o), { createWritable: async () => writable }) });
   assert.equal(await saveImage(item(), h.deps), 'saved');
-  assert.match(opened[0].suggestedName, /^Dolly_Belle_.*_123456789012345\.jpg$/);
+  assert.match(opened[0].suggestedName, /^Chat_User1_.*_123456789012345\.jpg$/);
   assert.deepEqual(opened[0].types, [{ description: 'Image', accept: { 'image/jpeg': ['.jpg'] } }]);
   assert.equal(written.length, 1);
   assert.deepEqual(h.clicked, []);

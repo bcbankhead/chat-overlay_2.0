@@ -5,7 +5,7 @@ import { Window } from 'happy-dom';
 import { AVATAR_TTL_MS, AvatarLookupFailed, MAX_CONCURRENT, createAvatarResolver } from '../src/core/avatarResolver.js';
 import { openDb } from '../src/core/db.js';
 
-const BASE = 'https://dollforum.com/forum/';
+const BASE = 'https://chat.example.com/forum/';
 const happy = new Window();
 let n = 0;
 

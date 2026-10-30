@@ -8,7 +8,7 @@ test('initials take the first letter and the first capital after it, else the se
   assert.equal(initials('bobSmith'), 'BS');
   assert.equal(initials('Alice'), 'AL');
   assert.equal(initials('alice'), 'AL');
-  assert.equal(initials('LoveDollSenpai_Sim'), 'LD');
+  assert.equal(initials('ChatUser2'), 'CU');
   assert.equal(initials('BatteriesNotIncluded'), 'BN');
 });
 

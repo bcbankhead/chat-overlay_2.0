@@ -32,7 +32,7 @@ const textRow = (body, { kind = 'public', id = '5' } = {}) =>
 
 /** @param {{ likes?: import('./infer.js').LikeCount, accept?: boolean, request?: import('./queue.js').SendRequest | null, codes?: string[], user?: string, me?: string }} [opts] */
 function page({ likes = NONE, accept = true, request = null, codes = [...CODES], user = 'alice', me = 'me' } = {}) {
-  const win = /** @type {any} */ (new Window({ url: 'https://dollforum.com/forum/chat/index.php' }));
+  const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   const doc = win.document;
   win.mySmiliesImg = CODES.map((c, i) => `<img src='smilies/${i}.gif' alt='${c}'>`);
   win.userName = me;
@@ -289,7 +289,7 @@ test('clicking a posted image opens it full size in a new tab and sends nothing'
   const p = page();
   const event = p.click(p.posted());
   assert.equal(event.defaultPrevented, true, 'the link is not followed in this tab');
-  assert.deepEqual(p.opened, [[`https://dollforum.com/forum/chat/plugins/share/view.php?id=${A}`, '_blank', 'noopener']]);
+  assert.deepEqual(p.opened, [[`https://chat.example.com/forum/chat/plugins/share/view.php?id=${A}`, '_blank', 'noopener']]);
   p.run();
   assert.deepEqual(p.sent, []);
   assert.deepEqual(p.bursts, []);
@@ -298,7 +298,7 @@ test('clicking a posted image opens it full size in a new tab and sends nothing'
 
 test('a share-id image with no link is framed itself: its heart likes, and clicking it opens its src', () => {
   const p = page();
-  const src = `https://dollforum.com/forum/chat/plugins/share/view.php?id=${A}`;
+  const src = `https://chat.example.com/forum/chat/plugins/share/view.php?id=${A}`;
   p.doc.querySelector('.tdf-list').innerHTML = row().replace(/<a [^>]*>|<\/a>/g, '');
   p.store.set(NONE);
   const frame = p.frame();

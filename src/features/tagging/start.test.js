@@ -35,7 +35,7 @@ const stacks = (doc) =>
     .map(({ n, failed }) => `♥${n}${failed ? ' failed' : ''}`);
 
 test('start wires inbound messages to the like stack, and the corner heart to the engine', async () => {
-  const win = /** @type {any} */ (new Window({ url: 'https://dollforum.com/forum/chat/index.php' }));
+  const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   const doc = win.document;
   Object.assign(win, { roomID: '1', userName: 'me', mySmilies: [...CODES], mySmiliesImg: [] });
   doc.body.innerHTML =
@@ -76,7 +76,7 @@ test('start wires inbound messages to the like stack, and the corner heart to th
 
 /** A chat page whose engine timers are held: zero-delay ones run, the rest wait to be run. */
 function chatPage() {
-  const win = /** @type {any} */ (new Window({ url: 'https://dollforum.com/forum/chat/index.php' }));
+  const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   const doc = win.document;
   Object.assign(win, { roomID: '1', userName: 'me', mySmilies: [...CODES], mySmiliesImg: [] });
   doc.body.innerHTML =
@@ -152,7 +152,7 @@ test('a failure to start is shown in the message list', async () => {
 });
 
 test('a failure before the view mounts is held until the list appears, and each text shows once', async () => {
-  const win = /** @type {any} */ (new Window({ url: 'https://dollforum.com/forum/chat/index.php' }));
+  const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   const doc = win.document;
   const logged = console.error;
   /** @type {unknown[]} */
@@ -192,7 +192,7 @@ test('non-string or empty entries in mySmilies are not reaction codes', async ()
 });
 
 test('the token colour is the native chat background: #chatContainer, else an opaque ancestor, .body only unthemed', () => {
-  const win = /** @type {any} */ (new Window({ url: 'https://dollforum.com/forum/chat/index.php' }));
+  const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   const doc = win.document;
   doc.body.innerHTML = '<div class="body" style="background-color: #fbfbff"><div id="wrap"><div id="chatContainer"></div></div></div>';
   const chat = doc.getElementById('chatContainer');
@@ -226,7 +226,7 @@ test('the corner heart likes through the engine with the hidden token; a right-c
 });
 
 test('the fallback token colour gives its reason', () => {
-  const win = /** @type {any} */ (new Window({ url: 'https://dollforum.com/forum/chat/index.php' }));
+  const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   const doc = win.document;
   /** @type {string[]} */
   const reasons = [];

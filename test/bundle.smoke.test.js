@@ -25,7 +25,7 @@ async function page(
   indexedDB,
   { body, omit = [], globals = {}, early = [], loading = false, noBody = false, beforeEval } = {},
 ) {
-  const window = new Window({ url: 'https://dollforum.com/forum/chat/' });
+  const window = new Window({ url: 'https://chat.example.com/forum/chat/' });
   const { document } = window;
   if (loading) Object.defineProperty(document, 'readyState', { value: 'loading', configurable: true });
   document.body.innerHTML =
@@ -108,7 +108,7 @@ let built;
 async function outputs() {
   if (!built) {
     const dir = mkdtempSync(path.join(tmpdir(), 'tdf-smoke-'));
-    const { outputs: files } = await build({ root: repo, outfile: path.join(dir, 'tdf-chat.user.js') });
+    const { outputs: files } = await build({ match: 'https://chat.example.com/forum/chat/*', root: repo, outfile: path.join(dir, 'tdf-chat.user.js') });
     built = { userscript: readFileSync(files.userscript, 'utf8'), include: readFileSync(files.include, 'utf8') };
     rmSync(dir, { recursive: true, force: true });
   }

@@ -5,7 +5,7 @@ import { burst } from './hearts.js';
 
 /** @param {{ reduce?: boolean }} [opts] */
 function page({ reduce = false } = {}) {
-  const win = /** @type {any} */ (new Window({ url: 'https://dollforum.com/forum/chat/index.php' }));
+  const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   const doc = win.document;
   win.matchMedia = (/** @type {string} */ query) => ({ matches: reduce && query === '(prefers-reduced-motion: reduce)' });
   /** @type {{ fn: () => void, ms: number }[]} */
