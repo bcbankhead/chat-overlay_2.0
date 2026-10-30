@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { DAY_MS, MB_BYTES, historyCutoff, megabytesToBytes, parseDays, parseMegabytes } from './selectors.js';
+import { DAY_MS, MB_BYTES, historyCutoff, megabytesToBytes, parseDays, parseMegabytes, senderLabel } from './selectors.js';
 
 test('historyCutoff: N days back from now, 0 every line, legacy null no limit', () => {
   const now = 10 * DAY_MS;
@@ -27,4 +27,10 @@ test('parseMegabytes: empty is no limit, whole numbers from 1, the rest refused'
 test('megabytesToBytes uses binary megabytes', () => {
   assert.equal(megabytesToBytes(1), MB_BYTES);
   assert.equal(megabytesToBytes(3), 3 * 1_048_576);
+});
+
+test('senderLabel decodes a stored sender for display and keeps a malformed one as stored', () => {
+  assert.equal(senderLabel('Big%20Bob'), 'Big Bob');
+  assert.equal(senderLabel('alice'), 'alice');
+  assert.equal(senderLabel('100%'), '100%');
 });

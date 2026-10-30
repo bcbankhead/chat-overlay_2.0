@@ -174,8 +174,9 @@ export function createTagStore({ db, history, roomID, me, codes }) {
     },
 
     /**
-     * Stored messages were deleted, from any room (core's onDeleted): a Storage limit or an
-     * admin delete. Rewrites with `prune`, so other rooms' rows left by them go too.
+     * Stored messages were deleted, from any room (core's onDeleted): a Storage limit, a
+     * Storage deletion (Clear history now, Delete messages by user) or an admin delete.
+     * Rewrites with `prune`, so other rooms' rows left by them go too.
      * @param {string[]} ids
      * @returns {Promise<void>}
      */
