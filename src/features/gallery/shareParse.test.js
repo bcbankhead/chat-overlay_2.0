@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { extractShareIds, formatBytes, overLimit, shareUrl } from './shareParse.js';
+import { extractShareIds, formatBytes, isLarge, LARGE_BYTES, overLimit, shareUrl } from './shareParse.js';
 
 // The observed share text (reference/ANALYSIS.md, Images).
 const SHARE =
@@ -62,4 +62,12 @@ test('formatBytes', () => {
   assert.equal(formatBytes(512), '512 B');
   assert.equal(formatBytes(1536), '1.5 KB');
   assert.equal(formatBytes(3 * 1024 * 1024), '3.0 MB');
+});
+
+test('isLarge turns at 1 MB in binary units, inclusive', () => {
+  assert.equal(LARGE_BYTES, 1048576);
+  assert.equal(isLarge(0), false);
+  assert.equal(isLarge(1048575), false);
+  assert.equal(isLarge(1048576), true);
+  assert.equal(isLarge(3 * 1048576), true);
 });

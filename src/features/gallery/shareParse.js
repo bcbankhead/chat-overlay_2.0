@@ -57,6 +57,18 @@ export function overLimit(items, limitBytes) {
 
 const UNITS = ['B', 'KB', 'MB', 'GB'];
 
+/** The size at which a tile's size chip turns orange: 1 MB in formatBytes's binary units. */
+export const LARGE_BYTES = 1024 * 1024;
+
+/**
+ * Whether a record's size on disk reads as large on its tile.
+ * @param {number} bytes
+ * @returns {boolean}
+ */
+export function isLarge(bytes) {
+  return bytes >= LARGE_BYTES;
+}
+
 /**
  * A byte count for the header: `0 B`, `512 B`, `14.2 KB`, `3.1 MB`.
  * @param {number} bytes
