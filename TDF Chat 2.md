@@ -37,7 +37,7 @@ Key features,
 6. image gallery
     - save all user attachments in the local gallery including your own
     - gallery will be a flyout from the right, but will always show the top 3 images in an overlapping slide format
-    - Save (opens save dialog)
+    - clicking a tile opens the image in a new tab; an unavailable image opens nothing
     - mark for deletion
     - delete button at bottom (stick bottom control)
 7. Styling

@@ -8,7 +8,9 @@ import { createHistory } from '../../core/history.js';
 import { createSettings } from '../../core/settings.js';
 import { installRailHost, listPanels, listUserMenuActions } from '../rail/api.js';
 import { clearGalleryErrors } from './errors.js';
+import { shareUrl } from './shareParse.js';
 import { startGallery } from './start.js';
+import { createImageStore } from './store.js';
 
 const settle = () => new Promise((r) => setTimeout(r, 50));
 const ID = '123456789012345';
@@ -85,6 +87,39 @@ test('with Include my images on, only the signed-in user\'s own share, named by 
     share('2222', 'alice');
     await settle();
     assert.deepEqual(fetched, ['https://chat.example.com/forum/chat/plugins/share/view.php?id=111100000000000']);
+  } finally {
+    console.error = logged;
+    clearGalleryErrors();
+  }
+});
+
+test('clicking a Gallery tile opens its share URL in a new tab through win.open', async () => {
+  const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
+  const doc = win.document;
+  /** @type {unknown[][]} */
+  const calls = [];
+  win.open = (/** @type {unknown[]} */ ...args) => {
+    calls.push(args);
+    return {};
+  };
+  const logged = console.error;
+  console.error = () => {};
+  try {
+    const indexedDB = new IDBFactory();
+    await createImageStore(await openDb({ indexedDB })).put(
+      /** @type {any} */ ({ id: ID, messageId: '7', user: 'alice', mTime: '100', roomID: '1', receivedAt: 1, contentType: 'image/png', thumb: null, bytes: 0, favorite: false, broken: false }),
+    );
+    startGallery({ win, doc, css: '', indexedDB });
+    const panel = listPanels().find((p) => p.id === 'gallery');
+    assert.ok(panel);
+    const body = doc.createElement('div');
+    const cleanup = panel.render(body);
+    await settle();
+    const tile = /** @type {HTMLElement | null} */ (body.querySelector('.tdf-gallery-tile'));
+    assert.ok(tile);
+    tile.click();
+    assert.deepEqual(calls, [[shareUrl(ID, win.location.href), '_blank']]);
+    if (typeof cleanup === 'function') cleanup();
   } finally {
     console.error = logged;
     clearGalleryErrors();

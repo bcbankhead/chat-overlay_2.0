@@ -28,8 +28,8 @@ const image = (over = {}) => ({
   ...over,
 });
 
-/** @param {unknown} [arg] @param {{ storeFails?: boolean, saveFails?: boolean }} [opts] */
-async function open(arg, { storeFails = false, saveFails = false } = {}) {
+/** @param {unknown} [arg] @param {{ storeFails?: boolean, blocked?: boolean, openThrows?: boolean }} [opts] */
+async function open(arg, { storeFails = false, blocked = false, openThrows = false } = {}) {
   const win = /** @type {any} */ (new Window());
   const doc = win.document;
   const store = createImageStore(await openDb({ name: `gallery-view-${++n}` }));
@@ -38,20 +38,21 @@ async function open(arg, { storeFails = false, saveFails = false } = {}) {
   /** @type {unknown[]} */
   const errors = [];
   /** @type {string[]} */
-  const saved = [];
+  const opened = [];
   const mount = () =>
     renderGallery(container, arg, {
       doc,
       win,
       store: storeFails ? Promise.reject(new Error('IndexedDB disabled')) : Promise.resolve(store),
-      save: async (item) => {
-        if (saveFails) throw new Error('save failed');
-        saved.push(item.id);
+      open: (item) => {
+        opened.push(item.id);
+        if (openThrows) throw new Error('open broke');
+        return blocked ? 'blocked' : 'opened';
       },
       report: (err) => errors.push(err),
     });
   const tiles = () => [...container.querySelectorAll('.tdf-gallery-tile')];
-  return { win, store, container, mount, tiles, errors, saved };
+  return { win, store, container, mount, tiles, errors, opened };
 }
 
 test('an action and a decoration render on every item, registered before or after the flyout opens', async () => {
@@ -74,7 +75,7 @@ test('an action and a decoration render on every item, registered before or afte
 
   /** @type {HTMLElement} */ (g.tiles()[0].querySelector('[data-action="like"]')).click();
   assert.deepEqual(selected, ['b']);
-  assert.deepEqual(g.saved, [], 'an action click does not also save');
+  assert.deepEqual(g.opened, [], 'an action click does not also open');
 
   offAction();
   offDecoration();
@@ -118,8 +119,8 @@ test('header counts every image; the star filter keeps favourites; a favourite c
   assert.equal(stats.textContent, '1 image · 0 B');
 
   g.tiles()[0].click();
-  await settle();
-  assert.deepEqual(g.saved, ['a']);
+  assert.deepEqual(g.opened, ['a'], 'opened inside the click, with nothing awaited first');
+  assert.equal(g.tiles()[0].title, 'alice — click to open');
   cleanup();
   assert.deepEqual(g.errors, []);
 });
@@ -172,14 +173,14 @@ test('empty states name the filter in force', async () => {
   cleanup();
 });
 
-test('failures reach the flyout: a store that will not open, a failed save, a throwing action or decoration', async () => {
+test('failures reach the flyout: a store that will not open, a blocked tab, a throwing action or decoration', async () => {
   const down = await open(undefined, { storeFails: true });
   const offDown = down.mount();
   await settle();
   assert.deepEqual(down.errors.map((e) => /** @type {Error} */ (e).message), ['IndexedDB disabled']);
   offDown();
 
-  const g = await open(undefined, { saveFails: true });
+  const g = await open(undefined, { blocked: true });
   await g.store.put(image({ id: 'a' }));
   const offAction = registerGalleryItemAction({
     id: 'bad',
@@ -198,7 +199,7 @@ test('failures reach the flyout: a store that will not open, a failed save, a th
   await settle();
   assert.deepEqual(
     g.errors.map((e) => /** @type {Error} */ (e).message),
-    ['decoration broke', 'action broke', 'save failed'],
+    ['decoration broke', 'action broke', 'gallery: the browser blocked the new tab'],
   );
   offAction();
   offDecoration();
@@ -291,7 +292,7 @@ test('a stored thumbnail renders as an img whose URL is revoked when its tile go
   assert.deepEqual(g.errors, []);
 });
 
-test('a tile is a focusable button: Enter and Space save it, keys on its own buttons do not', async () => {
+test('a tile is a focusable button: Enter and Space open it, keys on its own buttons do not', async () => {
   const g = await open();
   await g.store.put(image({ id: 'a' }));
   const cleanup = g.mount();
@@ -299,7 +300,7 @@ test('a tile is a focusable button: Enter and Space save it, keys on its own but
   const tile = /** @type {HTMLElement} */ (g.tiles()[0]);
   assert.equal(tile.tabIndex, 0);
   assert.equal(tile.getAttribute('role'), 'button');
-  assert.equal(tile.getAttribute('aria-label'), 'Save image from alice');
+  assert.equal(tile.getAttribute('aria-label'), 'Open image from alice');
   const press = (/** @type {Element} */ el, /** @type {string} */ key) =>
     el.dispatchEvent(new g.win.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
   press(tile, 'Enter');
@@ -307,7 +308,59 @@ test('a tile is a focusable button: Enter and Space save it, keys on its own but
   press(tile, 'a');
   press(/** @type {Element} */ (tile.querySelector('.tdf-gallery-star')), 'Enter');
   await settle();
-  assert.deepEqual(g.saved, ['a', 'a']);
+  assert.deepEqual(g.opened, ['a', 'a']);
+  cleanup();
+  assert.deepEqual(g.errors, []);
+});
+
+test('a broken record with no stored original is faded and labelled, and opens nothing; trash and star still work', async () => {
+  const g = await open();
+  await g.store.put(image({ id: 'a', receivedAt: 1, broken: true, brokenReason: 'HTTP 404' }));
+  await g.store.put(image({ id: 'b', receivedAt: 2, broken: true, brokenReason: 'HTTP 404', blob: new Blob(['x']) }));
+  const cleanup = g.mount();
+  await settle();
+  const gone = /** @type {HTMLElement} */ (g.tiles().find((t) => t.dataset.id === 'a'));
+  const kept = /** @type {HTMLElement} */ (g.tiles().find((t) => t.dataset.id === 'b'));
+  assert.ok(gone.classList.contains('tdf-unavailable'));
+  assert.equal(gone.getAttribute('aria-disabled'), 'true');
+  assert.equal(gone.querySelector('.tdf-gallery-unavailable')?.textContent, 'Image unavailable from server');
+  assert.equal(gone.title, 'Image unavailable from server: HTTP 404');
+  assert.equal(kept.classList.contains('tdf-unavailable'), false, 'a kept original still opens');
+  assert.ok(kept.classList.contains('tdf-broken'), 'and keeps its broken badge');
+  assert.equal(kept.getAttribute('aria-disabled'), 'false');
+
+  gone.click();
+  gone.dispatchEvent(new g.win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  kept.click();
+  assert.deepEqual(g.opened, ['b']);
+
+  /** @type {HTMLButtonElement} */ (gone.querySelector('.tdf-gallery-star')).click();
+  await settle();
+  assert.equal((await g.store.list()).find((r) => r.id === 'a')?.favorite, true);
+  assert.deepEqual(g.opened, ['b'], 'the star does not open the tile');
+  cleanup();
+  assert.deepEqual(g.errors, []);
+});
+
+test('an open that throws is reported, not thrown out of the click', async () => {
+  const g = await open(undefined, { openThrows: true });
+  await g.store.put(image({ id: 'a' }));
+  const cleanup = g.mount();
+  await settle();
+  assert.doesNotThrow(() => g.tiles()[0].click());
+  assert.deepEqual(g.opened, ['a']);
+  assert.deepEqual(g.errors.map((e) => /** @type {Error} */ (e).message), ['open broke']);
+  cleanup();
+});
+
+test('a broken record with no stored original and no reason is titled without one', async () => {
+  const g = await open();
+  await g.store.put(image({ id: 'a', broken: true }));
+  const cleanup = g.mount();
+  await settle();
+  const tile = /** @type {HTMLElement} */ (g.tiles()[0]);
+  assert.ok(tile.classList.contains('tdf-unavailable'));
+  assert.equal(tile.title, 'Image unavailable from server');
   cleanup();
   assert.deepEqual(g.errors, []);
 });
