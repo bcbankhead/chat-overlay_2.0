@@ -13,7 +13,7 @@ npm run build
 
 This writes two files:
 
-- `dist/tdf-chat.js`: the site include. Upload this one.
+- `dist/tdf-chat.js`: the site include. `npm run deploy` uploads this one.
 - `dist/tdf-chat.user.js`: the userscript, for members who install it with Tampermonkey.
 
 The build exits with an error (do not upload its output) if either file would use a userscript-manager API
@@ -21,14 +21,25 @@ The build exits with an error (do not upload its output) if either file would us
 
 ## Install
 
-1. Upload `dist/tdf-chat.js` to the site, for example to `/forum/chat/js/tdf-chat.js`.
+1. Sign in to AWS, then deploy:
+
+   ```sh
+   aws sso login --profile conduit
+   npm run deploy
+   ```
+
+   `npm run deploy` runs the tests and the build, then uploads `dist/tdf-chat.js` to
+   `s3://sb76images/tdf_chat_2.0/tdf-chat.js` with `Content-Type: text/javascript` and
+   `Cache-Control: max-age=300`. If the tests or the build fail, nothing is uploaded and the
+   command exits with an error. The script uses the AWS profile `conduit`; no credentials are
+   stored in the repository.
 2. In the chat's `index.php`, add a script tag. It works anywhere on the page; inside
    `<head>` is recommended:
 
    ```html
    <head>
      …
-     <script src="/forum/chat/js/tdf-chat.js?v=0.1.2"></script>
+     <script src="https://sb76images.s3.us-west-2.amazonaws.com/tdf_chat_2.0/tdf-chat.js"></script>
    </head>
    ```
 
@@ -65,6 +76,18 @@ checks this.
 
 ## Updating
 
-Build again, replace the uploaded `tdf-chat.js`, and change the `?v=` query string in the
-script tag to the new version from `package.json`. Without that change, browsers can keep the
-old cached copy.
+Bump `version` in `package.json`, then run `npm run deploy` (after `aws sso login --profile
+conduit` if the session has expired). The file is served with `max-age=300`, so members pick
+up the new build within about 5 minutes. Adding a `?v=<version>` query string to the script
+tag is optional; it makes browsers fetch the new build immediately.
+
+To check which version is live, read the bundle's first line, which names the
+`package.json` version:
+
+```sh
+curl -s https://sb76images.s3.us-west-2.amazonaws.com/tdf_chat_2.0/tdf-chat.js | head -1
+# // TDF Chat 2.0 v<version> — site include build …
+```
+
+`curl -I https://sb76images.s3.us-west-2.amazonaws.com/tdf_chat_2.0/tdf-chat.js` shows the
+headers, including `Content-Type` and `Cache-Control`.
