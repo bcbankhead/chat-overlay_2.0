@@ -2,7 +2,9 @@
 // (site include), from the same entry; only the banner and the output file differ.
 // The entry is virtual: src/core/bootstrap.js, then every src/features/*/index.js found, so
 // no slice edits a shared entry file (TDF-0009 Shared Contract, Build).
-// Both outputs are checked before either is written, and the build fails on any wrong state.
+// A third output, dist/tdf-forum-sticky-header.js, is the forum pages' include, a bundle of its
+// own from src/forum/index.js (TDF-0028).
+// Every output is checked before any is written, and the build fails on any wrong state.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -81,6 +83,11 @@ function userscriptBanner(root, match) {
 /** @param {string} root */
 function includeBanner(root) {
   return `// TDF Chat 2.0 v${version(root)} — site include build (https://github.com/bcbankhead/chat-overlay_2.0)`;
+}
+
+/** @param {string} root */
+function forumBanner(root) {
+  return `// TDF Forum sticky header v${version(root)} — site include build (https://github.com/bcbankhead/chat-overlay_2.0)`;
 }
 
 /**
@@ -185,7 +192,8 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 /**
  * @param {{ match: string, root?: string, outfile?: string }} options
  *   `match` is the userscript's @match (the CLI reads it with readMatch); `outfile` is the
- *   userscript, and the include is written as `tdf-chat.js` beside it.
+ *   userscript; the include (`tdf-chat.js`) and the forum include
+ *   (`tdf-forum-sticky-header.js`) are written beside it.
  */
 export async function build({ match, root = ROOT, outfile } = /** @type {any} */ ({})) {
   if (!isMatch(match)) {
@@ -221,22 +229,30 @@ export async function build({ match, root = ROOT, outfile } = /** @type {any} */
   };
   const userscript = outfile ?? path.join(root, 'dist', 'tdf-chat.user.js');
   const include = path.join(path.dirname(userscript), 'tdf-chat.js');
-  // Built in memory and written only once both pass, so a failed build leaves nothing to upload.
-  /** @param {string} banner @param {string} file */
-  const bundle = async (banner, file) =>
-    (await esbuild.build({ ...options, banner: { js: banner }, outfile: file, write: false })).outputFiles[0].text;
+  const forum = path.join(path.dirname(userscript), 'tdf-forum-sticky-header.js');
+  // Built in memory and written only once all pass, so a failed build leaves nothing to upload.
+  /** @param {string} banner @param {string} file @param {esbuild.BuildOptions} [entry] */
+  const bundle = async (banner, file, entry) =>
+    (await esbuild.build({ ...options, ...entry, banner: { js: banner }, outfile: file, write: false })).outputFiles[0].text;
   const userscriptCode = await bundle(userscriptBanner(root, match), userscript);
   const includeCode = await bundle(includeBanner(root), include);
+  // A real file entry, not built-if-present: a missing forum include fails the build.
+  const forumCode = await bundle(forumBanner(root), forum, {
+    entryPoints: [path.join(root, 'src', 'forum', 'index.js')],
+    plugins: [],
+  });
 
   const problems = [
     ...verify(path.basename(userscript), userscriptCode, { userscript: true }),
     ...verify(path.basename(include), includeCode, { userscript: false }),
+    ...verify(path.basename(forum), forumCode, { userscript: false }),
   ];
   if (problems.length) throw new Error(`the build failed its checks; nothing was written:\n  ${problems.join('\n  ')}`);
   mkdirSync(path.dirname(userscript), { recursive: true });
   writeFileSync(userscript, userscriptCode);
   writeFileSync(include, includeCode);
-  return { features, outputs: { userscript, include } };
+  writeFileSync(forum, forumCode);
+  return { features, outputs: { userscript, include, forum } };
 }
 
 /**
@@ -248,7 +264,7 @@ export async function build({ match, root = ROOT, outfile } = /** @type {any} */
 export async function main(root = ROOT) {
   try {
     const { features } = await build({ match: readMatch(root), root });
-    console.log(`built dist/tdf-chat.user.js and dist/tdf-chat.js (features: ${features.join(', ') || 'none'})`);
+    console.log(`built dist/tdf-chat.user.js, dist/tdf-chat.js and dist/tdf-forum-sticky-header.js (features: ${features.join(', ') || 'none'})`);
     return 0;
   } catch (err) {
     console.error(err instanceof Error ? err.message : err);
