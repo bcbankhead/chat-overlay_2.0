@@ -258,6 +258,27 @@ test('a blocked open keeps waiting and resolves once the blocker closes', async 
   db.close();
 });
 
+test('onBlocked is called once when a blocked open begins waiting, and the open still resolves', async () => {
+  const name = `test-onblocked-${++n}`;
+  const v1 = await openV1(name);
+  let calls = 0;
+  const opening = openDb({ name, onBlocked: () => (calls += 1) });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(calls, 1);
+  v1.close();
+  const db = await opening;
+  assert.equal(db.version, DB_VERSION);
+  assert.equal(calls, 1);
+  db.close();
+});
+
+test('an open that is not blocked never calls onBlocked', async () => {
+  let calls = 0;
+  const db = await openDb({ name: `test-unblocked-${++n}`, onBlocked: () => (calls += 1) });
+  assert.equal(calls, 0);
+  db.close();
+});
+
 test('a connection closed by a later version fails every later write with one explanation', async () => {
   const name = `test-superseded-${++n}`;
   const db = await openDb({ name });

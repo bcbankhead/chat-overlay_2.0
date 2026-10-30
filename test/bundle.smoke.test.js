@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { Window } from 'happy-dom';
 import { build } from '../build.mjs';
+import { CLOAK_ID } from '../src/core/cloak.js';
 import { DB_VERSION, openDb } from '../src/core/db.js';
 import { createSettings } from '../src/core/settings.js';
 
@@ -16,10 +17,17 @@ const settle = () => new Promise((r) => setTimeout(r, 50));
 /**
  * A page with the engine's globals, a shared IndexedDB, and the built userscript loaded.
  * `early` messages are polled right after the script runs, while its startup is still async.
+ * `noBody` makes document.body read as null when the script runs, as in <head> before the body
+ * is parsed; `beforeEval` runs just before the script does.
  */
-async function page(bundle, indexedDB, { body, omit = [], globals = {}, early = [] } = {}) {
+async function page(
+  bundle,
+  indexedDB,
+  { body, omit = [], globals = {}, early = [], loading = false, noBody = false, beforeEval } = {},
+) {
   const window = new Window({ url: 'https://dollforum.com/forum/chat/' });
   const { document } = window;
+  if (loading) Object.defineProperty(document, 'readyState', { value: 'loading', configurable: true });
   document.body.innerHTML =
     body ?? '<div id="chatContainer" style="height:300px"></div><input type="checkbox" id="autoScrollID" checked>';
   Object.assign(window, {
@@ -50,11 +58,44 @@ async function page(bundle, indexedDB, { body, omit = [], globals = {}, early = 
     window.receiveMesReq.responseXML = { getElementsByTagName: () => raw.map((textContent) => ({ textContent })) };
     window.handleMessages();
   };
+  if (noBody) Object.defineProperty(document, 'body', { get: () => null, configurable: true });
+  beforeEval?.(window);
   window.eval(bundle);
   if (early.length) poll(...early);
   await settle();
   return { window, document, poll };
 }
+
+/**
+ * The site include placed in <head>: the script runs while the document is still loading and
+ * the body has not been parsed, so document.body is null. `ready()` parses the body and fires
+ * DOMContentLoaded, then the engine's window.onload, which renders `onload` messages.
+ */
+async function headPage(bundle, indexedDB, { body, globals = {}, onload = [] } = {}) {
+  const shell = await page(bundle, indexedDB, { body: '', globals, loading: true, noBody: true });
+  const { window, document, poll } = shell;
+  const ready = async () => {
+    delete (/** @type {any} */ (document)).body;
+    document.body.innerHTML =
+      body ??
+      '<div id="chatContainer" style="height:300px"></div><input type="checkbox" id="autoScrollID" checked>' +
+        '<div id="userContainer"></div><textarea id="optionsBar"></textarea>';
+    Object.defineProperty(document, 'readyState', { value: 'interactive', configurable: true });
+    document.dispatchEvent(new window.Event('DOMContentLoaded'));
+    if (onload.length) poll(...onload);
+    await settle();
+  };
+  return { ...shell, ready };
+}
+
+/** Whether the pre-mount cloak is on the page. */
+const cloaked = (document) => document.getElementById(CLOAK_ID) !== null;
+/**
+ * The text of the bootstrap's banners, which sit directly on <body> (the rail keeps a
+ * role="status" box of its own). Strings, so a failed assertion never inspects a DOM node.
+ */
+const banners = (document) =>
+  [...(document.body?.children ?? [])].filter((el) => el.getAttribute('role') === 'status').map((el) => el.textContent);
 
 /** The ids of the overlay's rendered messages, in order. */
 const shownIds = (document) => [...document.querySelectorAll('#tdf-chat .tdf-msg[data-id]')].map((el) => el.dataset.id);
@@ -319,4 +360,135 @@ test('with both the userscript and the site include on a page, the interface is 
   const stored = await new Promise((resolve) => (req.onsuccess = () => resolve(req.result)));
   db.close();
   assert.equal(stored, 1);
+});
+
+test('from <head>, nothing mounts while loading, the body is cloaked, and everything mounts at DOMContentLoaded', async () => {
+  const indexedDB = new IDBFactory();
+  const head = await headPage(await included(), indexedDB, { onload: [um('1', 'bob', 'at onload', '100')] });
+  const { document } = head;
+  assert.equal(head.window.__tdfChat2Loaded, true);
+  assert.equal(document.getElementById('tdf-chat') === null, true);
+  assert.equal(cloaked(document), true, 'cloaked while loading');
+  assert.deepEqual(banners(document), []);
+
+  await head.ready();
+  assert.ok(document.getElementById('tdf-chat'), 'overlay mounted');
+  assert.ok(document.getElementById('tdf-rail'), 'rail mounted');
+  assert.ok(document.getElementById('tdf-composer-style'), 'composer installed');
+  for (const feature of ['gallery', 'options', 'tagging']) {
+    assert.ok(document.getElementById(`tdf-${feature}-style`), `${feature} started`);
+  }
+  assert.equal(cloaked(document), false, 'cloak lifted');
+  assert.deepEqual(banners(document), []);
+  assert.deepEqual(shownIds(document), ['1'], 'the onload message is shown');
+
+  const again = await page(await included(), indexedDB);
+  assert.deepEqual(shownIds(again.document), ['1'], 'and stored');
+});
+
+test('from <head>, a page with no chat container exits silently and lifts the cloak', async () => {
+  const head = await headPage(await included(), new IDBFactory(), { body: '<p>login</p>' });
+  assert.equal(cloaked(head.document), true);
+  await head.ready();
+  assert.equal(head.document.getElementById('tdf-chat') === null, true);
+  assert.equal(cloaked(head.document), false);
+  assert.deepEqual(banners(head.document), []);
+});
+
+test('from <head>, an unrecognised engine lifts the cloak and shows why', async () => {
+  const head = await headPage(await included(), new IDBFactory(), { globals: { receiveMesReq: undefined } });
+  await head.ready();
+  assert.equal(cloaked(head.document), false);
+  assert.match(banners(head.document).join('|'), /the chat engine was not recognised/);
+});
+
+test('from <head>, a start failure lifts the cloak and shows the banner', async () => {
+  const globals = {
+    ResizeObserver: class {
+      constructor() {
+        throw new Error('observer broke');
+      }
+    },
+  };
+  const head = await headPage(await included(), new IDBFactory(), { globals });
+  await head.ready();
+  assert.equal(head.document.getElementById('tdf-chat') === null, true);
+  assert.equal(cloaked(head.document), false);
+  assert.match(banners(head.document).join('|'), /did not start \(observer broke\)/);
+});
+
+test('an open blocked by an older build lifts the cloak and waits with a banner, then mounts', async () => {
+  const indexedDB = new IDBFactory();
+  // An older build's tab: a version 1 connection that does not close itself on versionchange.
+  const old = await new Promise((resolve, reject) => {
+    const req = indexedDB.open('tdf-chat-2', 1);
+    req.onupgradeneeded = () => {
+      const v1 = req.result;
+      const messages = v1.createObjectStore('messages', { keyPath: 'id' });
+      for (const i of ['roomID', 'mTime', 'user', 'receivedAt']) messages.createIndex(i, i);
+      messages.createIndex('roomID_receivedAt', ['roomID', 'receivedAt']);
+      v1.createObjectStore('settings', { keyPath: 'key' });
+      const images = v1.createObjectStore('images', { keyPath: 'id' });
+      images.createIndex('user', 'user');
+      images.createIndex('receivedAt', 'receivedAt');
+      const tags = v1.createObjectStore('tags', { keyPath: 'id', autoIncrement: true });
+      tags.createIndex('imageId', 'imageId');
+      tags.createIndex('sourceMessageId', 'sourceMessageId');
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  const head = await headPage(await included(), indexedDB);
+  await head.ready();
+  const { document } = head;
+  assert.equal(document.getElementById('tdf-chat') === null, true);
+  assert.equal(cloaked(document), false, 'the original chat shows while waiting');
+  assert.match(banners(document).join('|'), /waiting for another TDF Chat tab to close/);
+  head.poll(um('1', 'bob', 'while blocked', '100'));
+
+  old.close();
+  await settle();
+  assert.ok(document.getElementById('tdf-chat'), 'mounted once the blocker closed');
+  assert.deepEqual(banners(document), [], 'banner removed');
+  assert.deepEqual(shownIds(document), ['1'], 'the message polled while blocked is shown');
+
+  const again = await page(await included(), indexedDB);
+  assert.deepEqual(shownIds(again.document), ['1'], 'and stored');
+});
+
+test('two tabs on the same build both mount with no wait, and both keep storing', async () => {
+  const indexedDB = new IDBFactory();
+  const a = await page(await included(), indexedDB);
+  const b = await page(await included(), indexedDB);
+  for (const tab of [a, b]) {
+    assert.ok(tab.document.getElementById('tdf-chat'));
+    assert.deepEqual(banners(tab.document), []);
+  }
+  a.poll(um('1', 'bob', 'from a', '100'));
+  b.poll(um('2', 'carol', 'from b', '101'));
+  await settle();
+  const c = await page(await included(), indexedDB);
+  assert.deepEqual(shownIds(c.document), ['1', '2']);
+});
+
+test('placed at the end of the body the include still mounts without a cloak', async () => {
+  // A classic script at the end of the body runs while the document is still loading, with
+  // the chat markup already parsed.
+  let added = false;
+  const shell = await page(await included(), new IDBFactory(), {
+    loading: true,
+    beforeEval: (window) => {
+      new window.MutationObserver((records) => {
+        for (const r of records) for (const n of r.addedNodes) if (n.id === CLOAK_ID) added = true;
+      }).observe(window.document.documentElement, { childList: true, subtree: true });
+    },
+  });
+  const { window, document } = shell;
+  assert.equal(cloaked(document), false, 'not cloaked while loading');
+  Object.defineProperty(document, 'readyState', { value: 'interactive', configurable: true });
+  document.dispatchEvent(new window.Event('DOMContentLoaded'));
+  await settle();
+  assert.ok(document.getElementById('tdf-chat'), 'overlay mounted');
+  assert.equal(cloaked(document), false);
+  assert.equal(added, false, 'no cloak was ever inserted');
 });

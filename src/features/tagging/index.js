@@ -2,6 +2,7 @@
 // holds the double-load guard and the chat-page check.
 
 import { MAIN_DIV } from '../../core/parse.js';
+import { whenDomReady } from '../../core/ready.js';
 import { startTagging } from './start.js';
 import css from './tagging.css';
 
@@ -10,5 +11,7 @@ const win = /** @type {any} */ (window);
 // build.mjs's second-copy check sets).
 if (!win.__tdfChat2Tagging) {
   win.__tdfChat2Tagging = true;
-  if (document.getElementById(MAIN_DIV)) startTagging({ win: window, doc: document, css });
+  whenDomReady(document, () => {
+    if (document.getElementById(MAIN_DIV)) startTagging({ win: window, doc: document, css });
+  });
 }

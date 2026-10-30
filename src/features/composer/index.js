@@ -5,6 +5,7 @@
 // addMessage — so whisper, silence, the length limit and the repeat filter keep applying.
 
 import { MAIN_DIV } from '../../core/parse.js';
+import { whenDomReady } from '../../core/ready.js';
 import { installAttach } from './attach.js';
 import { installBox } from './box.js';
 import css from './composer.css';
@@ -21,7 +22,7 @@ if (!win.__tdfChat2Composer) {
   // the element to exist.
   window.addEventListener('keypress', onKeypress, true);
   window.addEventListener('paste', onPaste, true);
-  install();
+  whenDomReady(document, install);
 }
 
 /**

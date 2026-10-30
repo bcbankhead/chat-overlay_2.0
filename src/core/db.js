@@ -75,11 +75,11 @@ function reclassifyWhispers(messages) {
  * Open (creating on first use) the database. The connection closes itself when a newer
  * version asks to upgrade, and `onVersionChange` is then called once, after the close, as
  * every later use of the connection fails. An open blocked by an older connection waits for
- * it to close.
- * @param {{ indexedDB?: IDBFactory, name?: string, onVersionChange?: () => void }} [options]
+ * it to close; `onBlocked` is called once, when the wait begins, so the wait can be shown.
+ * @param {{ indexedDB?: IDBFactory, name?: string, onVersionChange?: () => void, onBlocked?: () => void }} [options]
  * @returns {Promise<IDBDatabase>}
  */
-export function openDb({ indexedDB = globalThis.indexedDB, name = DB_NAME, onVersionChange } = {}) {
+export function openDb({ indexedDB = globalThis.indexedDB, name = DB_NAME, onVersionChange, onBlocked } = {}) {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(name, DB_VERSION);
     let blocked = false;
@@ -118,6 +118,7 @@ export function openDb({ indexedDB = globalThis.indexedDB, name = DB_NAME, onVer
       );
     };
     req.onblocked = () => {
+      if (!blocked) onBlocked?.();
       blocked = true;
     };
   });
