@@ -9,8 +9,8 @@ import { createHistory } from '../../core/history.js';
 import { createSettings } from '../../core/settings.js';
 import { registerRailPanel, registerUserMenuAction } from '../rail/api.js';
 import { startCapture } from './capture.js';
+import { openImage } from './open.js';
 import { reportGalleryError } from './errors.js';
-import { saveImage } from './save.js';
 import { createImageStore } from './store.js';
 import { makeThumb } from './thumb.js';
 import { renderGallery } from './view.js';
@@ -71,7 +71,7 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
         win,
         store: storeReady,
         report,
-        save: async (item) => saveImage(item, { store: await storeReady, win, doc, fetch }),
+        open: (item) => openImage(item, { win }),
       }),
   });
 

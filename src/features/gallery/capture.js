@@ -108,7 +108,7 @@ export function startCapture({ ready, onInbound, onLiked, getMessage, roomID, fe
     try {
       record.thumb = await makeThumb(blob);
     } catch (err) {
-      // Kept without a thumbnail: Save still works, the tile shows a placeholder.
+      // Kept without a thumbnail: opening still works, the tile shows a placeholder.
       report(new Error(`gallery: no thumbnail for image ${id}: ${err instanceof Error ? err.message : String(err)}`));
     }
     if (await settings.get('storeImagesOffline')) record.blob = blob;

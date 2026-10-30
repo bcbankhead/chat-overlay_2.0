@@ -20,7 +20,7 @@ import { overLimit } from './shareParse.js';
  * @property {Blob} [blob]          the full image, only with `storeImagesOffline` on
  * @property {number} bytes         stored on disk for this record: blob (if kept) plus thumb
  * @property {boolean} favorite
- * @property {boolean} broken       the server copy failed to load (capture or Save)
+ * @property {boolean} broken       the server copy failed to load at capture
  * @property {string} [brokenReason] why it failed, shown on the tile's badge
  * @property {string} [hash]        SHA-256 of the fetched bytes, lowercase hex; absent on a
  *                                  broken record, a failed hash, and captures before schema v2

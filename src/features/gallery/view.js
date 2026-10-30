@@ -3,13 +3,15 @@
 // `N images · size on disk`, the favourites filter, the user-filter chip), then a 3-column
 // grid of stored 128×128 thumbnails. Opening never fetches a full image. Each tile: trash
 // top left, star top right, shown on hover; a favourite keeps its star and its trash is
-// disabled. A tile click saves the image (A4). Tiles are kept by id across refreshes, so a
-// star or a new capture does not replay the fade-in, which gallery.css keys on the rail's
-// `tdf-settled` (set once the flyout's slide ends).
+// disabled. A tile click opens the image in a new tab (TDF-0023, reversing A4); a record with
+// nothing to open (open.js isUnavailable) is faded and labelled, and its click does nothing.
+// Tiles are kept by id across refreshes, so a star or a new capture does not replay the
+// fade-in, which gallery.css keys on the rail's `tdf-settled` (set once the flyout's slide ends).
 
 import { renderIcon } from '../rail/icons.js';
 import { listGalleryItemActions, listGalleryItemDecorations, onGalleryRegistryChange } from './api.js';
 import { clearGalleryErrors, listGalleryErrors, onGalleryErrors } from './errors.js';
+import { isUnavailable } from './open.js';
 import { formatBytes } from './shareParse.js';
 import { onImagesChange } from './store.js';
 
@@ -33,7 +35,7 @@ const ICONS = {
  * @property {Document} doc
  * @property {Window & typeof globalThis} win
  * @property {Promise<import('./store.js').ImageStore>} store
- * @property {(item: import('./store.js').ImageRecord) => Promise<unknown>} save
+ * @property {(item: import('./store.js').ImageRecord) => import('./open.js').OpenResult} open  synchronous, so the tab opens inside the click
  * @property {(err: unknown) => void} report
  */
 
@@ -53,7 +55,7 @@ const ICONS = {
  * @param {GalleryDeps} deps
  * @returns {() => void} cleanup
  */
-export function renderGallery(container, arg, { doc, win, store: storeReady, save, report }) {
+export function renderGallery(container, arg, { doc, win, store: storeReady, open, report }) {
   const given = /** @type {GalleryArg} */ (arg && typeof arg === 'object' ? arg : undefined);
   /** @type {{ user: string, label: string } | null} */
   let userFilter = given?.user ? { user: given.user, label: given.label || given.user } : null;
@@ -140,11 +142,10 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, sav
     const el = doc.createElement('div');
     el.className = 'tdf-gallery-tile';
     el.dataset.id = item.id;
-    el.title = `${item.user} — click to save`;
-    // Save is the tile's own action, so the tile is a keyboard-reachable button.
+    // Open is the tile's own action, so the tile is a keyboard-reachable button.
     el.tabIndex = 0;
     el.setAttribute('role', 'button');
-    el.setAttribute('aria-label', `Save image from ${item.user}`);
+    el.setAttribute('aria-label', `Open image from ${item.user}`);
     /** @type {string | null} */
     let url = null;
     if (item.thumb) {
@@ -165,6 +166,9 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, sav
     const badge = doc.createElement('span');
     badge.className = 'tdf-gallery-broken';
     badge.innerHTML = ICONS.broken;
+    const unavailable = doc.createElement('span');
+    unavailable.className = 'tdf-gallery-unavailable';
+    unavailable.textContent = 'Image unavailable from server';
     const trash = doc.createElement('button');
     trash.type = 'button';
     trash.className = 'tdf-gallery-btn tdf-gallery-trash';
@@ -173,7 +177,7 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, sav
     star.type = 'button';
     star.className = 'tdf-gallery-btn tdf-gallery-star';
     star.innerHTML = ICONS.star;
-    el.append(badge, trash, star);
+    el.append(badge, unavailable, trash, star);
 
     const actions = listGalleryItemActions();
     if (actions.length) {
@@ -221,14 +225,21 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, sav
         });
       }, REMOVE_MS);
     });
-    el.addEventListener('click', () => {
-      save(tile.item).catch(report);
-    });
+    // Nothing is awaited before open: the browser blocks a tab opened outside the click.
+    const openTile = () => {
+      if (isUnavailable(tile.item)) return;
+      try {
+        if (open(tile.item) === 'blocked') report(new Error('gallery: the browser blocked the new tab'));
+      } catch (err) {
+        report(err);
+      }
+    };
+    el.addEventListener('click', openTile);
     el.addEventListener('keydown', (event) => {
       // Enter or Space on the tile itself; its own buttons handle their keys.
       if (event.target !== el || (event.key !== 'Enter' && event.key !== ' ')) return;
       event.preventDefault();
-      save(tile.item).catch(report);
+      openTile();
     });
 
     for (const decorate of listGalleryItemDecorations()) {
@@ -246,6 +257,12 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, sav
     const { item } = tile;
     tile.el.classList.toggle('tdf-fav', item.favorite);
     tile.el.classList.toggle('tdf-broken', item.broken);
+    const gone = isUnavailable(item);
+    tile.el.classList.toggle('tdf-unavailable', gone);
+    tile.el.setAttribute('aria-disabled', String(gone));
+    tile.el.title = gone
+      ? `Image unavailable from server${item.brokenReason ? `: ${item.brokenReason}` : ''}`
+      : `${item.user} — click to open`;
     tile.badge.title = item.brokenReason
       ? `The server copy no longer loads: ${item.brokenReason}`
       : 'The server copy no longer loads';

@@ -1,4 +1,4 @@
-// One fetch of a share's full image, for capture and Save alike: same-origin with the session
+// One fetch of a share's full image, for capture: same-origin with the session
 // cookie, bounded by a timeout so one stalled request cannot hold the capture queue, and
 // refused unless the answer is an image (the plugin answers some refusals 200 with text,
 // "no access"). A refusal throws with its reason, which the caller keeps on the record.
