@@ -44,6 +44,15 @@ export function createHistory(db) {
 
   return {
     /**
+     * The stored record with this id, if any.
+     * @param {string} id
+     * @returns {Promise<MessageRecord | undefined>}
+     */
+    async get(id) {
+      return request(tx('readonly').objectStore(STORES.messages).get(id));
+    },
+
+    /**
      * Upsert on id: a re-delivered server message replaces its earlier copy.
      * @param {MessageRecord} record
      */

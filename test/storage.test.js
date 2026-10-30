@@ -310,6 +310,13 @@ test('put upserts on the server id', async () => {
   assert.equal(all[0].text, 'again');
 });
 
+test('get returns the stored record by id, or undefined', async () => {
+  const h = createHistory(await fresh());
+  await h.put(msg({ id: 's1', text: 'hi' }));
+  assert.equal((await h.get('s1'))?.text, 'hi');
+  assert.equal(await h.get('missing'), undefined);
+});
+
 test('recent returns the room only, oldest first, limited', async () => {
   const h = createHistory(await fresh());
   for (let i = 1; i <= 5; i++) await h.put(msg({ id: `s${i}`, receivedAt: i }));

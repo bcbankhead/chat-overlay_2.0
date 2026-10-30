@@ -5,8 +5,10 @@
 // names; hearts float up from the image's bottom edge when a like is made or arrives live.
 // The view has no decoration extension point, so this attaches to its DOM (B5): a capture-
 // phase listener and a MutationObserver, editing no message-view file. It also hides a like's
-// ^suffix token in the view.
+// ^suffix token in the view. A like it queues is announced on core's liked channel, which
+// the gallery saves the image from (TDF-0015).
 
+import { emitLiked } from '../../core/events.js';
 import { extractShareIds } from '../gallery/shareParse.js';
 import { burst as floatHearts } from './hearts.js';
 
@@ -59,12 +61,19 @@ export function installReactionUi({ doc, win, store, queue, codes, burst = float
   };
 
   /**
-   * Like an image. Hearts float only when a like was actually queued.
+   * Like an image. Hearts float, and the like is announced, only when a like was actually
+   * queued. A row with no server id (none, or a pending `local-…` one) announces nothing.
    * @param {string} shareId
    * @param {string} code
+   * @param {Element} likeButton
    */
-  const like = (shareId, code) => {
-    if (queue.like(shareId, code, store.likesFor(shareId).mine)) celebrate(shareId);
+  const like = (shareId, code, likeButton) => {
+    if (!queue.like(shareId, code, store.likesFor(shareId).mine)) return;
+    celebrate(shareId);
+    const msg = /** @type {HTMLElement | null} */ (likeButton.closest('.tdf-msg'));
+    const messageId = msg?.dataset.id ?? '';
+    if (messageId === '' || messageId.startsWith('local-')) return;
+    emitLiked({ shareId, messageId, user: msg?.dataset.user ?? '', mTime: msg?.dataset.mtime ?? '' });
   };
 
   /**
@@ -225,8 +234,8 @@ export function installReactionUi({ doc, win, store, queue, codes, burst = float
       // A like is never taken back: one made or queued sends nothing; a failed one retries.
       const shareId = likeButton.dataset.share ?? '';
       const entry = queue.entriesFor(shareId)[0];
-      if (entry?.state === 'failed') like(shareId, entry.code);
-      else if (!entry && !store.likesFor(shareId).mine) like(shareId, LIKE_CODE);
+      if (entry?.state === 'failed') like(shareId, entry.code, likeButton);
+      else if (!entry && !store.likesFor(shareId).mine) like(shareId, LIKE_CODE, likeButton);
       return;
     }
     // Clicking the image opens it full size in a new tab. No share id, no frame (B7): the plain
