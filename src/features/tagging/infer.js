@@ -97,34 +97,26 @@ export function deriveTags(roomMessages, me, codes) {
 }
 
 /**
- * @typedef {object} LikeSender
- * @property {string} sender
- * @property {string[]} codes  the smilies they reacted with, in the order they did
- */
-
-/**
  * @typedef {object} LikeCount
- * @property {number} count          distinct senders, whatever smilie each used
- * @property {boolean} mine          you are one of them
- * @property {LikeSender[]} senders  in first-reaction order
+ * @property {number} count  distinct senders, whatever smilie each used
+ * @property {boolean} mine  you are one of them
  */
 
 /**
- * The image's likes: every reaction counts as one, once per sender (TDF-0011).
+ * The image's likes: every reaction counts as one, once per sender (TDF-0011). Who liked it
+ * is never shown (TDF-0014), so only the count and whether you are among them are kept.
  * @param {readonly Tag[]} tags
  * @param {string} imageId
  * @returns {LikeCount}
  */
 export function countLikes(tags, imageId) {
-  /** @type {Map<string, LikeSender>} */
-  const senders = new Map();
+  /** @type {Set<string>} */
+  const senders = new Set();
   let mine = false;
   for (const tag of tags) {
     if (tag.imageId !== imageId) continue;
-    let entry = senders.get(tag.sender);
-    if (!entry) senders.set(tag.sender, (entry = { sender: tag.sender, codes: [] }));
-    if (!entry.codes.includes(tag.code)) entry.codes.push(tag.code);
+    senders.add(tag.sender);
     if (tag.certain) mine = true;
   }
-  return { count: senders.size, mine, senders: [...senders.values()] };
+  return { count: senders.size, mine };
 }

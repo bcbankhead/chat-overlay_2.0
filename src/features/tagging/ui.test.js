@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
 import { createReactionQueue } from './queue.js';
@@ -8,13 +9,13 @@ import { installReactionUi } from './ui.js';
 const A = '100000000111111';
 const settle = () => new Promise((r) => setTimeout(r, 20));
 /** @type {import('./infer.js').LikeCount} */
-const NONE = { count: 0, mine: false, senders: [] };
+const NONE = { count: 0, mine: false };
 
 /**
- * @param {{ kind?: string, href?: string | null, id?: string }} [opts]
+ * @param {{ kind?: string, href?: string | null, id?: string, user?: string }} [opts]
  */
-const row = ({ kind = 'public', href = `plugins/share/view.php?id=${A}`, id = '1' } = {}) =>
-  `<div class="tdf-msg tdf-kind-${kind}" data-id="${id}"><span class="tdf-line"><span class="tdf-body">` +
+const row = ({ kind = 'public', href = `plugins/share/view.php?id=${A}`, id = '1', user = 'alice' } = {}) =>
+  `<div class="tdf-msg tdf-kind-${kind}" data-id="${id}" data-user="${user}"><span class="tdf-line"><span class="tdf-body">` +
   (href === null
     ? '<a href="https://example.com/cat.png"><img class="tdf-posted" src="https://example.com/cat.png"></a>'
     : `<a href="${href}"><img class="tdf-posted" src="${href}"></a>`) +
@@ -28,12 +29,13 @@ const row = ({ kind = 'public', href = `plugins/share/view.php?id=${A}`, id = '1
 const textRow = (body, { kind = 'public', id = '5' } = {}) =>
   `<div class="tdf-msg tdf-kind-${kind}" data-id="${id}"><span class="tdf-line"><span class="tdf-body">${body}</span></span></div>`;
 
-/** @param {{ likes?: import('./infer.js').LikeCount, accept?: boolean, request?: import('./queue.js').SendRequest | null, codes?: string[] }} [opts] */
-function page({ likes = NONE, accept = true, request = null, codes = [...CODES] } = {}) {
+/** @param {{ likes?: import('./infer.js').LikeCount, accept?: boolean, request?: import('./queue.js').SendRequest | null, codes?: string[], user?: string, me?: string }} [opts] */
+function page({ likes = NONE, accept = true, request = null, codes = [...CODES], user = 'alice', me = 'me' } = {}) {
   const win = /** @type {any} */ (new Window({ url: 'https://dollforum.com/forum/chat/index.php' }));
   const doc = win.document;
   win.mySmiliesImg = CODES.map((c, i) => `<img src='smilies/${i}.gif' alt='${c}'>`);
-  doc.body.innerHTML = `<div id="tdf-chat"><div class="tdf-list">${row()}</div></div>`;
+  win.userName = me;
+  doc.body.innerHTML = `<div id="tdf-chat"><div class="tdf-list">${row({ user })}</div></div>`;
   /** @type {unknown[]} */
   const opened = [];
   win.open = (/** @type {unknown[]} */ ...args) => opened.push(args);
@@ -89,9 +91,17 @@ function page({ likes = NONE, accept = true, request = null, codes = [...CODES] 
   const click = (/** @type {Element} */ el, x = 50, y = 60) => mouse(el, 'click', x, y);
   const rightClick = (/** @type {Element} */ el) => mouse(el, 'contextmenu');
   const posted = () => doc.querySelector('img.tdf-posted');
-  const hearts = () =>
-    [...doc.querySelectorAll('.tdf-rx-heart')].map(
-      (h) => `${h.textContent}${[...h.classList].filter((k) => k !== 'tdf-rx-heart').map((k) => ` ${k.slice(7)}`).join('')}`,
+  /** @returns {HTMLElement | null} */
+  const frame = () => doc.querySelector('.tdf-rx-frame');
+  /** @returns {HTMLElement | null} */
+  const like = () => doc.querySelector('.tdf-rx-frame > .tdf-rx-like');
+  /** @returns {HTMLElement | null} */
+  const stack = () => doc.querySelector('.tdf-rx-frame > .tdf-rx-stack');
+  const stackSize = () => stack()?.querySelectorAll('svg').length ?? -1;
+  /** Each like button's state classes, unprefixed. */
+  const state = () =>
+    [...doc.querySelectorAll('.tdf-rx-like')].map((b) =>
+      [...b.classList].filter((k) => k !== 'tdf-rx-like').map((k) => k.slice(7)).join(' '),
     );
   /** Run due timers, a minute apart, at most ten. */
   const run = () => {
@@ -100,168 +110,218 @@ function page({ likes = NONE, accept = true, request = null, codes = [...CODES] 
       timers.shift()?.();
     }
   };
-  return { win, doc, store, queue, opened, sent, timers, bursts, run, click, rightClick, posted, hearts, uninstall };
+  return { win, doc, store, queue, opened, sent, timers, bursts, run, click, rightClick, posted, frame, like, stack, stackSize, state, uninstall };
 }
 
-test('right-clicking a posted image likes it at once: no context menu, an outlined heart of 1, hearts float', () => {
+test('a posted image with a share id sits in a frame holding a like button and a stack, beside its link', () => {
   const p = page();
-  const event = p.rightClick(p.posted());
+  const frame = p.frame();
+  assert.equal(frame?.dataset.share, A);
+  assert.equal(frame?.parentElement?.className, 'tdf-body');
+  const link = frame?.querySelector(':scope > a');
+  assert.equal(link?.querySelector('img'), p.posted());
+  assert.deepEqual([...(frame?.children ?? [])].map((c) => c.className), ['', 'tdf-rx-like', 'tdf-rx-stack']);
+  assert.equal(link?.querySelector('button'), null, 'no icon inside the link');
+  assert.equal(p.stack()?.getAttribute('aria-hidden'), 'true');
+  assert.deepEqual(p.state(), ['']);
+  assert.equal(p.like()?.title, 'Like');
+  assert.equal(p.doc.querySelectorAll('.tdf-rx-row, .tdf-rx-heart').length, 0, 'no heart row');
+});
+
+test('a re-render updates the frame in place rather than wrapping it again', () => {
+  const p = page();
+  const frame = p.frame();
+  const like = p.like();
+  p.store.set({ count: 1, mine: false });
+  p.store.set({ count: 2, mine: true });
+  assert.equal(p.doc.querySelectorAll('.tdf-rx-frame').length, 1);
+  assert.equal(p.frame(), frame);
+  assert.equal(p.like(), like);
+  assert.deepEqual(p.state(), ['mine']);
+  assert.equal(p.stackSize(), 2);
+});
+
+test('clicking the corner heart likes the image: filled, one in the stack, hearts float from the image', () => {
+  const p = page();
+  const event = p.click(p.like());
   assert.equal(event.defaultPrevented, true);
   assert.deepEqual(p.opened, [], 'nothing opened');
-  assert.deepEqual(p.hearts(), ['♥1 mine queued']);
-  const heart = p.doc.querySelector('.tdf-rx-heart');
-  assert.equal(heart.closest('.tdf-msg')?.getAttribute('data-id'), '1', 'the heart sits under the image, inside its message');
-  assert.deepEqual(p.bursts, [heart]);
+  assert.deepEqual(p.state(), ['mine queued']);
+  assert.equal(p.like()?.getAttribute('aria-pressed'), 'true');
+  assert.equal(p.stackSize(), 1);
+  assert.deepEqual(p.bursts, [p.posted()]);
   p.timers.shift()?.();
   assert.deepEqual(p.sent, [':h ^111111']);
 });
 
-test('right-clicking an image you already liked, or one queued, sends nothing and floats nothing', () => {
-  const liked = page({ likes: { count: 1, mine: true, senders: [{ sender: 'me', codes: [':L'] }] } });
-  liked.rightClick(liked.posted());
-  assert.deepEqual(liked.bursts, []);
+test('clicking the heart on an image already liked, or one queued, sends nothing and floats nothing', () => {
+  const liked = page({ likes: { count: 1, mine: true } });
+  assert.deepEqual(liked.state(), ['mine']);
+  assert.equal(liked.like()?.title, 'Liked');
+  assert.equal(liked.click(liked.like()).defaultPrevented, true);
   liked.run();
   assert.deepEqual(liked.sent, []);
+  assert.deepEqual(liked.bursts, []);
 
   const queued = page();
-  queued.rightClick(queued.posted());
-  queued.rightClick(queued.posted());
+  queued.click(queued.like());
+  queued.click(queued.like());
   assert.equal(queued.bursts.length, 1);
   queued.timers.shift()?.();
   assert.equal(queued.sent.length, 1);
 });
 
-test('right-click on an image without a share id, in a whisper, or outside the overlay keeps the menu', () => {
+test('a queued like is titled with its queue position; a sending one says so', () => {
   const p = page();
-  p.doc.querySelector('.tdf-list').innerHTML = row({ href: null }) + row({ kind: 'whisper', id: '2' });
-  for (const img of p.doc.querySelectorAll('img.tdf-posted')) assert.equal(p.rightClick(img).defaultPrevented, false);
-  const outside = p.doc.createElement('img');
-  outside.className = 'tdf-posted';
-  outside.src = `plugins/share/view.php?id=${A}`;
-  p.doc.body.appendChild(outside);
-  assert.equal(p.rightClick(outside).defaultPrevented, false);
-  assert.deepEqual(p.sent, []);
+  p.click(p.like());
+  assert.equal(p.like()?.title, 'Your like: queued (#1)');
+  // A request that never answers keeps the entry sending.
+  const s = page({ request: { readyState: 4, status: 0, addEventListener: () => {} } });
+  s.click(s.like());
+  s.timers.shift()?.();
+  assert.deepEqual(s.state(), ['mine queued']);
+  assert.equal(s.like()?.title, 'Your like: sending');
 });
 
-test('clicking a posted image opens it full size in a new tab and likes nothing', () => {
+test('a failed like is marked with its reason, and clicking its heart retries it', () => {
+  const p = page({ accept: false });
+  p.click(p.like());
+  p.timers.shift()?.();
+  assert.deepEqual(p.state(), ['mine failed']);
+  assert.match(p.like()?.title ?? '', /^Not sent \(refused by the chat\)\. Click to retry$/);
+  p.click(p.like());
+  assert.deepEqual(p.state(), ['mine queued']);
+  assert.equal(p.bursts.length, 2);
+});
+
+test('the stack shows one heart per liker, yours included, and at most three', () => {
+  const p = page();
+  assert.equal(p.stackSize(), 0);
+  p.store.set({ count: 2, mine: false });
+  assert.equal(p.stackSize(), 2);
+  p.click(p.like());
+  assert.equal(p.stackSize(), 3, 'a queued like of yours counts');
+  p.store.set({ count: 4, mine: true });
+  assert.equal(p.stackSize(), 3, 'a fourth liker adds no heart');
+  p.store.set(NONE);
+  assert.equal(p.stackSize(), 1, 'your queued like still counts');
+});
+
+// Liker names are not kept at all: countLikes returns only the count and whether you liked (infer.test.js).
+test('no like count appears on or under the image', () => {
+  const p = page({ likes: { count: 2, mine: false } });
+  const msg = p.doc.querySelector('.tdf-msg');
+  assert.equal((msg?.textContent ?? '').trim(), '');
+  assert.doesNotMatch(msg?.innerHTML ?? '', />2</);
+});
+
+test('your own image shows no corner heart; others\' likes on it still stack and float', () => {
+  const p = page({ user: 'me', likes: { count: 1, mine: false } });
+  assert.equal(p.like(), null);
+  assert.equal(p.stackSize(), 1);
+  p.store.like(A, 'bob');
+  assert.deepEqual(p.bursts, [p.posted()]);
+});
+
+test('with no user name known, no image counts as yours: an unnamed row still gets its heart', () => {
+  const p = page({ user: '', me: '' });
+  assert.ok(p.like());
+});
+
+test('clicking a posted image opens it full size in a new tab and sends nothing', () => {
   const p = page();
   const event = p.click(p.posted());
-  assert.equal(event.defaultPrevented, true);
+  assert.equal(event.defaultPrevented, true, 'the link is not followed in this tab');
   assert.deepEqual(p.opened, [[`https://dollforum.com/forum/chat/plugins/share/view.php?id=${A}`, '_blank', 'noopener']]);
   p.run();
   assert.deepEqual(p.sent, []);
   assert.deepEqual(p.bursts, []);
-  assert.deepEqual(p.hearts(), []);
+  assert.deepEqual(p.state(), ['']);
 });
 
-test('a right-click queues the like, its heart titled with the queue position', () => {
+test('a share-id image with no link is framed itself: its heart likes, and clicking it opens its src', () => {
   const p = page();
-  p.rightClick(p.posted());
-  assert.match(p.doc.querySelector('.tdf-rx-heart').title, /queued \(#1\)/);
-  p.timers.shift()?.();
-  assert.deepEqual(p.sent, [':h ^111111']);
+  const src = `https://dollforum.com/forum/chat/plugins/share/view.php?id=${A}`;
+  p.doc.querySelector('.tdf-list').innerHTML = row().replace(/<a [^>]*>|<\/a>/g, '');
+  p.store.set(NONE);
+  const frame = p.frame();
+  assert.equal(frame?.dataset.share, A);
+  assert.equal(frame?.firstElementChild, p.posted(), 'the frame wraps the image directly');
+  assert.equal(frame?.querySelector('a'), null);
+  assert.deepEqual([...(frame?.children ?? [])].map((c) => c.className), ['tdf-posted', 'tdf-rx-like', 'tdf-rx-stack']);
+  p.click(p.like());
+  assert.deepEqual(p.state(), ['mine queued']);
+  assert.deepEqual(p.bursts, [p.posted()]);
+  assert.deepEqual(p.opened, [], 'the heart opens nothing');
+  const event = p.click(p.posted());
+  assert.equal(event.defaultPrevented, true);
+  assert.deepEqual(p.opened, [[src, '_blank', 'noopener']]);
 });
 
-test('right-clicking an image you already liked sends nothing: no retraction', () => {
-  const p = page({ likes: { count: 2, mine: true, senders: [{ sender: 'bob', codes: [':h'] }, { sender: 'me', codes: [':h'] }] } });
-  p.rightClick(p.posted());
-  p.rightClick(p.posted());
-  p.click(p.doc.querySelector('.tdf-rx-heart'));
+test('right-clicking a posted image keeps the browser menu and likes nothing', () => {
+  const p = page();
+  assert.equal(p.rightClick(p.posted()).defaultPrevented, false);
   p.run();
   assert.deepEqual(p.sent, []);
   assert.deepEqual(p.bursts, []);
-  assert.deepEqual(p.hearts(), ['♥2 mine']);
+  assert.deepEqual(p.state(), ['']);
 });
 
-test('one heart counts the image\'s likes, its title naming each sender\'s smileys; no chips', () => {
-  const p = page({
-    likes: {
-      count: 2,
-      mine: false,
-      senders: [
-        { sender: 'bob%20b', codes: [':h', ':L'] },
-        { sender: 'carol', codes: [':d'] },
-      ],
-    },
-  });
-  assert.deepEqual(p.hearts(), ['♥2']);
-  assert.equal(p.doc.querySelector('.tdf-rx-heart').title, 'bob b :h, :L\ncarol :d');
-  assert.equal(p.doc.querySelectorAll('.tdf-rx-chip').length, 0);
-});
-
-test('a heart row that grows a list scrolled to the bottom keeps it at the bottom', () => {
-  for (const [scrollTop, expected] of [[100, 260], [40, 40]]) {
-    const p = page();
-    const list = p.doc.querySelector('.tdf-list');
-    Object.defineProperty(list, 'clientHeight', { get: () => 100 });
-    // Each heart row grows the list by 60px.
-    Object.defineProperty(list, 'scrollHeight', { get: () => 200 + 60 * list.querySelectorAll('.tdf-rx-row').length });
-    list.scrollTop = scrollTop;
-    p.store.set({ count: 1, mine: false, senders: [{ sender: 'bob', codes: [':h'] }] });
-    // happy-dom does not clamp scrollTop, so a pinned list reads the full scrollHeight.
-    assert.equal(list.scrollTop, expected, `from scrollTop ${scrollTop}`);
-  }
-});
-
-test('another user\'s live like floats hearts from that image\'s heart; another image\'s does not', () => {
-  const p = page({ likes: { count: 1, mine: false, senders: [{ sender: 'bob', codes: [':h'] }] } });
-  p.store.like(A, 'bob');
-  assert.deepEqual(p.bursts, [p.doc.querySelector('.tdf-rx-heart')]);
-  p.store.like('100000000999999', 'bob');
-  assert.equal(p.bursts.length, 1);
-});
-
-test('a failed like is marked, and clicking its heart retries it', () => {
-  const p = page({ accept: false });
-  p.rightClick(p.posted());
-  p.timers.shift()?.();
-  assert.deepEqual(p.hearts(), ['♥1 mine failed']);
-  assert.match(p.doc.querySelector('.tdf-rx-heart').title, /^Not sent \(refused by the chat\)\. Click to retry/);
-  p.click(p.doc.querySelector('.tdf-rx-heart'));
-  assert.deepEqual(p.hearts(), ['♥1 mine queued']);
-  assert.equal(p.bursts.length, 2);
-});
-
-test('a failed heart names why it failed', () => {
-  const p = page();
-  p.rightClick(p.posted());
-  // Accepted with no request to watch: a failed attempt, re-queued, then failed.
-  p.run();
-  assert.deepEqual(p.hearts(), ['♥1 mine failed']);
-  assert.match(p.doc.querySelector('.tdf-rx-heart').title, /not sent \(the chat has no send request to watch\)/i);
-});
-
-test('a sending heart is dimmed and titled sending', () => {
-  // A request that never answers keeps the entry sending.
-  const p = page({ request: { readyState: 4, status: 0, addEventListener: () => {} } });
-  p.rightClick(p.posted());
-  p.timers.shift()?.();
-  assert.deepEqual(p.hearts(), ['♥1 mine queued']);
-  assert.equal(p.doc.querySelector('.tdf-rx-heart').title, 'Your like: sending');
-});
-
-test('an image without a share id, or in a whisper, keeps its plain link', () => {
+test('an image without a share id, or in a whisper, gets no frame and keeps its plain link', () => {
   const p = page();
   p.doc.querySelector('.tdf-list').innerHTML = row({ href: null }) + row({ kind: 'whisper', id: '2' });
-  for (const img of p.doc.querySelectorAll('img.tdf-posted')) {
-    assert.equal(p.click(img).defaultPrevented, false);
-  }
+  p.store.set(NONE);
+  assert.equal(p.doc.querySelectorAll('.tdf-rx-frame').length, 0);
+  for (const img of p.doc.querySelectorAll('img.tdf-posted')) assert.equal(p.click(img).defaultPrevented, false);
   // happy-dom follows a plain link through window.open(href, '_self'); only a new tab is ours.
   assert.deepEqual(p.opened.filter((/** @type {unknown[]} */ o) => o[1] === '_blank'), []);
 });
 
-test('a message the view adds later gets its heart; a store change refreshes it', async () => {
-  const p = page({ likes: { count: 1, mine: false, senders: [{ sender: 'bob', codes: [':o'] }] } });
+test('a message the view adds later gets its frame; a store change refreshes it', async () => {
+  const p = page({ likes: { count: 1, mine: false } });
   const list = p.doc.querySelector('.tdf-list');
   list.innerHTML = '';
   await settle();
   list.insertAdjacentHTML('beforeend', row({ id: '9' }));
   await settle();
-  assert.deepEqual(p.hearts(), ['♥1']);
-  p.store.set({ count: 2, mine: false, senders: [{ sender: 'bob', codes: [':o'] }, { sender: 'carol', codes: [':o'] }] });
-  assert.deepEqual(p.hearts(), ['♥2']);
-  p.store.set(NONE);
-  assert.equal(p.doc.querySelectorAll('.tdf-rx-row').length, 0);
+  assert.equal(p.stackSize(), 1);
+  p.store.set({ count: 2, mine: false });
+  assert.equal(p.stackSize(), 2);
+});
+
+test('another user\'s live like floats hearts from that image; another image\'s does not', () => {
+  const p = page({ likes: { count: 1, mine: false } });
+  p.store.like(A, 'bob');
+  assert.deepEqual(p.bursts, [p.posted()]);
+  p.store.like('100000000999999', 'bob');
+  assert.equal(p.bursts.length, 1);
+});
+
+test('the stylesheet shows the heart on hover, the heart you gave always, and the heart on a device without hover', () => {
+  const css = readFileSync(new URL('./tagging.css', import.meta.url), 'utf8');
+  const flat = css.replace(/\s+/g, ' ');
+  /** @param {string} rule @param {string} [why] */
+  const has = (rule, why) => assert.ok(flat.includes(rule), why ?? rule);
+  has('#tdf-chat .tdf-rx-like { position: absolute; top: 4px; right: 4px; display: none;');
+  assert.match(flat, /#tdf-chat \.tdf-rx-like \{[^}]*cursor: pointer;/);
+  has(
+    '.tdf-rx-frame:has(img.tdf-posted):hover > .tdf-rx-like, #tdf-chat .tdf-rx-frame:has(img.tdf-posted):focus-within > .tdf-rx-like, #tdf-chat .tdf-rx-frame:has(img.tdf-posted) > .tdf-rx-like.tdf-rx-mine { display: block;',
+    'keyboard focus in the frame shows the heart, so tabbing reaches it',
+  );
+  has('.tdf-rx-frame:hover img.tdf-posted { opacity: var(--tdf-posted-hover-opacity); }', 'the frame fade reuses theme.css\'s value');
+  const theme = readFileSync(new URL('../../core/theme.css', import.meta.url), 'utf8').replace(/\s+/g, ' ');
+  assert.match(theme, /#tdf-chat \{[^}]*--tdf-posted-hover-opacity: [\d.]+;/, 'theme.css defines the fade');
+  assert.ok(theme.includes('img.tdf-posted:hover { opacity: var(--tdf-posted-hover-opacity); }'), 'theme.css uses it');
+  assert.doesNotMatch(flat, /opacity: 0\.8/, 'no copied fade value');
+  has('@media (hover: none) { #tdf-chat .tdf-rx-frame:has(img.tdf-posted) > .tdf-rx-like { display: block;');
+  has(
+    '.tdf-rx-like.tdf-rx-mine:not(.tdf-rx-failed) svg, #tdf-chat .tdf-rx-like:not(.tdf-rx-queued):hover svg { fill: #e0245e; stroke: none; }',
+    'a filled heart has no outline, and pointing at an unfilled one fills it',
+  );
+  assert.match(flat, /\.tdf-rx-stack svg \{[^}]*fill: #e0245e; stroke: none; \}/, 'nor do the stack hearts');
+  has('.tdf-rx-like.tdf-rx-failed svg { fill: none; stroke: #ffffff;', 'a failed one keeps its dashed outline');
+  assert.doesNotMatch(css, /cursor: default/, 'the image keeps its pointer');
+  assert.doesNotMatch(css, /tdf-rx-row|tdf-rx-heart|tdf-rx-open/);
 });
 
 test('a like message shows no ^suffix token, in whichever form it arrived', async () => {
@@ -336,11 +396,11 @@ test('the token is stripped only after a code given to the install, not one in m
   );
 });
 
-test('uninstall detaches the click and context-menu handlers and the like listener', () => {
+test('uninstall detaches the click handler and the like listener', () => {
   const p = page();
   p.uninstall();
+  assert.equal(p.click(p.like()).defaultPrevented, false);
   assert.equal(p.click(p.posted()).defaultPrevented, false);
-  assert.equal(p.rightClick(p.posted()).defaultPrevented, false);
   p.store.like(A, 'bob');
   assert.deepEqual(p.bursts, []);
 });

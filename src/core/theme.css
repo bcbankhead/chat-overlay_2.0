@@ -7,6 +7,7 @@
 #tdf-chat {
   --tdf-msg-size: 13px;
   --tdf-ui-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --tdf-posted-hover-opacity: 0.8;
   position: absolute;
   z-index: 5;
   box-sizing: border-box;
@@ -315,9 +316,9 @@
   transition: opacity 120ms;
 }
 
-#tdf-chat .tdf-body img.tdf-posted:hover,
-#tdf-chat .tdf-preview-img:hover {
-  opacity: 0.8;
+#tdf-chat .tdf-preview-img:hover,
+#tdf-chat .tdf-body img.tdf-posted:hover {
+  opacity: var(--tdf-posted-hover-opacity);
 }
 
 #tdf-chat .tdf-body a:has(> img.tdf-posted),

@@ -19,7 +19,7 @@ function page({ reduce = false } = {}) {
   return { win, doc, anchor, timers, floating };
 }
 
-test('a burst adds several fixed hearts at the anchor, each with its own drift and delay', () => {
+test("a burst adds several fixed hearts at the middle of the anchor's bottom edge, each with its own drift and delay", () => {
   const p = page();
   let r = 0;
   const hearts = burst(p.doc, p.win, p.anchor, () => ((r += 0.37) % 1));
@@ -28,7 +28,7 @@ test('a burst adds several fixed hearts at the anchor, each with its own drift a
   for (const h of hearts) {
     assert.equal(h.parentElement, p.doc.body);
     assert.equal(h.style.left, '120px');
-    assert.equal(h.style.top, '200px');
+    assert.equal(h.style.top, '220px', 'the bottom edge');
     assert.equal(h.getAttribute('aria-hidden'), 'true');
   }
   assert.ok(new Set(hearts.map((h) => h.style.getPropertyValue('--tdf-drift'))).size > 1, 'drift varies');
