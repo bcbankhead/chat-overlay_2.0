@@ -7,6 +7,7 @@ import { DEFAULT_REPLAY_LIMIT } from './history.js';
 import { renderAvatar } from './avatar.js';
 import { adapt, THEME_BG } from './ink.js';
 import { safeDecodeURIComponent } from './parse.js';
+import { pickPreview, youtubeThumb } from './preview.js';
 import { sanitize } from './sanitize.js';
 import { atBottom } from './scroll.js';
 import { fixedSmilieSrc } from './smiliefix.js';
@@ -126,6 +127,14 @@ export function createView({ doc, win, container, css, avatars = null }) {
     { passive: true },
   );
 
+  // A row that grew after it was added: a pinned view follows it back down.
+  const followIfPinned = () => {
+    if (pinned && autoOn()) {
+      list.scrollTop = list.scrollHeight;
+      settle();
+    }
+  };
+
   // Posted images are told from smilies by size, known only once loaded. `load` does not
   // bubble, so it is caught in the capture phase. A loaded image grows the list, so a pinned
   // view follows it back down.
@@ -135,13 +144,82 @@ export function createView({ doc, win, container, css, avatars = null }) {
       const target = /** @type {Element} */ (event.target);
       if (target.tagName !== 'IMG') return;
       if (target.closest?.('.tdf-body')) tagPosted(/** @type {HTMLImageElement} */ (target));
-      if (pinned && autoOn()) {
-        list.scrollTop = list.scrollHeight;
-        settle();
-      }
+      followIfPinned();
     },
     true,
   );
+
+  // A preview image that fails falls back to its link's hostname chip, which changes the
+  // row's height, so a pinned view follows it as it does a load.
+  list.addEventListener(
+    'error',
+    (event) => {
+      const target = /** @type {Element} */ (event.target);
+      const block = target.tagName === 'IMG' ? target.closest?.('.tdf-preview') : null;
+      const link = block?.querySelector('a');
+      const host = /** @type {HTMLElement | null | undefined} */ (block)?.dataset.host;
+      if (!block || !link || host === undefined) return;
+      asChip(link, host);
+      block.replaceChildren(link);
+      followIfPinned();
+    },
+    true,
+  );
+
+  /**
+   * Make a preview's link a chip naming its host.
+   * @param {HTMLAnchorElement} a
+   * @param {string} host
+   */
+  function asChip(a, host) {
+    a.className = 'tdf-chip';
+    a.textContent = host;
+  }
+
+  /**
+   * The preview block for a message's first previewable link, or null. Read from the links
+   * the sanitiser kept and built with DOM calls only, never from the message's HTML. Its link
+   * is a bare copy of the kept anchor, so it opens as that one does.
+   * @param {DocumentFragment} content the sanitised body
+   */
+  function renderPreview(content) {
+    /** @type {Set<string>} */
+    const shown = new Set();
+    for (const img of content.querySelectorAll('img')) {
+      const src = img.getAttribute('src');
+      if (src !== null) shown.add(src);
+      const wrapper = img.closest('a')?.getAttribute('href');
+      if (wrapper) shown.add(wrapper);
+    }
+    const anchors = [...content.querySelectorAll('a[href]')];
+    const preview = pickPreview(anchors.map((a) => a.getAttribute('href') ?? ''), shown);
+    const kept = preview && anchors.find((a) => a.getAttribute('href') === preview.url);
+    if (!preview || !kept) return null;
+
+    const block = doc.createElement('div');
+    block.className = 'tdf-preview';
+    block.dataset.host = preview.host;
+    const a = /** @type {HTMLAnchorElement} */ (kept.cloneNode(false));
+    if (preview.kind === 'link') {
+      asChip(a, preview.host);
+    } else {
+      const img = doc.createElement('img');
+      img.className = 'tdf-preview-img';
+      img.setAttribute('src', preview.kind === 'image' ? preview.url : youtubeThumb(preview.id));
+      img.setAttribute('referrerpolicy', 'no-referrer');
+      img.setAttribute('loading', 'lazy');
+      img.setAttribute('alt', '');
+      a.appendChild(img);
+      if (preview.kind === 'youtube') {
+        const play = doc.createElement('span');
+        play.className = 'tdf-play';
+        play.textContent = '▶';
+        a.appendChild(play);
+      }
+    }
+    block.appendChild(a);
+    return block;
+  }
 
   const expandOptions = {
     smilie: (/** @type {string} */ text) =>
@@ -214,6 +292,7 @@ export function createView({ doc, win, container, css, avatars = null }) {
         if (fixed !== src) img.setAttribute('src', fixed);
       }
     }
+    const preview = renderPreview(content);
     if (record.lineBreakFlag === '1') {
       const pre = doc.createElement('pre');
       pre.appendChild(content);
@@ -222,6 +301,8 @@ export function createView({ doc, win, container, css, avatars = null }) {
       body.appendChild(content);
     }
     line.appendChild(body);
+    // Outside the body, so posted-image tagging and the tagging feature never see it.
+    if (preview) line.appendChild(preview);
     el.appendChild(line);
     for (const img of body.querySelectorAll('img')) if (img.complete) tagPosted(img);
     return el;

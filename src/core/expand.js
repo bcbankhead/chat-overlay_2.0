@@ -41,7 +41,8 @@ export function expand(text, options = {}) {
     html = html.replace(/([\w.-]+@[\w.-]+\.[\w]+)/gi, "<a href='mailto:$1'>$1</a>");
   }
 
-  // The engine embeds youtu.be links as an iframe; this view renders a plain link instead.
+  // The engine embeds youtu.be links as an iframe; this view renders a plain link instead,
+  // which the message view previews as a thumbnail (preview.js), never an iframe.
   let youTube = false;
   if (/http:\/\/youtu\.be\//i.test(html)) {
     const videoId = html.replace(/<\/?[biu]>/gi, '').split('/')[3] ?? '';
