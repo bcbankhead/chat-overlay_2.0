@@ -389,3 +389,16 @@ test('forum.css hides the closed modal and lifts it above the sticky navbar', ()
   const navZ = Number(/\.tdf-sticky-nav\s*\{[^}]*z-index:\s*(\d+)/.exec(css)?.[1]);
   assert.ok(z > navZ);
 });
+
+test('forum.css keeps every search colour and font under :where() so the forum theme wins', () => {
+  const css = readFileSync(path.join(repo, 'src', 'forum', 'forum.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const themed = /^\s*(color|background(-color|-image)?|border(-(top|right|bottom|left|block|inline)(-(start|end))?)?(-color)?|outline(-color)?|box-shadow|text-shadow|font(-family|-size|-weight|-style)?)\s*:/;
+  const rules = [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter(([, selector]) => /tdf-search/.test(selector));
+  assert.ok(rules.length > 0);
+  for (const [, selector, body] of rules) {
+    const plain = selector.split(',').filter((s) => !s.trim().startsWith(':where('));
+    if (plain.length === 0) continue;
+    const declarations = body.split(';').filter((d) => themed.test(d));
+    assert.deepEqual(declarations, [], `${selector.trim()} sets a theme value outside :where()`);
+  }
+});
