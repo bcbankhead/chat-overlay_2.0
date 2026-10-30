@@ -253,12 +253,13 @@ body:has(#tdf-rail:not(.tdf-rail-failed)) :is(#roomIcon, #roomCreate, #roomSelec
 }
 
 #tdf-rail .tdf-rail-avatar {
+  position: relative;
   flex: 0 0 auto;
   width: 24px;
   height: 24px;
   border-radius: 5px;
-  object-fit: cover;
-  background: var(--tdf-hover-bg);
+  overflow: hidden;
+  font-size: 10px;
 }
 
 #tdf-rail .tdf-rail-user-name {

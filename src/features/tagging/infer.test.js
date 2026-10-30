@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { countReactions, deriveTags } from './infer.js';
+import { countLikes, deriveTags } from './infer.js';
 import { SMILIE_CODES_FIXTURE as CODES } from './smilieCodes.fixture.js';
 
 const A = '100000000111111';
@@ -133,15 +133,40 @@ test('two installs on the same messages derive the same tags', () => {
   assert.deepEqual(bob.map((t) => t.certain), [true, true]);
 });
 
-test('countReactions groups by code, with your own marked', () => {
+test('countLikes counts distinct senders across every smilie, with your own marked', () => {
   const tags = deriveTags(
-    [msg('alice', img(A)), msg('bob', ':h ^111111'), msg('me', ':h ^111111'), msg('carol', ':L ^111111')],
+    [
+      msg('alice', img(A)),
+      msg('bob', ':h ^111111'),
+      msg('me', ':h ^111111'),
+      msg('carol', ':L ^111111'),
+      msg('bob', ':d ^111111'),
+    ],
     'me',
     CODES,
   );
-  assert.deepEqual(countReactions(tags, A), [
-    { code: ':h', count: 2, mine: true, senders: ['bob', 'me'] },
-    { code: ':L', count: 1, mine: false, senders: ['carol'] },
-  ]);
-  assert.deepEqual(countReactions(tags, B), []);
+  assert.deepEqual(countLikes(tags, A), {
+    count: 3,
+    mine: true,
+    senders: [
+      { sender: 'bob', codes: [':h', ':d'] },
+      { sender: 'me', codes: [':h'] },
+      { sender: 'carol', codes: [':L'] },
+    ],
+  });
+  assert.deepEqual(countLikes(tags, B), { count: 0, mine: false, senders: [] });
+});
+
+test('a span- or font-wrapped token tags the image as the plain one does', () => {
+  const tags = deriveTags(
+    [
+      msg('alice', img(A)),
+      msg('bob', ':h [[span style=color:#f2f2f2]]^111111[[/span]]'),
+      msg('carol', ":L [[font color='#f2f2f2']]^111111[[/font]]"),
+    ],
+    'me',
+    CODES,
+  );
+  assert.deepEqual(brief(tags), ['111111 :h bob', '111111 :L carol']);
+  assert.equal(countLikes(tags, A).count, 2);
 });

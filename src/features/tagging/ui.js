@@ -1,42 +1,57 @@
-// Image reactions in the message view (UI design 2026-10-27, Message view → Image reactions).
-// Clicking a posted image opens the smiley picker at the pointer; a choice reacts, and
-// choosing the same smiley again takes yours back. Chips with counts sit under the image.
-// The view has no decoration extension point, so this attaches to its DOM (B5): a
-// capture-phase click and a MutationObserver, editing no message-view file.
+// Image likes in the message view (UI design 2026-10-27, Message view → Image reactions;
+// TDF-0011). Right-clicking a posted image likes it at once; clicking it opens the image full
+// size in a new tab. Likes are permanent. A heart with the count of
+// distinct senders sits under the image, its title naming each sender's smiley(s), and hearts
+// float up from it when a like is made or arrives live. The view has no decoration extension
+// point, so this attaches to its DOM (B5): capture-phase listeners and a MutationObserver,
+// editing no message-view file. It also hides a like's ^suffix token in the view.
 
-import { fixedSmilieSrc } from '../../core/smiliefix.js';
 import { safeDecodeURIComponent } from '../../core/parse.js';
 import { atBottom } from '../../core/scroll.js';
 import { extractShareIds } from '../gallery/shareParse.js';
+import { burst as floatHearts } from './hearts.js';
 
 const ROW = 'tdf-rx-row';
-const CHIP = 'tdf-rx-chip';
+const HEART = 'tdf-rx-heart';
+/** The smiley a right-click likes with. */
+const LIKE_CODE = ':h';
+/** A token at the end of a text node: `^` and the share id's last 6 digits. */
+const TOKEN_TAIL = /\s*\^\d{6}\s*$/;
+const SHOW_TEXT = 4; // NodeFilter.SHOW_TEXT
 
 /**
  * @param {{
  *   doc: Document,
  *   win: any,
- *   store: { reactionsFor: (imageId: string) => import('./infer.js').ReactionCount[], onChange: (fn: () => void) => () => void },
+ *   store: {
+ *     likesFor: (imageId: string) => import('./infer.js').LikeCount,
+ *     onChange: (fn: () => void) => () => void,
+ *     onLike: (fn: (imageId: string, sender: string) => void) => () => void,
+ *   },
  *   queue: import('./queue.js').ReactionQueue,
- *   openSmileyPicker: (options: { x: number, y: number, below?: boolean, extraRows?: { label: string, run: () => void }[], onPick: (code: string) => void }) => () => void,
+ *   codes: readonly string[],
+ *   burst?: (doc: Document, win: any, anchor: Element) => unknown,
  * }} deps
  * @returns {() => void} uninstall
  */
-export function installReactionUi({ doc, win, store, queue, openSmileyPicker }) {
-  /** @param {string} code */
-  const smilieSrc = (code) => {
-    const codes = Array.isArray(win.mySmilies) ? win.mySmilies : [];
-    const imgs = Array.isArray(win.mySmiliesImg) ? win.mySmiliesImg : [];
-    const src = /src=['"]([^'"]+)['"]/.exec(String(imgs[codes.indexOf(code)] ?? ''))?.[1] ?? '';
-    return fixedSmilieSrc(src);
+export function installReactionUi({ doc, win, store, queue, codes, burst = floatHearts }) {
+  /** @param {string} shareId */
+  const heartsOf = (shareId) =>
+    [...doc.querySelectorAll(`#tdf-chat .${HEART}`)].filter((h) => /** @type {HTMLElement} */ (h).dataset.share === shareId);
+
+  /** @param {string} shareId */
+  const celebrate = (shareId) => {
+    for (const heart of heartsOf(shareId)) burst(doc, win, heart);
   };
 
   /**
+   * Like an image. Hearts float only when a like was actually queued.
    * @param {string} shareId
    * @param {string} code
    */
-  const toggle = (shareId, code) =>
-    queue.toggle(shareId, code, store.reactionsFor(shareId).some((r) => r.code === code && r.mine));
+  const like = (shareId, code) => {
+    if (queue.like(shareId, code, store.likesFor(shareId).mine)) celebrate(shareId);
+  };
 
   /**
    * The share id an image in a public message links to, or null. Whispers are out: another
@@ -62,49 +77,82 @@ export function installReactionUi({ doc, win, store, queue, openSmileyPicker }) 
    * @returns {HTMLElement | null}
    */
   const buildRow = (shareId) => {
-    const counts = store.reactionsFor(shareId);
-    const pending = queue.entriesFor(shareId);
-    const codes = [...new Set([...counts.map((c) => c.code), ...pending.map((p) => p.code)])];
+    const likes = store.likesFor(shareId);
+    const entry = queue.entriesFor(shareId)[0];
+    // A like still queued counts as yours already.
+    const count = likes.count + (entry && !likes.mine ? 1 : 0);
+    if (count === 0) return null;
     const row = doc.createElement('div');
     row.className = ROW;
     row.dataset.share = shareId;
-    for (const code of codes) {
-      const counted = counts.find((c) => c.code === code);
-      const entry = pending.find((p) => p.code === code);
-      const mine = counted?.mine ?? false;
-      // A queued reaction counts as yours already; a queued take-back does not yet subtract.
-      const count = (counted?.count ?? 0) + (entry && !entry.retract && !mine ? 1 : 0);
-      if (count === 0) continue;
-      const chip = doc.createElement('button');
-      chip.type = 'button';
-      chip.className = CHIP;
-      chip.dataset.share = shareId;
-      chip.dataset.code = code;
-      if (mine || (entry && !entry.retract)) chip.classList.add('tdf-rx-mine');
-      if (entry?.state === 'queued' || entry?.state === 'sending') chip.classList.add('tdf-rx-queued');
-      if (entry?.state === 'failed') chip.classList.add('tdf-rx-failed');
-      const names = (counted?.senders ?? []).map((s) => safeDecodeURIComponent(s)).join(', ');
-      chip.title =
-        entry?.state === 'failed'
-          ? `${code}: not sent (${entry.reason}). Click to retry`
-          : entry?.state === 'queued'
-            ? `${code}: queued (#${entry.position})${names ? ` · ${names}` : ''}`
-            : entry?.state === 'sending'
-              ? `${code}: sending${names ? ` · ${names}` : ''}`
-              : `${code}${names ? `: ${names}` : ''}`;
-      const img = doc.createElement('img');
-      img.alt = code;
-      img.src = smilieSrc(code);
-      const n = doc.createElement('span');
-      n.textContent = String(count);
-      chip.append(img, n);
-      row.appendChild(chip);
+    const heart = doc.createElement('button');
+    heart.type = 'button';
+    heart.className = HEART;
+    heart.dataset.share = shareId;
+    if (likes.mine || entry) heart.classList.add('tdf-rx-mine');
+    if (entry?.state === 'queued' || entry?.state === 'sending') heart.classList.add('tdf-rx-queued');
+    if (entry?.state === 'failed') heart.classList.add('tdf-rx-failed');
+    const lines = likes.senders.map((s) => `${safeDecodeURIComponent(s.sender)} ${s.codes.join(', ')}`);
+    if (entry?.state === 'failed') lines.unshift(`Not sent (${entry.reason}). Click to retry`);
+    else if (entry?.state === 'queued') lines.unshift(`Your like: queued (#${entry.position})`);
+    else if (entry?.state === 'sending') lines.unshift('Your like: sending');
+    heart.title = lines.join('\n');
+    const icon = doc.createElement('span');
+    icon.className = 'tdf-rx-heart-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = '♥';
+    const n = doc.createElement('span');
+    n.textContent = String(count);
+    heart.append(icon, n);
+    row.appendChild(heart);
+    return row;
+  };
+
+  /**
+   * What may stand before a token in a like, as parseReaction reads it: exactly one smiley —
+   * one expanded smiley (no text), or one code the engine left unexpanded — either taken back
+   * with `-`.
+   * @param {string} text
+   * @param {number} smileys  expanded smileys before the token
+   */
+  const isLikeHead = (text, smileys) => {
+    const code = text.startsWith('-') ? text.slice(1) : text;
+    return code === '' ? smileys === 1 : smileys === 0 && codes.includes(code);
+  };
+
+  /**
+   * Hide a like's ^suffix token. In a public message that is only a smiley and its token —
+   * plain, in a span the sanitiser kept, or in a font tag it turned to text — the token is
+   * removed, and any wrapper it leaves empty.
+   * @param {Element} msg
+   */
+  const stripToken = (msg) => {
+    if (!msg.classList.contains('tdf-kind-public')) return;
+    const body = msg.querySelector('.tdf-body');
+    if (!body || body.querySelector('a') || [...body.querySelectorAll('img')].some((img) => shareOf(img) !== null)) return;
+    const walker = doc.createTreeWalker(body, SHOW_TEXT);
+    /** @type {Text[]} */
+    const texts = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) texts.push(/** @type {Text} */ (node));
+    const last = texts.reverse().find((t) => t.data.trim() !== '');
+    if (!last || !TOKEN_TAIL.test(last.data)) return;
+    const lead = last.data.replace(TOKEN_TAIL, '');
+    const before = texts.slice(texts.indexOf(last) + 1).reverse().map((t) => t.data).join('');
+    const imgs = [...body.querySelectorAll('img')];
+    if (imgs.some((img) => !(img.compareDocumentPosition(last) & 4 /* DOCUMENT_POSITION_FOLLOWING */))) return;
+    if (!isLikeHead(`${before}${lead}`.trim(), imgs.length)) return;
+    last.data = lead;
+    let el = last.parentElement;
+    while (el && el !== body && (el.textContent ?? '').trim() === '' && !el.querySelector('img')) {
+      const parent = el.parentElement;
+      el.remove();
+      el = parent;
     }
-    return row.childElementCount ? row : null;
   };
 
   /** @param {Element} msg */
   const render = (msg) => {
+    stripToken(msg);
     for (const old of msg.querySelectorAll(`:scope > .${ROW}`)) old.remove();
     for (const shareId of sharesIn(msg)) {
       const row = buildRow(shareId);
@@ -113,8 +161,8 @@ export function installReactionUi({ doc, win, store, queue, openSmileyPicker }) 
   };
 
   /**
-   * Run `fn`, which may add chip rows. A list scrolled to the bottom (the view's autoscroll ran
-   * before the rows grew it) stays at the bottom, so the newest message is not pushed down.
+   * Run `fn`, which may add heart rows. A list scrolled to the bottom (the view's autoscroll
+   * ran before the rows grew it) stays at the bottom, so the newest message is not pushed down.
    * @param {() => void} fn
    */
   const keepPinned = (fn) => {
@@ -129,32 +177,48 @@ export function installReactionUi({ doc, win, store, queue, openSmileyPicker }) 
       for (const msg of doc.querySelectorAll('#tdf-chat .tdf-msg')) render(msg);
     });
 
+  /**
+   * The share id of the posted image an event hit inside the overlay, or null. No share id,
+   * no token to name the image by (B7): the plain link stays.
+   * @param {Event} event
+   */
+  const postedShare = (event) => {
+    const target = /** @type {Element} */ (event.target);
+    if (!target.closest?.('#tdf-chat')) return null;
+    if (target.tagName !== 'IMG' || !target.classList.contains('tdf-posted')) return null;
+    return shareOf(target);
+  };
+
   /** @param {MouseEvent} event */
   const onClick = (event) => {
     const target = /** @type {Element} */ (event.target);
     if (!target.closest?.('#tdf-chat')) return;
-    const chip = /** @type {HTMLElement | null} */ (target.closest(`.${CHIP}`));
-    if (chip) {
-      toggle(chip.dataset.share ?? '', chip.dataset.code ?? '');
+    const heart = /** @type {HTMLElement | null} */ (target.closest(`.${HEART}`));
+    if (heart) {
+      // Only a failed like is retried from its heart; a like is never taken back.
+      const shareId = heart.dataset.share ?? '';
+      const entry = queue.entriesFor(shareId)[0];
+      if (entry?.state === 'failed') like(shareId, entry.code);
       return;
     }
-    if (target.tagName !== 'IMG' || !target.classList.contains('tdf-posted')) return;
-    const shareId = shareOf(target);
-    // No share id, no token to name the image by (B7): the plain link stays.
+    const shareId = postedShare(event);
     if (shareId === null) return;
     event.preventDefault();
     const href = target.closest('a')?.href ?? /** @type {HTMLImageElement} */ (target).src;
-    openSmileyPicker({
-      x: event.clientX,
-      y: event.clientY + 8,
-      below: true,
-      extraRows: [{ label: 'Open full size', run: () => win.open(href, '_blank', 'noopener') }],
-      onPick: (code) => toggle(shareId, code),
-    });
+    win.open(href, '_blank', 'noopener');
   };
   doc.addEventListener('click', onClick, true);
 
-  // Rows the view adds (live, replayed, or replaced on confirm) get their chips.
+  /** @param {MouseEvent} event */
+  const onContextMenu = (event) => {
+    const shareId = postedShare(event);
+    if (shareId === null) return;
+    event.preventDefault();
+    like(shareId, LIKE_CODE);
+  };
+  doc.addEventListener('contextmenu', onContextMenu, true);
+
+  // Rows the view adds (live, replayed, or replaced on confirm) get their heart.
   const observer = new win.MutationObserver((/** @type {MutationRecord[]} */ records) =>
     keepPinned(() => {
       for (const record of records) {
@@ -169,12 +233,15 @@ export function installReactionUi({ doc, win, store, queue, openSmileyPicker }) 
 
   const offStore = store.onChange(renderAll);
   const offQueue = queue.onChange(renderAll);
+  const offLike = store.onLike((imageId) => celebrate(imageId));
   renderAll();
 
   return () => {
     doc.removeEventListener('click', onClick, true);
+    doc.removeEventListener('contextmenu', onContextMenu, true);
     observer.disconnect();
     offStore();
     offQueue();
+    offLike();
   };
 }

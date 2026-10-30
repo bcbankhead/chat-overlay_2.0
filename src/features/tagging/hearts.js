@@ -1,0 +1,70 @@
+// Floating hearts for a like (TDF-0011): a few hearts rise from the image's heart and fade
+// over the interface. Each is `position: fixed` on the page body, so no overflow in the view
+// clips it, and is removed when its animation ends, or by a backstop if that never fires.
+// Nothing plays when the reader asks for reduced motion.
+
+const HEARTS = 6;
+/** Past the longest animation (tagging.css .tdf-hearts-float) plus the longest delay. */
+const BACKSTOP_MS = 2000;
+const MAX_DELAY_MS = 300;
+const MAX_DRIFT_PX = 28;
+
+/**
+ * @param {{ left: number, top: number, right: number, bottom: number }} a
+ * @param {{ left: number, top: number, right: number, bottom: number }} b
+ */
+const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+
+/**
+ * Whether `anchor` can be seen: it has a size (a hidden view lays it out at zero), and it lies
+ * inside both the window and the chat list it scrolls in.
+ * @param {any} win
+ * @param {Element} anchor
+ * @param {DOMRect} rect
+ */
+function onScreen(win, anchor, rect) {
+  if (rect.width <= 0 || rect.height <= 0) return false;
+  if (!overlaps(rect, { left: 0, top: 0, right: win.innerWidth, bottom: win.innerHeight })) return false;
+  const list = anchor.closest('.tdf-list');
+  return !list || overlaps(rect, list.getBoundingClientRect());
+}
+
+/**
+ * Float hearts up from `anchor`, unless it is off screen.
+ * @param {Document} doc
+ * @param {any} win
+ * @param {Element} anchor
+ * @param {() => number} [random]
+ * @returns {HTMLElement[]} the hearts added; none under reduced motion
+ */
+export function burst(doc, win, anchor, random = Math.random) {
+  if (typeof win.matchMedia === 'function' && win.matchMedia('(prefers-reduced-motion: reduce)').matches) return [];
+  const rect = anchor.getBoundingClientRect();
+  if (!onScreen(win, anchor, rect)) return [];
+  const x = rect.left + rect.width / 2;
+  const y = rect.top;
+  /** @type {HTMLElement[]} */
+  const hearts = [];
+  for (let i = 0; i < HEARTS; i += 1) {
+    const heart = doc.createElement('span');
+    heart.className = 'tdf-hearts-float';
+    heart.setAttribute('aria-hidden', 'true');
+    heart.textContent = '♥';
+    heart.style.left = `${x}px`;
+    heart.style.top = `${y}px`;
+    heart.style.setProperty('--tdf-drift', `${Math.round((random() * 2 - 1) * MAX_DRIFT_PX)}px`);
+    heart.style.animationDelay = `${Math.round(random() * MAX_DELAY_MS)}ms`;
+    let removed = false;
+    const remove = () => {
+      if (removed) return;
+      removed = true;
+      win.clearTimeout(backstop);
+      heart.remove();
+    };
+    const backstop = win.setTimeout(remove, BACKSTOP_MS);
+    heart.addEventListener('animationend', remove, { once: true });
+    doc.body.appendChild(heart);
+    hearts.push(heart);
+  }
+  return hearts;
+}

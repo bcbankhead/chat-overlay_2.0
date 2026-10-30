@@ -27,7 +27,8 @@ before(async () => {
     stdin: {
       contents: [
         "import { mount } from '../../core/shell.js';",
-        "import { openSmileyPicker } from './index.js';",
+        "import './index.js';",
+        "import { openSmileyPicker } from './smilies.js';",
         'window.__test = { mount, openSmileyPicker };',
       ].join('\n'),
       resolveDir: here,
@@ -314,33 +315,22 @@ test('the smiley button opens a 5-wide picker of the 15 smilies; a pick inserts 
   assert.equal(picker.hidden, true, 'a second click on the button closes it');
 });
 
-test('openSmileyPicker takes extra rows and a pick callback, and closes on Escape', () => {
+test('openSmileyPicker takes a pick callback, and closes on Escape', () => {
   const { window, document, win } = page();
   /** @type {string[][]} */
   const picks = [];
-  let ran = 0;
   const close = win.__test.openSmileyPicker({
     x: 40,
     y: 300,
-    extraRows: [{ label: 'Open full size', run: () => (ran += 1) }],
     onPick: (/** @type {string} */ code, /** @type {string} */ src) => picks.push([code, src]),
   });
   assert.equal(typeof close, 'function');
   const picker = /** @type {any} */ (document.querySelector('.tdf-sm-picker'));
-  const rows = picker.querySelectorAll('.tdf-sm-action');
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].textContent, 'Open full size');
   picker.querySelectorAll('.tdf-sm-item')[1].click();
   assert.deepEqual(picks, [[';)', 'smilies/1.gif']]);
   assert.equal(picker.hidden, true);
 
-  win.__test.openSmileyPicker({ x: 0, y: 0, extraRows: [{ label: 'Open full size', run: () => (ran += 1) }], onPick: () => {} });
-  picker.querySelector('.tdf-sm-action').click();
-  assert.equal(ran, 1);
-  assert.equal(picker.hidden, true);
-
   win.__test.openSmileyPicker({ x: 0, y: 0, onPick: () => {} });
-  assert.equal(picker.querySelectorAll('.tdf-sm-action').length, 0, 'rows are per opening');
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
   assert.equal(picker.hidden, true);
 
@@ -348,15 +338,13 @@ test('openSmileyPicker takes extra rows and a pick callback, and closes on Escap
   assert.equal(picker.hidden, true, 'the returned close closes it');
 });
 
-test('openSmileyPicker sits above (x, y) by default, and below it when asked', () => {
+test('openSmileyPicker sits above (x, y)', () => {
   const { document, win } = page();
   win.__test.openSmileyPicker({ x: 40, y: 300, onPick: () => {} });
   const picker = /** @type {any} */ (document.querySelector('.tdf-sm-picker'));
   picker.getBoundingClientRect = () => ({ width: 200, height: 120, top: 0, left: 0, right: 200, bottom: 120 });
   win.__test.openSmileyPicker({ x: 40, y: 300, onPick: () => {} });
   assert.equal(picker.style.top, `${300 - 120 + win.scrollY}px`, 'bottom edge at y');
-  win.__test.openSmileyPicker({ x: 40, y: 300, below: true, onPick: () => {} });
-  assert.equal(picker.style.top, `${300 + win.scrollY}px`, 'top edge at y');
   assert.equal(picker.style.left, `${40 + win.scrollX}px`);
 });
 

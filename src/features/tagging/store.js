@@ -2,13 +2,22 @@
 // every change re-derives the room's tags and replaces its rows, so purging history and
 // re-deriving cannot disagree. Core's announcements (a message in, messages deleted, a pending
 // one unconfirmed) keep the snapshot in step; those that arrive while a rebuild reads are
-// held, then applied over the read in order.
+// held, then applied over the read in order. A like from someone else that arrives live is
+// announced (onLike), so the view can animate it; nothing replayed by a rebuild, or held
+// during one, is.
 
 import { STORES, done, request } from '../../core/db.js';
-import { countReactions, deriveTags } from './infer.js';
+import { countLikes, deriveTags } from './infer.js';
 
 /** @typedef {import('../../core/history.js').MessageRecord} MessageRecord */
 /** @typedef {import('./infer.js').Tag} Tag */
+
+/**
+ * @param {string} imageId
+ * @param {string} sender
+ */
+const likeKey = (imageId, sender) => `${imageId}
+${sender}`;
 
 /**
  * @param {Tag[]} a
@@ -46,6 +55,8 @@ export function createTagStore({ db, history, roomID, me, codes }) {
   let writes = Promise.resolve();
   /** @type {Set<() => void>} */
   const listeners = new Set();
+  /** @type {Set<(imageId: string, sender: string) => void>} */
+  const likeListeners = new Set();
 
   const changed = () => {
     for (const fn of listeners) fn();
@@ -147,7 +158,19 @@ export function createTagStore({ db, history, roomID, me, codes }) {
      */
     applyInbound(record) {
       if (record.roomID !== roomID) return Promise.resolve();
-      return apply(() => upsert(record), false);
+      // A held message is replayed by the rebuild, which announces nothing.
+      if (early) return apply(() => upsert(record), false);
+      const liked = new Set(tags.map((t) => likeKey(t.imageId, t.sender)));
+      const written = apply(() => upsert(record), false);
+      /** @type {Set<string>} */
+      const announced = new Set();
+      for (const t of tags) {
+        const key = likeKey(t.imageId, t.sender);
+        if (t.sender === me || t.sourceMessageId !== record.id || liked.has(key) || announced.has(key)) continue;
+        announced.add(key);
+        for (const fn of likeListeners) fn(t.imageId, t.sender);
+      }
+      return written;
     },
 
     /**
@@ -172,11 +195,22 @@ export function createTagStore({ db, history, roomID, me, codes }) {
     },
 
     /**
-     * One row per smilie code on the image.
+     * The image's likes: distinct senders across every smilie.
      * @param {string} imageId
      */
-    reactionsFor(imageId) {
-      return countReactions(tags, imageId);
+    likesFor(imageId) {
+      return countLikes(tags, imageId);
+    },
+
+    /**
+     * Someone else's first reaction to an image arrived live (never from a rebuild, for a
+     * message held before the first one, or for your own).
+     * @param {(imageId: string, sender: string) => void} fn
+     * @returns {() => void} unsubscribe
+     */
+    onLike(fn) {
+      likeListeners.add(fn);
+      return () => likeListeners.delete(fn);
     },
 
     /**

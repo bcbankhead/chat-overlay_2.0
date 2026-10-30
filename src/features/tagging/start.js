@@ -11,8 +11,46 @@ import { createHistory } from '../../core/history.js';
 import { createSettings, DEFAULTS } from '../../core/settings.js';
 import { engineSend, resetRepeat } from './engineSend.js';
 import { createReactionQueue } from './queue.js';
+import { toHexColor } from './reactions.js';
 import { createTagStore } from './store.js';
 import { installReactionUi } from './ui.js';
+
+/**
+ * The colour a like's token is hidden in when the native chat's own background cannot be
+ * read: the forum's default chat background (TDF-0011). Provisional until measured live.
+ */
+export const FALLBACK_TOKEN_BG = '#ffffff';
+
+/** The view's stylesheet (view.js), whose theme.css overrides `.body`'s background. */
+const THEME_STYLE = 'tdf-chat-style';
+
+/**
+ * The native chat's background as `#rrggbb`, read now: `#chatContainer`'s computed
+ * background, else its nearest opaque ancestor's, `.body`'s included until the view's
+ * theme.css overrides it (then the walk stops short of `.body`); else the fallback, told to
+ * `onFallback` with why.
+ * @param {Document} doc
+ * @param {any} win
+ * @param {(reason: string) => void} [onFallback]
+ * @returns {string}
+ */
+export function nativeChatBackground(doc, win, onFallback) {
+  const chat = doc.getElementById('chatContainer');
+  const themed = doc.getElementById(THEME_STYLE) !== null;
+  for (let el = chat; el && el !== doc.documentElement; el = el.parentElement) {
+    if (themed && el.classList.contains('body')) break;
+    const hex = toHexColor(win.getComputedStyle(el).backgroundColor);
+    if (hex) return hex;
+  }
+  onFallback?.(
+    !chat
+      ? 'the native chat (#chatContainer) is missing'
+      : themed
+        ? 'the chat background is transparent up to .body'
+        : 'the chat background is transparent',
+  );
+  return FALLBACK_TOKEN_BG;
+}
 
 /**
  * Failures, shown in the message list once per distinct text as the view shows its own
@@ -64,11 +102,10 @@ export function reporter(doc, win) {
  *   win: any,
  *   doc: Document,
  *   css: string,
- *   openSmileyPicker: Parameters<typeof installReactionUi>[0]['openSmileyPicker'],
  *   indexedDB?: IDBFactory,
  * }} deps
  */
-export function startTagging({ win, doc, css, openSmileyPicker, indexedDB = win.indexedDB }) {
+export function startTagging({ win, doc, css, indexedDB = win.indexedDB }) {
   const fail = reporter(doc, win);
   const roomID = String(win.roomID ?? '');
   const me = String(win.userName ?? '');
@@ -92,6 +129,22 @@ export function startTagging({ win, doc, css, openSmileyPicker, indexedDB = win.
     else early.push(fn);
   };
 
+  // A token hidden in the provisional fallback colour may show; said once, not on every send.
+  let fellBack = false;
+  /** @param {string} reason */
+  const onFallback = (reason) => {
+    if (fellBack) return;
+    fellBack = true;
+    fail(`likes hide their token in ${FALLBACK_TOKEN_BG}, which may show: ${reason}`);
+  };
+
+  // Read now, before bootstrap mounts the view and its theme.css overrides `.body`'s colour.
+  /** @type {string | null} */
+  let startReason = null;
+  const startBg = nativeChatBackground(doc, win, (reason) => {
+    startReason = reason;
+  });
+
   const queue = createReactionQueue({
     now: () => Date.now(),
     setTimer: (fn, ms) => win.setTimeout(fn, ms),
@@ -100,6 +153,7 @@ export function startTagging({ win, doc, css, openSmileyPicker, indexedDB = win.
     request: () => win.sendReq,
     intervalSeconds: () => interval,
     resetRepeat: (text) => resetRepeat(win, text),
+    tokenColor: () => (startReason === null ? startBg : nativeChatBackground(doc, win, onFallback)),
   });
 
   onInbound((record) => {
@@ -123,7 +177,7 @@ export function startTagging({ win, doc, css, openSmileyPicker, indexedDB = win.
     store = created;
     for (const fn of early.splice(0)) fn(created).catch(fail);
     await created.rebuildRoom();
-    installReactionUi({ doc, win, store: created, queue, openSmileyPicker });
+    installReactionUi({ doc, win, store: created, queue, codes });
   });
   ready.catch(fail);
   return ready;

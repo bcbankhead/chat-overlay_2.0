@@ -111,7 +111,8 @@ test('the sidebar mounts on <body>, with the current room open and its users lis
   assert.equal(lobby.parentElement.className, 'tdf-rail-current');
   assert.deepEqual(t.users(), ['me', 'Alice']);
   const alice = t.doc.querySelector('.tdf-rail-user[data-uuid="12"]');
-  assert.equal(alice.querySelector('img').getAttribute('src'), 'avatars/a12.gif');
+  assert.equal(alice.querySelector('.tdf-rail-avatar img').getAttribute('src'), 'avatars/a12.gif');
+  assert.equal(alice.querySelector('.tdf-rail-avatar .tdf-tile').textContent, 'AL');
   assert.equal(alice.querySelector('.tdf-rail-user-status').textContent, '[BRB]');
   assert.equal(t.isOpen(), false);
   await t.teardown();
@@ -800,5 +801,33 @@ test('a room with no name is labelled by its id', async () => {
     },
   });
   assert.equal(t.roomEl('1').querySelector('.tdf-rail-room-name').textContent, '1');
+  await t.teardown();
+});
+
+test('a user with online.gif shows the initials tile, then the forum picture found by their forum id', async () => {
+  const asked = [];
+  const made = [];
+  const t = setup({
+    flags: { __tdfChat2Avatars: { resolve: (name, userID) => (asked.push([name, userID]), Promise.resolve('https://f/alice.jpg')) } },
+    prepare: (doc) => {
+      const span = [...doc.querySelectorAll('span[onclick]')].find((s) => s.textContent === 'Alice');
+      span.setAttribute('onclick', span.getAttribute('onclick').replace('"a12.gif"', '"online.gif"'));
+      const create = doc.createElement.bind(doc);
+      doc.createElement = (tag) => {
+        const el = create(tag);
+        if (tag === 'img') made.push(el);
+        return el;
+      };
+    },
+  });
+  const alice = () => t.doc.querySelector('.tdf-rail-user[data-uuid="12"] .tdf-rail-avatar');
+  assert.equal(alice().querySelector('.tdf-tile').textContent, 'AL');
+  assert.equal(alice().querySelector('img'), null);
+  await nextFrame();
+  // Only Alice is asked for on sight; the others' picked files load (or, in this window with
+  // no URL, fail and are then asked for too).
+  assert.deepEqual(asked.find(([name]) => name === 'Alice'), ['Alice', '912']);
+  for (const img of made.filter((i) => i.getAttribute('src') === 'https://f/alice.jpg')) img.dispatchEvent(new t.win.Event('load'));
+  assert.equal(alice().querySelector('img').getAttribute('src'), 'https://f/alice.jpg');
   await t.teardown();
 });

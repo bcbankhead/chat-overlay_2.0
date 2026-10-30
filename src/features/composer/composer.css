@@ -109,7 +109,7 @@
   height: 22px;
 }
 
-/* Smiley picker: the composer's, and image reactions'. */
+/* Smiley picker: opened from the composer's smiley button. */
 .tdf-sm-picker {
   position: absolute;
   z-index: 20;
@@ -142,31 +142,6 @@
 
 .tdf-sm-item:hover {
   background: rgba(127, 127, 127, 0.18);
-}
-
-.tdf-sm-extra {
-  grid-column: 1 / -1;
-}
-
-.tdf-sm-extra:empty {
-  display: none;
-}
-
-.tdf-sm-action {
-  width: 100%;
-  margin-top: 4px;
-  padding: 6px 8px;
-  border: 0;
-  border-top: 1px solid rgba(127, 127, 127, 0.25);
-  background: none;
-  color: inherit;
-  font: 13px system-ui, sans-serif;
-  text-align: left;
-  cursor: pointer;
-}
-
-.tdf-sm-action:hover {
-  background: rgba(127, 127, 127, 0.12);
 }
 
 /* Whisper: a blue border, and a chip on the box's top border at the right. */

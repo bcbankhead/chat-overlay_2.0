@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseReaction, reactionText } from './reactions.js';
+import { parseReaction, reactionText, toHexColor } from './reactions.js';
 import { SMILIE_CODES_FIXTURE as CODES } from './smilieCodes.fixture.js';
 
 test('a bare code is a bare reaction, with surrounding whitespace stripped', () => {
@@ -32,13 +32,58 @@ test('codes are the given list, not a built-in one', () => {
   assert.deepEqual(parseReaction('xx', ['xx']), { code: 'xx', suffix: null, retract: false });
 });
 
-test('reactionText round-trips through parseReaction', () => {
+test('a span- or font-wrapped token, quoted or not, names the image as the plain one does', () => {
+  const want = { code: ':h', suffix: '123456', retract: false };
+  for (const text of [
+    ':h [[span style=color:#f0f0f0]]^123456[[/span]]',
+    ":h [[span style='color:#f0f0f0']]^123456[[/span]]",
+    ':h [[span style="color: rgb(240, 240, 240)"]]^123456[[/span]]',
+    ':h [[font color=#f0f0f0]]^123456[[/font]]',
+    ":h [[font color='#f0f0f0']]^123456[[/font]]",
+    ':h [[font color="#f0f0f0"]]^123456[[/font]]',
+    '[b]:h [[span style=color:#f0f0f0]]^123456[[/span]] [/b]',
+  ]) {
+    assert.deepEqual(parseReaction(text, CODES), want, text);
+  }
+  assert.deepEqual(parseReaction('-:h [[span style=color:#fff]]^123456[[/span]]', CODES), { ...want, retract: true });
+});
+
+test('a malformed wrap is not a reaction', () => {
+  for (const text of [
+    ':h [[span style=color:#fff]]^123456[[/font]]',
+    `:h [[span style='color:#fff"]]^123456[[/span]]`,
+    ':h [[span style=font-family:x]]^123456[[/span]]',
+    ':h [[span style=color:#fff]]^12345[[/span]]',
+    ':h [[span style=color:#fff]]^123456',
+    ':h[[span style=color:#fff]]^123456[[/span]]',
+  ]) {
+    assert.equal(parseReaction(text, CODES), null, text);
+  }
+});
+
+test('reactionText round-trips through parseReaction, plain and wrapped', () => {
   const id = '100000000123456';
-  assert.equal(reactionText(':h', id, false), ':h ^123456');
-  assert.equal(reactionText(':h', id, true), '-:h ^123456');
+  assert.equal(reactionText(':h', id), ':h ^123456');
+  assert.equal(reactionText(':h', id, '#f0f0f0'), ':h [[span style=color:#f0f0f0]]^123456[[/span]]');
   for (const code of CODES) {
-    for (const retract of [false, true]) {
-      assert.deepEqual(parseReaction(reactionText(code, id, retract), CODES), { code, suffix: '123456', retract });
+    for (const color of [null, '#f0f0f0']) {
+      assert.deepEqual(parseReaction(reactionText(code, id, color), CODES), { code, suffix: '123456', retract: false });
     }
+  }
+});
+
+test('the engine-escaped characters never enter a wrapped reaction', () => {
+  assert.doesNotMatch(reactionText(':h', '100000000123456', '#f0f0f0'), /['"<>&]/);
+});
+
+test('toHexColor normalises computed colours, and is null for transparent or unknown', () => {
+  assert.equal(toHexColor('rgb(240, 240, 240)'), '#f0f0f0');
+  assert.equal(toHexColor('rgba(1, 2, 3, 0.5)'), '#010203');
+  assert.equal(toHexColor('rgb(255 0 128 / 50%)'), '#ff0080');
+  assert.equal(toHexColor('#ABC'), '#aabbcc');
+  assert.equal(toHexColor('#a1b2c3'), '#a1b2c3');
+  assert.equal(toHexColor('#a1b2c3ff'), '#a1b2c3');
+  for (const css of ['rgba(0, 0, 0, 0)', 'transparent', '#00000000', '#0000', 'red', '', 'rgb(1,2)']) {
+    assert.equal(toHexColor(css), null, css);
   }
 });

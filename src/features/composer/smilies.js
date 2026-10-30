@@ -1,13 +1,11 @@
 // The smiley picker: a 5-wide grid of the engine's own smilies (mySmilies / mySmiliesImg,
 // settings.js.php). The composer opens it from one outline smiley button in place of the
-// engine's icon row; image reactions (TDF-0009.6) open it at the pointer with extra rows.
+// engine's icon row.
 
 import { fixedSmilieSrc } from '../../core/smiliefix.js';
 
 const SMILEY_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="M8 14.5s1.5 2 4 2 4-2 4-2"/><path d="M9 9.5h.01M15 9.5h.01" stroke-width="3"/></svg>';
-
-/** @typedef {{ label: string, run: () => void }} ExtraRow */
 
 /** @type {HTMLElement | null} */
 let picker = null;
@@ -43,9 +41,6 @@ function build() {
     item.appendChild(img);
     el.appendChild(item);
   }
-  const extra = document.createElement('div');
-  extra.className = 'tdf-sm-extra';
-  el.appendChild(extra);
   el.addEventListener('click', (event) => {
     const item = /** @type {HTMLElement | null} */ (/** @type {Element} */ (event.target).closest('.tdf-sm-item'));
     if (!item || !onPicked) return;
@@ -74,32 +69,17 @@ function closePicker() {
 }
 
 /**
- * Open the picker with its bottom-left corner at viewport point (x, y), or its top-left when
- * `below`, kept on screen. `extraRows` add one action row each under the grid; a row closes
- * the picker, then runs.
- * @param {{ x: number, y: number, below?: boolean, extraRows?: ExtraRow[], onPick: (code: string, src: string) => void }} options
+ * Open the picker with its bottom-left corner at viewport point (x, y), kept on screen.
+ * @param {{ x: number, y: number, onPick: (code: string, src: string) => void }} options
  * @returns {() => void} close
  */
-export function openSmileyPicker({ x, y, below = false, extraRows = [], onPick }) {
+export function openSmileyPicker({ x, y, onPick }) {
   picker ??= build();
   onPicked = onPick;
-  const extra = /** @type {HTMLElement} */ (picker.querySelector('.tdf-sm-extra'));
-  extra.textContent = '';
-  for (const row of extraRows) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'tdf-sm-action';
-    button.textContent = row.label;
-    button.addEventListener('click', () => {
-      closePicker();
-      row.run();
-    });
-    extra.appendChild(button);
-  }
   picker.hidden = false;
   const rect = picker.getBoundingClientRect();
   const left = Math.min(Math.max(8, x), window.innerWidth - rect.width - 8);
-  const top = Math.min(Math.max(8, below ? y : y - rect.height), window.innerHeight - rect.height - 8);
+  const top = Math.min(Math.max(8, y - rect.height), window.innerHeight - rect.height - 8);
   picker.style.left = `${left + window.scrollX}px`;
   picker.style.top = `${top + window.scrollY}px`;
   return closePicker;

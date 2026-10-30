@@ -1,6 +1,6 @@
 // Seeds the overlay's local history (IndexedDB `tdf-chat-2`) from the messages the saved
 // page carries in the engine's #chatContainer, so the overlay replays them on start.
-// Runs before the overlay loads. The schema below copies src/core/db.js at version 3;
+// Runs before the overlay loads. The schema below copies src/core/db.js at version 4;
 // if that changes, this must too. Re-running is harmless: records are keyed and put.
 window.__seedHistory = function () {
   var container = document.getElementById('chatContainer');
@@ -52,12 +52,13 @@ window.__seedHistory = function () {
   records = records.concat(fictionalUsers(records, roomID, base));
 
   return new Promise(function (resolve, reject) {
-    var req = indexedDB.open('tdf-chat-2', 3);
+    var req = indexedDB.open('tdf-chat-2', 4);
     req.onupgradeneeded = function (event) {
       if (event.oldVersion >= 1) {
         var tx = req.transaction;
         if (event.oldVersion < 2) tx.objectStore('images').createIndex('hash', 'hash');
         if (event.oldVersion < 3) reclassifyWhispers(tx.objectStore('messages'));
+        if (event.oldVersion < 4) req.result.createObjectStore('avatars', { keyPath: 'name' });
         return;
       }
       var db = req.result;
@@ -75,6 +76,7 @@ window.__seedHistory = function () {
       var tags = db.createObjectStore('tags', { keyPath: 'id', autoIncrement: true });
       tags.createIndex('imageId', 'imageId');
       tags.createIndex('sourceMessageId', 'sourceMessageId');
+      db.createObjectStore('avatars', { keyPath: 'name' });
     };
     req.onerror = function () { reject(req.error); };
     req.onsuccess = function () {

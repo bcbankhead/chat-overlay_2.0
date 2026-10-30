@@ -134,25 +134,60 @@ test('a notice breaks a group; the next message heads its own', async () => {
   assert.deepEqual(heads(root), ['h', '-', 'h', '-', 'h']);
 });
 
-test('a head row carries avatar, name and time; a placeholder avatar has no src', async () => {
+test('a head row carries avatar, name and time; a missing avatar shows the initials tile', async () => {
   const { view, root } = await setup();
   const t = new Date(2026, 0, 2, 9, 7).getTime() / 1000;
   view.append(rec({ id: '1', mTime: String(t), avatar: 'bob.gif' }));
   view.append(rec({ id: '2', mTime: String(t + 1), user: 'alice', avatar: '' }));
   const [bob, alice] = msgs(root);
-  assert.equal(bob.querySelector('.tdf-avatar').getAttribute('src'), 'avatars/40/bob.gif');
-  assert.equal(bob.querySelector('.tdf-avatar').getAttribute('loading'), 'lazy');
+  const img = bob.querySelector('.tdf-avatar img');
+  assert.equal(img.getAttribute('src'), 'avatars/40/bob.gif');
+  assert.equal(img.getAttribute('loading'), 'lazy');
+  assert.equal(bob.querySelector('.tdf-avatar .tdf-tile').textContent, 'BO');
   assert.equal(bob.querySelector('.tdf-time').textContent, '09:07');
-  assert.equal(alice.querySelector('.tdf-avatar').hasAttribute('src'), false);
-  const avatar = bob.querySelector('.tdf-avatar');
-  avatar.dispatchEvent(new root.ownerDocument.defaultView.Event('error'));
-  assert.equal(avatar.hasAttribute('src'), false);
+  assert.equal(alice.querySelector('.tdf-avatar img'), null);
+  assert.equal(alice.querySelector('.tdf-avatar .tdf-tile').textContent, 'AL');
+  img.dispatchEvent(new root.ownerDocument.defaultView.Event('error'));
+  assert.equal(bob.querySelector('.tdf-avatar img'), null);
+  assert.ok(bob.querySelector('.tdf-avatar .tdf-tile'));
 });
 
 test('a sender-supplied avatar name is encoded into one path segment', async () => {
   const { view, root } = await setup();
   view.append(rec({ avatar: '../x.php?a=1#b' }));
-  assert.equal(root.querySelector('.tdf-avatar').getAttribute('src'), 'avatars/40/..%2Fx.php%3Fa%3D1%23b');
+  assert.equal(root.querySelector('.tdf-avatar img').getAttribute('src'), 'avatars/40/..%2Fx.php%3Fa%3D1%23b');
+});
+
+test('online.gif and share.gif senders get the tile, then their forum picture; a picked avatar is unchanged', async () => {
+  const win = new Window({ url: 'https://example.test/chat/' });
+  const doc = win.document;
+  doc.body.innerHTML = '<div id="chatContainer"></div>';
+  win.addSmilie = (t) => t;
+  const asked = [];
+  const avatars = { resolve: (name) => (asked.push(name), Promise.resolve(`https://example.test/f/${encodeURIComponent(name)}.jpg`)) };
+  const made = [];
+  const create = doc.createElement.bind(doc);
+  doc.createElement = (tag) => {
+    const el = create(tag);
+    if (tag === 'img') made.push(el);
+    return el;
+  };
+  const view = createView({ doc, win, container: doc.getElementById('chatContainer'), css: '', avatars });
+  view.append(rec({ id: '1', user: 'BatteriesNotIncluded', avatar: 'online.gif' }));
+  view.append(rec({ id: '2', user: 'Dick%20Vicious', avatar: 'share.gif' }));
+  view.append(rec({ id: '3', user: 'Siliconeman', avatar: 'sm.jpg' }));
+  const [dot, share, picked] = msgs(doc.getElementById('tdf-chat'));
+  assert.equal(dot.querySelector('.tdf-avatar .tdf-tile').textContent, 'BN');
+  assert.equal(share.querySelector('.tdf-avatar .tdf-tile').textContent, 'DV');
+  assert.equal(dot.querySelector('.tdf-avatar img'), null);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(asked, ['BatteriesNotIncluded', 'Dick Vicious']);
+  for (const img of made.filter((i) => i.getAttribute('src')?.startsWith('https://example.test/f/'))) {
+    img.dispatchEvent(new win.Event('load'));
+  }
+  assert.equal(dot.querySelector('.tdf-avatar img').getAttribute('src'), 'https://example.test/f/BatteriesNotIncluded.jpg');
+  assert.equal(share.querySelector('.tdf-avatar img').getAttribute('src'), 'https://example.test/f/Dick%20Vicious.jpg');
+  assert.equal(picked.querySelector('.tdf-avatar img').getAttribute('src'), 'avatars/40/sm.jpg');
 });
 
 test('a pending message is timed by receipt and regrouped when confirmed', async () => {
@@ -392,9 +427,9 @@ test('a pinned view follows any list image, avatars included, but no other load'
   geo.height = 600;
   root.querySelector('.tdf-msg').dispatchEvent(new win.Event('load'));
   assert.equal(geo.top, 500);
-  loadImg(win, root.querySelector('.tdf-avatar'));
+  loadImg(win, root.querySelector('.tdf-avatar img'));
   assert.equal(geo.top, 600);
-  assert.equal(root.querySelector('.tdf-avatar').classList.contains('tdf-posted'), false);
+  assert.equal(root.querySelector('.tdf-avatar img').classList.contains('tdf-posted'), false);
 });
 
 test('a replay with images ends at the bottom once they load', async () => {

@@ -9,13 +9,6 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const read = (/** @type {string} */ rel) => readFileSync(path.join(here, rel), 'utf8');
 
-test("chips read a smilie's image as the picker does (composer/smilies.js)", () => {
-  const pattern = /\/src=\['"\]\(\[\^'"\]\+\)\['"\]\//;
-  const ours = pattern.exec(read('ui.js'))?.[0];
-  assert.ok(ours, 'ui.js no longer extracts the smilie src');
-  assert.ok(read('../composer/smilies.js').includes(ours), 'the picker extracts the smilie src differently');
-});
-
 test('a failure notice uses the view\'s own notice markup (core/view.js)', () => {
   const view = read('../../core/view.js');
   const start = read('start.js');

@@ -4,6 +4,7 @@
 // The preview is drawn in your colour shifted for the theme (ink.js), as the message box and
 // messages are; the swatches and the Colour header show the raw colours being chosen.
 
+import { renderAvatar } from '../../core/avatar.js';
 import { describeError } from '../../core/errors.js';
 import { createEngine } from './engine.js';
 import { COLORS_PER_ROW, STATUSES, colorRows, sameChoice, statusIndex } from './textStyle.js';
@@ -21,6 +22,8 @@ const PREVIEW_TEXT = 'Your messages will look like this';
  * @property {(color: string, theme: 'light' | 'dark') => string} shift
  *   the colour to paint on that theme (ink.js themeInk)
  * @property {(target: Node, fn: () => void) => () => void} observe
+ * @property {() => import('../../core/avatarResolver.js').AvatarResolver | null} [avatars]
+ *   forum pictures, read per render: the bootstrap publishes it after the flyout registers
  */
 
 /** After Gallery in the icon row (UI design 2026-10-27, Sidebar). */
@@ -64,6 +67,7 @@ export function startProfile({ win, doc, css, icon, register, currentTheme, onTh
         currentTheme,
         onThemeChange,
         shift,
+        avatars: () => w.__tdfChat2Avatars ?? null,
         observe(target, fn) {
           const observer = new w.MutationObserver(fn);
           observer.observe(target, { childList: true, characterData: true, subtree: true });
@@ -80,7 +84,7 @@ export function startProfile({ win, doc, css, icon, register, currentTheme, onTh
  * @param {ProfileDeps} deps
  * @returns {() => void} cleanup
  */
-export function renderProfile(container, { doc, engine, currentTheme, onThemeChange, shift, observe }) {
+export function renderProfile(container, { doc, engine, currentTheme, onThemeChange, shift, observe, avatars = () => null }) {
   /** @type {Array<() => void>} */
   const cleanups = [];
   const el = (/** @type {string} */ tag, /** @type {string} */ className, text = '') => {
@@ -114,10 +118,15 @@ export function renderProfile(container, { doc, engine, currentTheme, onThemeCha
     head.title = 'View your profile';
     head.addEventListener('click', () => guarded(() => engine.viewProfile()));
   }
-  const avatar = /** @type {HTMLImageElement} */ (el('img', 'tdf-profile-avatar'));
-  avatar.alt = '';
-  if (self.avatar) avatar.src = self.avatar;
-  else avatar.hidden = true;
+  // The engine's src is `avatars/<file>`; the file name says whether one was picked.
+  const avatar = renderAvatar(doc, {
+    name: self.name,
+    userID: engine.ownRow()?.userID ?? '',
+    file: self.avatar.split('/').pop() ?? '',
+    src: self.avatar,
+    className: 'tdf-profile-avatar',
+    resolver: avatars(),
+  });
   head.append(avatar, el('span', 'tdf-profile-name', self.name));
 
   // Status: read from the engine's select on every open.
