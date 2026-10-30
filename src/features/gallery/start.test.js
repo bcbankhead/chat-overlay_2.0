@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { IDBFactory } from 'fake-indexeddb';
 import { Window } from 'happy-dom';
-import { emitInbound } from '../../core/events.js';
+import { openDb } from '../../core/db.js';
+import { emitInbound, emitLiked } from '../../core/events.js';
+import { createHistory } from '../../core/history.js';
+import { createSettings } from '../../core/settings.js';
 import { installRailHost, listPanels, listUserMenuActions } from '../rail/api.js';
 import { clearGalleryErrors } from './errors.js';
 import { startGallery } from './start.js';
@@ -22,13 +25,17 @@ test('start wires capture, the Gallery panel and the "View images" menu action',
   const logged = console.error;
   console.error = () => {};
   try {
-    startGallery({ win, doc, css: '/* gallery */', indexedDB: new IDBFactory() });
+    const indexedDB = new IDBFactory();
+    startGallery({ win, doc, css: '/* gallery */', indexedDB });
     assert.equal(doc.getElementById('tdf-gallery-style')?.textContent, '/* gallery */');
 
-    // A live share is captured through core's inbound subscription.
-    emitInbound(
-      /** @type {any} */ ({ id: '7', roomID: '1', mTime: '100', user: 'alice', receivedAt: 1, text: `[[img src="plugins/share/view.php?id=${ID}"]]` }),
-    );
+    // Another member's live share is not captured; liking it captures it, from its stored record.
+    const record = /** @type {any} */ ({ id: '7', roomID: '1', mTime: '100', user: 'alice', receivedAt: 1, text: `[[img src="plugins/share/view.php?id=${ID}"]]` });
+    await createHistory(await openDb({ indexedDB })).put(record);
+    emitInbound(record);
+    await settle();
+    assert.deepEqual(fetched, []);
+    emitLiked({ shareId: ID, messageId: '7', user: 'alice', mTime: '100' });
     await settle();
     assert.deepEqual(fetched, [`https://dollforum.com/forum/chat/plugins/share/view.php?id=${ID}`]);
 
@@ -57,7 +64,7 @@ test('start wires capture, the Gallery panel and the "View images" menu action',
   }
 });
 
-test('capture skips the signed-in user\'s own share, named by win.userName, with the setting off', async () => {
+test('with Include my images on, only the signed-in user\'s own share, named by win.userName, is captured as posted', async () => {
   const win = /** @type {any} */ (new Window({ url: 'https://dollforum.com/forum/chat/index.php' }));
   win.userName = 'me';
   /** @type {string[]} */
@@ -69,13 +76,15 @@ test('capture skips the signed-in user\'s own share, named by win.userName, with
   const logged = console.error;
   console.error = () => {};
   try {
-    startGallery({ win, doc: win.document, css: '', indexedDB: new IDBFactory() });
+    const indexedDB = new IDBFactory();
+    await createSettings(await openDb({ indexedDB })).set('includeMyImages', true);
+    startGallery({ win, doc: win.document, css: '', indexedDB });
     const share = (/** @type {string} */ id, /** @type {string} */ user) =>
       emitInbound(/** @type {any} */ ({ id, roomID: '1', mTime: '100', user, receivedAt: 1, text: `[[img src="plugins/share/view.php?id=${id}00000000000"]]` }));
     share('1111', 'me');
     share('2222', 'alice');
     await settle();
-    assert.deepEqual(fetched, ['https://dollforum.com/forum/chat/plugins/share/view.php?id=222200000000000']);
+    assert.deepEqual(fetched, ['https://dollforum.com/forum/chat/plugins/share/view.php?id=111100000000000']);
   } finally {
     console.error = logged;
     clearGalleryErrors();

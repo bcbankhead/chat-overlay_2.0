@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
+import { onLiked } from '../../core/events.js';
 import { createReactionQueue } from './queue.js';
 import { SMILIE_CODES_FIXTURE as CODES } from './smilieCodes.fixture.js';
 import { installReactionUi } from './ui.js';
@@ -169,6 +170,62 @@ test('clicking the heart on an image already liked, or one queued, sends nothing
   assert.equal(queued.bursts.length, 1);
   queued.timers.shift()?.();
   assert.equal(queued.sent.length, 1);
+});
+
+/**
+ * The likes announced on core's liked channel while `fn` runs.
+ * @param {() => void} fn
+ */
+const announced = (fn) => {
+  /** @type {import('../../core/events.js').Liked[]} */
+  const out = [];
+  const off = onLiked((l) => out.push(l));
+  try {
+    fn();
+  } finally {
+    off();
+  }
+  return out;
+};
+
+test('clicking the heart announces the like with the image and its row\'s message id, once', () => {
+  const p = page();
+  assert.deepEqual(
+    announced(() => {
+      p.click(p.like());
+      p.click(p.like());
+    }),
+    [{ shareId: A, messageId: '1', user: 'alice', mTime: '' }],
+  );
+  const liked = page({ likes: { count: 1, mine: true } });
+  assert.deepEqual(
+    announced(() => liked.click(liked.like())),
+    [],
+  );
+});
+
+test('a failed like\'s retry announces the like again', () => {
+  const p = page({ accept: false });
+  p.click(p.like());
+  p.timers.shift()?.();
+  assert.deepEqual(announced(() => p.click(p.like())), [{ shareId: A, messageId: '1', user: 'alice', mTime: '' }]);
+});
+
+test('the announced like carries its row\'s sender and mTime, for a message history does not hold', () => {
+  const p = page({ user: 'bob' });
+  /** @type {HTMLElement} */ (p.frame()?.closest('.tdf-msg')).dataset.mtime = '345';
+  assert.deepEqual(announced(() => p.click(p.like())), [{ shareId: A, messageId: '1', user: 'bob', mTime: '345' }]);
+});
+
+test('a like on a row with no server id is queued but not announced', () => {
+  for (const id of ['local-7', '']) {
+    const p = page();
+    const msg = /** @type {HTMLElement} */ (p.frame()?.closest('.tdf-msg'));
+    if (id === '') delete msg.dataset.id;
+    else msg.dataset.id = id;
+    assert.deepEqual(announced(() => p.click(p.like())), []);
+    assert.deepEqual(p.state(), ['mine queued']);
+  }
 });
 
 test('a queued like is titled with its queue position; a sending one says so', () => {

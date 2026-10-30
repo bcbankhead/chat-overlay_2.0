@@ -1,10 +1,11 @@
 // The gallery's wiring, apart from index.js's double-load guard so a test can drive it.
-// Capture subscribes at once, so no live share is missed while the database opens; the
+// Capture subscribes at once, so no live share or like is missed while the database opens; the
 // Gallery button joins the sidebar's icon row through registerRailPanel, and "View images"
 // joins every user's menu, opening the flyout filtered to that sender.
 
 import { openDb } from '../../core/db.js';
-import { onInbound } from '../../core/events.js';
+import { onInbound, onLiked } from '../../core/events.js';
+import { createHistory } from '../../core/history.js';
 import { createSettings } from '../../core/settings.js';
 import { registerRailPanel, registerUserMenuAction } from '../rail/api.js';
 import { startCapture } from './capture.js';
@@ -29,7 +30,10 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
   /** @type {typeof globalThis.fetch} */
   const fetch = (input, init) => win.fetch(input, init);
 
-  const ready = openDb({ indexedDB }).then((db) => ({ store: createImageStore(db), settings: createSettings(db) }));
+  const db = openDb({ indexedDB });
+  // Reported once, through ready below.
+  db.catch(() => {});
+  const ready = db.then((opened) => ({ store: createImageStore(opened), settings: createSettings(opened) }));
   ready.catch(report);
   const storeReady = ready.then((r) => r.store);
   // Reported once, above; a flyout opened later reports it again from its own load.
@@ -38,6 +42,9 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
   startCapture({
     ready,
     onInbound,
+    onLiked,
+    getMessage: async (id) => createHistory(await db).get(id),
+    roomID: () => String(win.roomID ?? ''),
     fetch,
     makeThumb: (blob) => makeThumb(blob),
     base: () => win.location.href,
