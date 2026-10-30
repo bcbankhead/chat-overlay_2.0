@@ -102,7 +102,9 @@ test('the built userscript overlays the chat, stores messages and replays them o
   assert.equal(overlay.querySelector('.tdf-theme-toggle'), null);
   const list = overlay.querySelector('.tdf-list');
   assert.ok(list.classList.contains('tdf-scroll'));
-  assert.ok(list.querySelector('.tdf-thumb'));
+  assert.ok(list.nextElementSibling.classList.contains('tdf-thumb'));
+  // The scrollbar was attached before the overlay was inserted; its stylesheet position stands.
+  assert.equal(overlay.style.position, '');
 
   // A second copy of the script (userscript + site include) does nothing.
   first.window.eval(bundle);
