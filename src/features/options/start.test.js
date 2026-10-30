@@ -70,6 +70,8 @@ test('start registers the Settings gear at the end of the icon row and opens the
   const cleanup = panel.render(body);
   await settle();
   assert.equal(body.querySelector('.tdf-opt-title')?.textContent, 'Settings');
+  // Unbuilt, the version is 'dev'; the build defines the real one.
+  assert.equal(body.querySelector('.tdf-opt-version')?.textContent, 'vdev');
   assert.equal(/** @type {HTMLInputElement} */ (body.querySelector('.tdf-opt-field input')).value, '30');
   if (typeof cleanup === 'function') cleanup();
 });

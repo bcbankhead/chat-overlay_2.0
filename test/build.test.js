@@ -62,6 +62,38 @@ test('one build emits the site include beside the userscript, from the same bund
   }
 });
 
+test('the build defines __TDF_CHAT_VERSION__ as the package.json version', async () => {
+  const root = rootWith("console.log('VERSION=' + __TDF_CHAT_VERSION__);\n");
+  try {
+    const { outputs } = await build({ match: MATCH, root, outfile: path.join(root, 'dist', 'tdf-chat.user.js') });
+    const { version } = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+    for (const file of [outputs.userscript, outputs.include]) {
+      const code = readFileSync(file, 'utf8');
+      assert.ok(!code.includes('__TDF_CHAT_VERSION__'));
+      // esbuild folds the concatenation into one literal.
+      assert.ok(code.includes(`VERSION=${version}`));
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the built Settings panel's VERSION resolves to the package.json version, not 'dev'", async () => {
+  // The real tree, so panel.js's own guard is what gets bundled; only the outputs go to a temp dir.
+  const out = mkdtempSync(path.join(tmpdir(), 'tdf-build-'));
+  try {
+    const { outputs } = await build({ match: MATCH, root: repo, outfile: path.join(out, 'tdf-chat.user.js') });
+    const { version } = JSON.parse(readFileSync(path.join(repo, 'package.json'), 'utf8'));
+    for (const file of [outputs.userscript, outputs.include]) {
+      const expr = readFileSync(file, 'utf8').match(/\bvar VERSION = (.+);/)?.[1];
+      assert.ok(expr, 'the bundle declares the panel VERSION');
+      assert.equal(new Function(`return ${expr};`)(), version);
+    }
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+});
+
 test('the build fails when an output uses a userscript-manager API', async () => {
   for (const call of ["GM_log('x');", "GM.info;", "unsafeWindow.x = 1;"]) {
     const root = rootWith(`${call}\n`);

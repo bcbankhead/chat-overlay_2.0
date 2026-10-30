@@ -214,6 +214,8 @@ export async function build({ match, root = ROOT, outfile } = /** @type {any} */
     target: 'es2020',
     charset: 'utf8',
     loader: { '.css': 'text' },
+    // The Settings flyout shows this, so a member can tell which build is loaded.
+    define: { __TDF_CHAT_VERSION__: JSON.stringify(version(root)) },
     plugins: [virtualEntry],
     logLevel: 'warning',
   };

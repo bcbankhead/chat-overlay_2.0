@@ -24,6 +24,10 @@ const plural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
 /** @param {number} bytes */
 const megabytes = (bytes) => `${(bytes / MB_BYTES).toFixed(1)} MB`;
 
+// package.json's version, set by build.mjs's esbuild `define`; an unbuilt run (the tests) has none.
+/** @type {string} */
+const VERSION = typeof __TDF_CHAT_VERSION__ === 'string' ? __TDF_CHAT_VERSION__ : 'dev';
+
 /**
  * Fill the flyout body; returns the cleanup the rail runs on close.
  * @param {HTMLElement} container
@@ -49,7 +53,8 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   };
 
   const root = el('div', 'tdf-opt');
-  root.append(el('div', 'tdf-opt-title', 'Settings'));
+  // The version floats right, ahead of the title, so the title keeps its own text and siblings.
+  root.append(el('span', 'tdf-opt-version', `v${VERSION}`), el('div', 'tdf-opt-title', 'Settings'));
   const failure = loadFailure();
   if (failure !== null) {
     root.append(el('div', 'tdf-opt-hint tdf-warn', `The storage limits did not run on load: ${failure}`));
