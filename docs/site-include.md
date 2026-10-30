@@ -119,6 +119,26 @@ users in nav + sticky navbar" userscript:
 Anything the page lacks (the Chat link, the online list, the header) is skipped; the rest still
 happens.
 
+### Forum search
+
+A search input sits at the right of the chat row, so it stays pinned with the navbar. Clicking or
+typing in it opens a small search window holding part of the forum's advanced search:
+
+- **Keywords**, matching any term by default; tick "Match all terms" to require every term.
+- **Author**, where `*` is a wildcard for partial matches.
+- **Search only in &lt;forum&gt;**, shown inside a forum (and in its topics), ticked by default.
+  Untick it to search all forums. On the board index every forum is searched.
+
+The rest is fixed: subforums included, post subjects and text searched, results shown as posts,
+newest first, with the first 300 characters of each. Enter searches; Esc or a click outside closes
+the window. "More options" opens the forum's own advanced search (scoped to the forum while the
+box is ticked) without the typed keywords or author, because `search.php` runs a search as soon as
+it receives either.
+
+The input appears only on pages that show the forum's own header search box, so members without
+search permission (often guests) do not see it. Members who also run the userscript get the input
+in the userscript's row.
+
 ### Build and deploy
 
 `npm run build` writes it as `dist/tdf-forum-sticky-header.js`, beside the chat files, and checks it
