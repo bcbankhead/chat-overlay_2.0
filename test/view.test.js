@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
+import { timeLabel } from '../src/core/group.js';
 import { DEFAULT_REPLAY_LIMIT } from '../src/core/history.js';
 import { createView } from '../src/core/view.js';
 
@@ -63,7 +64,10 @@ function stubResize(win) {
   };
 }
 
-async function setup({ autoScroll = true, reducedMotion = false, globals = {} } = {}) {
+// The local day the pinned record times fall on (2 Jan 2026), so those times read HH:MM.
+const NOW = new Date(2026, 0, 2, 12, 0).getTime() / 1000;
+
+async function setup({ autoScroll = true, reducedMotion = false, globals = {}, now = () => NOW } = {}) {
   const win = new Window({ url: 'https://example.test/chat/' });
   const frames = stubFrames(win);
   const resizes = stubResize(win);
@@ -75,7 +79,7 @@ async function setup({ autoScroll = true, reducedMotion = false, globals = {} } 
   const whispered = [];
   win.whisperUser = (name) => whispered.push(name);
   const container = doc.getElementById('chatContainer');
-  const view = createView({ doc, win, container, css: '#tdf-chat{}' });
+  const view = createView({ doc, win, container, css: '#tdf-chat{}', now });
   const root = doc.getElementById('tdf-chat');
   return { win, doc, view, root, container, whispered, frames, resizes };
 }
@@ -833,6 +837,65 @@ test("another user's chat name is a whisper button labelled with their name", as
   assert.equal(bob.getAttribute('aria-label'), 'Whisper bob b');
   // The time follows the name, which the hint rule in theme.css relies on.
   assert.ok(bob.nextElementSibling.classList.contains('tdf-time'));
+});
+
+test('a time from an earlier day shows its full date; one from today shows HH:MM', async () => {
+  const { view, root } = await setup();
+  const yesterday = new Date(2026, 0, 1, 22, 43).getTime() / 1000;
+  const today = new Date(2026, 0, 2, 9, 7).getTime() / 1000;
+  view.replay([
+    rec({ id: '1', mTime: String(yesterday) }),
+    rec({ id: '2', mTime: String(today), user: 'alice' }),
+  ]);
+  const [old, cur] = msgs(root).map((el) => el.querySelector('.tdf-time').textContent);
+  assert.equal(old, timeLabel(yesterday, NOW));
+  assert.match(old, /^\S+, \S+ 1 2026 22:43$/);
+  assert.equal(cur, '09:07');
+});
+
+test('a message on a later day re-labels the times already shown; one on the same day does not', async () => {
+  let now = NOW;
+  const { view, root } = await setup({ now: () => now });
+  const t = new Date(2026, 0, 2, 9, 7).getTime() / 1000;
+  view.append(rec({ id: '1', mTime: String(t) }));
+  const time = () => root.querySelector('[data-id="1"] .tdf-time').textContent;
+
+  now = NOW + 60;
+  view.append(rec({ id: '2', mTime: String(NOW + 60), user: 'alice' }));
+  assert.equal(time(), '09:07');
+
+  now = new Date(2026, 0, 3, 0, 5).getTime() / 1000;
+  assert.equal(time(), '09:07', 'nothing re-labels without a new message');
+  view.append(rec({ id: '3', mTime: String(now), user: 'carol' }));
+  assert.equal(time(), timeLabel(t, now));
+  assert.match(time(), /^\S+, \S+ 2 2026 09:07$/);
+  assert.equal(root.querySelector('[data-id="3"] .tdf-time').textContent, '00:05');
+});
+
+test('a replay on a later day re-labels the times already shown', async () => {
+  let now = NOW;
+  const { view, root } = await setup({ now: () => now });
+  const t = new Date(2026, 0, 2, 9, 7).getTime() / 1000;
+  view.append(rec({ id: '1', mTime: String(t) }));
+  const time = () => root.querySelector('[data-id="1"] .tdf-time').textContent;
+  assert.equal(time(), '09:07');
+
+  now = new Date(2026, 0, 3, 0, 5).getTime() / 1000;
+  view.replay([rec({ id: '2', mTime: String(now), user: 'alice' })]);
+  assert.equal(time(), timeLabel(t, now));
+  assert.match(time(), /^\S+, \S+ 2 2026 09:07$/);
+});
+
+test('the whisper hint still follows the name on a full-date time', async () => {
+  const { view, root } = await setup({ globals: { userName: 'me' } });
+  const yesterday = new Date(2026, 0, 1, 22, 43).getTime() / 1000;
+  view.append(rec({ id: 'a', mTime: String(yesterday) }));
+  const name = root.querySelector('[data-id="a"] .tdf-user');
+  assert.ok(name.classList.contains('tdf-whisperable'));
+  const time = name.nextElementSibling;
+  assert.ok(time.classList.contains('tdf-time'));
+  assert.equal(time.textContent, timeLabel(yesterday, NOW));
+  assert.notEqual(time.textContent, '22:43');
 });
 
 test('own names and notice names carry no whisper affordance and do not whisper', async () => {

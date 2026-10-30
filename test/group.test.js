@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { clockHHMM, continuesGroup, GROUP_GAP_S, groupTime } from '../src/core/group.js';
+import { clockHHMM, continuesGroup, GROUP_GAP_S, groupTime, localDay, timeLabel } from '../src/core/group.js';
 
 const key = (over) => ({ user: 'bob', kind: 'public', t: 1000, ...over });
 
@@ -36,4 +36,34 @@ test('clock is 24-hour local HH:MM', () => {
   const d = new Date(2026, 0, 2, 7, 5);
   assert.equal(clockHHMM(d.getTime() / 1000), '07:05');
   assert.equal(clockHHMM(new Date(2026, 0, 2, 23, 59).getTime() / 1000), '23:59');
+});
+
+const at = (y, m, d, h = 0, min = 0) => new Date(y, m, d, h, min).getTime() / 1000;
+
+test('local day is the local calendar date, split at midnight', () => {
+  assert.equal(localDay(at(2026, 9, 29, 23, 59)), '2026-10-29');
+  assert.equal(localDay(at(2026, 9, 30, 0, 0)), '2026-10-30');
+  assert.equal(localDay(at(2026, 0, 2, 7, 5)), '2026-01-02');
+});
+
+test("a time on the viewer's day is HH:MM", () => {
+  assert.equal(timeLabel(at(2026, 9, 30, 0, 0), at(2026, 9, 30, 23, 59), 'en-US'), '00:00');
+  assert.equal(timeLabel(at(2026, 9, 30, 9, 7), at(2026, 9, 30, 9, 8), 'en-US'), '09:07');
+});
+
+test('a time from an earlier day carries its computed weekday and full date', () => {
+  // 29 Oct 2026 is a Thursday.
+  assert.equal(timeLabel(at(2026, 9, 29, 22, 43), at(2026, 9, 30, 0, 1), 'en-US'), 'Thu, Oct 29 2026 22:43');
+  assert.equal(timeLabel(at(2026, 9, 29, 23, 59), at(2026, 9, 30, 0, 0), 'en-US'), 'Thu, Oct 29 2026 23:59');
+});
+
+test('a time from the previous year carries that year', () => {
+  assert.equal(timeLabel(at(2025, 11, 31, 23, 30), at(2026, 0, 1, 0, 15), 'en-US'), 'Wed, Dec 31 2025 23:30');
+});
+
+test('weekday and month names follow the locale, in the fixed order', () => {
+  const t = at(2026, 9, 29, 22, 43);
+  const weekday = new Intl.DateTimeFormat('fr-FR', { weekday: 'short' }).format(new Date(t * 1000));
+  const month = new Intl.DateTimeFormat('fr-FR', { month: 'short' }).format(new Date(t * 1000));
+  assert.equal(timeLabel(t, at(2026, 9, 30, 12), 'fr-FR'), `${weekday}, ${month} 29 2026 22:43`);
 });

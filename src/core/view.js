@@ -2,7 +2,7 @@
 // in the DOM, hidden, so its scrolling and trimming keep working underneath.
 
 import { expand } from './expand.js';
-import { clockHHMM, continuesGroup, groupTime } from './group.js';
+import { continuesGroup, groupTime, localDay, timeLabel } from './group.js';
 import { DEFAULT_REPLAY_LIMIT } from './history.js';
 import { renderAvatar } from './avatar.js';
 import { adapt, THEME_BG } from './ink.js';
@@ -69,9 +69,11 @@ function regroup(el) {
  *   container: HTMLElement,
  *   css: string,
  *   avatars?: import('./avatarResolver.js').AvatarResolver | null,
- * }} deps `avatars` looks up forum pictures for every sender, preferred over the chat avatar
+ *   now?: () => number,
+ * }} deps `avatars` looks up forum pictures for every sender, preferred over the chat avatar;
+ *   `now` is the current time in seconds, which decides whether a time shows its date
  */
-export function createView({ doc, win, container, css, avatars = null }) {
+export function createView({ doc, win, container, css, avatars = null, now = () => Date.now() / 1000 }) {
   const style = doc.createElement('style');
   style.id = 'tdf-chat-style';
   style.textContent = css;
@@ -359,7 +361,7 @@ export function createView({ doc, win, container, css, avatars = null }) {
     if (chat) {
       const time = doc.createElement('span');
       time.className = 'tdf-time';
-      time.textContent = clockHHMM(t);
+      time.textContent = timeLabel(t, now());
       line.appendChild(time);
     }
 
@@ -493,9 +495,24 @@ export function createView({ doc, win, container, css, avatars = null }) {
    */
   const entries = (key, value) => [...(byKey[key].get(value) ?? [])];
 
+  // The local day the times on screen were labelled for. A message arriving on a later day
+  // re-labels them from each row's data-t, so yesterday's times gain their date (no timer).
+  let labelledDay = localDay(now());
+  function relabel() {
+    const current = now();
+    const day = localDay(current);
+    if (day === labelledDay) return;
+    labelledDay = day;
+    for (const time of list.querySelectorAll('.tdf-time')) {
+      const row = /** @type {HTMLElement} */ (time.closest('.tdf-msg'));
+      time.textContent = timeLabel(Number(row.dataset.t), current);
+    }
+  }
+
   return {
     /** @param {ViewRecord} record */
     append(record) {
+      relabel();
       const el = add(record);
       list.appendChild(el);
       regroup(el);
@@ -505,6 +522,7 @@ export function createView({ doc, win, container, css, avatars = null }) {
 
     /** @param {ViewRecord[]} records oldest first */
     replay(records) {
+      relabel();
       // Render every record before indexing any, so a throw leaves nothing behind.
       const els = records.map(render);
       const frag = doc.createDocumentFragment();

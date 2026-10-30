@@ -163,3 +163,8 @@ test('TDF-0020: whisperable names turn the whisper blue and hint after the time'
   assert.doesNotMatch(composer, /#2f81f7/i);
   assert.match(composer, /var\(--tdf-whisper-fg\)/);
 });
+
+test('TDF-0027: a message time never wraps inside its full-date label', () => {
+  const css = readFileSync(new URL('../src/core/theme.css', import.meta.url), 'utf8');
+  assert.match(css, /#tdf-chat \.tdf-time \{[^}]*white-space: nowrap/);
+});
