@@ -6,8 +6,14 @@ command.
 
 ## Build
 
+The userscript's `@match` comes from `build.local.json`, which is not committed. Before the first
+build, copy `build.local.example.json` to `build.local.json` and set `"match"` to the chat's URL
+pattern. The build fails, naming the example file, while `build.local.json` is missing, and also when
+`"match"` is empty or spans more than one line.
+
 ```sh
 npm ci
+cp build.local.example.json build.local.json   # then set "match"
 npm run build
 ```
 

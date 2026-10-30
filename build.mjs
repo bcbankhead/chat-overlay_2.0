@@ -28,15 +28,50 @@ function version(root) {
   return JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).version;
 }
 
-/** @param {string} root */
-function userscriptBanner(root) {
+/**
+ * The userscript's @match, from the untracked build.local.json beside build.mjs, so the
+ * real host never enters the repo. build.local.example.json is the committed template.
+ * @param {string} root
+ * @returns {string}
+ */
+export function readMatch(root) {
+  const file = path.join(root, 'build.local.json');
+  if (!existsSync(file)) {
+    throw new Error('build.local.json not found; copy build.local.example.json to build.local.json and set "match"');
+  }
+  /** @type {unknown} */
+  let config;
+  try {
+    // Windows PowerShell 5.1 and some editors write a UTF-8 BOM, which JSON.parse rejects.
+    config = JSON.parse(readFileSync(file, 'utf8').replace(/^﻿/, ''));
+  } catch (err) {
+    throw new Error(`build.local.json is not valid JSON: ${err instanceof Error ? err.message : err}`);
+  }
+  const match = /** @type {{ match?: unknown } | null} */ (config)?.match;
+  if (!isMatch(match)) {
+    throw new Error('build.local.json must set "match" to a non-empty, single-line string');
+  }
+  return match;
+}
+
+/**
+ * A usable @match: a non-empty string on one line, so nothing else can enter the header.
+ * @param {unknown} match
+ * @returns {match is string}
+ */
+function isMatch(match) {
+  return typeof match === 'string' && match.trim() !== '' &&!/[\r\n]/.test(match);
+}
+
+/** @param {string} root @param {string} match */
+function userscriptBanner(root, match) {
   return [
     '// ==UserScript==',
     '// @name         TDF Chat 2.0',
     '// @namespace    https://github.com/bcbankhead/chat-overlay_2.0',
     `// @version      ${version(root)}`,
     '// @description  Modern message view with local chat history for the TDF chat',
-    '// @match        https://dollforum.com/forum/chat/*',
+    `// @match        ${match}`,
     '// @grant        none',
     '// @run-at       document-idle',
     '// ==/UserScript==',
@@ -145,11 +180,17 @@ export function verify(name, code, { userscript }) {
   ].map((problem) => `${name}: ${problem}`);
 }
 
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
+
 /**
- * @param {{ root?: string, outfile?: string }} [options]
- *   `outfile` is the userscript; the include is written as `tdf-chat.js` beside it.
+ * @param {{ match: string, root?: string, outfile?: string }} options
+ *   `match` is the userscript's @match (the CLI reads it with readMatch); `outfile` is the
+ *   userscript, and the include is written as `tdf-chat.js` beside it.
  */
-export async function build({ root = path.dirname(fileURLToPath(import.meta.url)), outfile } = {}) {
+export async function build({ match, root = ROOT, outfile } = /** @type {any} */ ({})) {
+  if (!isMatch(match)) {
+    throw new Error('build() needs a non-empty, single-line "match" option');
+  }
   const features = findFeatures(root);
   const entry = [
     `import './src/core/bootstrap.js';`,
@@ -182,7 +223,7 @@ export async function build({ root = path.dirname(fileURLToPath(import.meta.url)
   /** @param {string} banner @param {string} file */
   const bundle = async (banner, file) =>
     (await esbuild.build({ ...options, banner: { js: banner }, outfile: file, write: false })).outputFiles[0].text;
-  const userscriptCode = await bundle(userscriptBanner(root), userscript);
+  const userscriptCode = await bundle(userscriptBanner(root, match), userscript);
   const includeCode = await bundle(includeBanner(root), include);
 
   const problems = [
@@ -196,12 +237,23 @@ export async function build({ root = path.dirname(fileURLToPath(import.meta.url)
   return { features, outputs: { userscript, include } };
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+/**
+ * The `npm run build` entry: reads the match from `root`'s build.local.json and builds there.
+ * Reports any failure on stderr and returns the process exit code.
+ * @param {string} [root]
+ * @returns {Promise<number>}
+ */
+export async function main(root = ROOT) {
   try {
-    const { features } = await build();
+    const { features } = await build({ match: readMatch(root), root });
     console.log(`built dist/tdf-chat.user.js and dist/tdf-chat.js (features: ${features.join(', ') || 'none'})`);
+    return 0;
   } catch (err) {
     console.error(err instanceof Error ? err.message : err);
-    process.exit(1);
+    return 1;
   }
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  process.exitCode = await main();
 }

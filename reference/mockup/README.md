@@ -31,7 +31,8 @@ engine's images come from the live site, so a run needs a capture of your own:
    `images/`) are not in a browser save; fetch them from a live session into `local/`
    at those paths. Plain downloads are refused (403).
 4. `node local/make-harness.mjs <a worktree with node_modules>`
-5. `npm run build` in the worktree to test, then
+5. `npm run build` in the worktree to test (it needs its own untracked `build.local.json`;
+   see `docs/site-include.md`, Build), then
    `node local/serve.mjs <worktree> 5173 [folder of placeholder images]`.
 
 `?mock=0` shows the overlay without the mockup.

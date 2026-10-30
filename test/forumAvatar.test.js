@@ -3,8 +3,8 @@ import { test } from 'node:test';
 import { Window } from 'happy-dom';
 import { parseProfileAvatar, profileUrlFor } from '../src/core/forumAvatar.js';
 
-const PROFILE_URL = 'https://dollforum.com/forum/memberlist.php?mode=viewprofile&u=';
-const PAGE = 'https://dollforum.com/forum/memberlist.php?mode=viewprofile&u=42';
+const PROFILE_URL = 'https://chat.example.com/forum/memberlist.php?mode=viewprofile&u=';
+const PAGE = 'https://chat.example.com/forum/memberlist.php?mode=viewprofile&u=42';
 const win = new Window();
 const parse = (html) => new win.DOMParser().parseFromString(`<!doctype html><html><body>${html}</body></html>`, 'text/html');
 
@@ -21,14 +21,14 @@ test('profileUrlFor uses u= when the forum id is known', () => {
 test('profileUrlFor looks a user up by name when the id is not known', () => {
   assert.equal(
     profileUrlFor(PROFILE_URL, PAGE, { name: 'Dick Vicious' }),
-    'https://dollforum.com/forum/memberlist.php?mode=viewprofile&un=Dick+Vicious',
+    'https://chat.example.com/forum/memberlist.php?mode=viewprofile&un=Dick+Vicious',
   );
 });
 
 test('profileUrlFor resolves a relative profileUrl and refuses what it cannot build', () => {
   assert.equal(
-    profileUrlFor('../memberlist.php?mode=viewprofile&u=', 'https://dollforum.com/forum/chat/', { userID: '7' }),
-    'https://dollforum.com/forum/memberlist.php?mode=viewprofile&u=7',
+    profileUrlFor('../memberlist.php?mode=viewprofile&u=', 'https://chat.example.com/forum/chat/', { userID: '7' }),
+    'https://chat.example.com/forum/memberlist.php?mode=viewprofile&u=7',
   );
   assert.equal(profileUrlFor(undefined, PAGE, { userID: '7' }), null);
   assert.equal(profileUrlFor('', PAGE, { userID: '7' }), null);
@@ -37,7 +37,7 @@ test('profileUrlFor resolves a relative profileUrl and refuses what it cannot bu
 
 test('a profile with a picture answers its absolute URL, not the viewer\'s header avatar', () => {
   const doc = parse(profile('<dt class="profile-avatar"><img class="avatar" src="./download/file.php?avatar=42_x.jpg"></dt>'));
-  assert.equal(parseProfileAvatar(doc, PAGE), 'https://dollforum.com/forum/download/file.php?avatar=42_x.jpg');
+  assert.equal(parseProfileAvatar(doc, PAGE), 'https://chat.example.com/forum/download/file.php?avatar=42_x.jpg');
 });
 
 test('a profile with no picture answers null, never the viewer\'s header avatar', () => {

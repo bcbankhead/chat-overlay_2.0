@@ -69,7 +69,7 @@ function fakeTheme(initial = 'dark') {
  * submitenter's sends, `clicks` the Send button's.
  */
 function page({ chat = true, theme = /** @type {'light' | 'dark' | null} */ ('dark') } = {}) {
-  const window = new Window({ url: 'https://dollforum.com/forum/chat/' });
+  const window = new Window({ url: 'https://chat.example.com/forum/chat/' });
   const { document } = window;
   document.body.innerHTML = `${chat ? '<div id="chatContainer"></div>' : ''}
     <div id="optionsContainer">
@@ -510,7 +510,7 @@ test('a pick with no engine addsmiley inserts nothing and does not throw', () =>
 });
 
 test('without #whisperID no chip is added and the engine functions stay unwrapped', () => {
-  const window = new Window({ url: 'https://dollforum.com/forum/chat/' });
+  const window = new Window({ url: 'https://chat.example.com/forum/chat/' });
   const { document } = window;
   document.body.innerHTML = '<div id="chatContainer"></div><div><textarea id="optionsBar"></textarea></div>';
   const win = /** @type {any} */ (window);

@@ -84,7 +84,7 @@ test('a generated link renders as a link to its https target after the engine ro
   const { Window } = await import('happy-dom');
   const { expand } = await import('../../core/expand.js');
   const { sanitize } = await import('../../core/sanitize.js');
-  const { document } = new Window({ url: 'https://dollforum.com/forum/chat/' });
+  const { document } = new Window({ url: 'https://chat.example.com/forum/chat/' });
   const escape = (/** @type {string} */ s) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&#60;').replace(/>/g, '&#62;').replace(/`/g, '&#96;')
       .replace(/'/g, '&#39;').replace(/"/g, '&#34;').replace(/%/g, '&#37;').replace(/\|/g, '&#127;');
@@ -108,7 +108,7 @@ test('a generated link renders as a link to its https target after the engine ro
     const raw = /<a href=([^\s>]+) target=_blank>/.exec(html)?.[1];
     assert.ok(raw, html);
     const decoded = raw.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n))).replace(/&amp;/g, '&');
-    const target = new URL(decoded, 'https://dollforum.com/forum/chat/');
+    const target = new URL(decoded, 'https://chat.example.com/forum/chat/');
     assert.equal(target.protocol, 'https:');
     assert.equal(target.pathname + target.search + target.hash, path);
   }

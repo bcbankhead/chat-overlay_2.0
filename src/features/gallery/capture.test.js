@@ -76,7 +76,7 @@ async function harness({
       if (thumbFails) throw new Error('cannot decode');
       return new Blob([new Uint8Array(300)], { type: 'image/webp' });
     },
-    base: () => 'https://dollforum.com/forum/chat/index.php',
+    base: () => 'https://chat.example.com/forum/chat/index.php',
     report: (err) => errors.push(err),
     timeoutMs,
     self: () => state.self,
@@ -123,7 +123,7 @@ test('the same share id liked twice, in one message and across two, yields one e
   const rows = await h.store.list();
   assert.equal(rows.length, 1);
   assert.equal(rows[0].messageId, '1');
-  assert.deepEqual(h.fetched, ['https://dollforum.com/forum/chat/plugins/share/view.php?id=123456789012345']);
+  assert.deepEqual(h.fetched, ['https://chat.example.com/forum/chat/plugins/share/view.php?id=123456789012345']);
   assert.deepEqual(h.errors, []);
 });
 

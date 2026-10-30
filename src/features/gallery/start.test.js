@@ -14,7 +14,7 @@ const settle = () => new Promise((r) => setTimeout(r, 50));
 const ID = '123456789012345';
 
 test('start wires capture, the Gallery panel and the "View images" menu action', async () => {
-  const win = /** @type {any} */ (new Window({ url: 'https://dollforum.com/forum/chat/index.php' }));
+  const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   const doc = win.document;
   /** @type {string[]} */
   const fetched = [];
@@ -37,7 +37,7 @@ test('start wires capture, the Gallery panel and the "View images" menu action',
     assert.deepEqual(fetched, []);
     emitLiked({ shareId: ID, messageId: '7', user: 'alice', mTime: '100' });
     await settle();
-    assert.deepEqual(fetched, [`https://dollforum.com/forum/chat/plugins/share/view.php?id=${ID}`]);
+    assert.deepEqual(fetched, [`https://chat.example.com/forum/chat/plugins/share/view.php?id=${ID}`]);
 
     const panel = listPanels().find((p) => p.id === 'gallery');
     assert.ok(panel);
@@ -65,7 +65,7 @@ test('start wires capture, the Gallery panel and the "View images" menu action',
 });
 
 test('with Include my images on, only the signed-in user\'s own share, named by win.userName, is captured as posted', async () => {
-  const win = /** @type {any} */ (new Window({ url: 'https://dollforum.com/forum/chat/index.php' }));
+  const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   win.userName = 'me';
   /** @type {string[]} */
   const fetched = [];
@@ -84,7 +84,7 @@ test('with Include my images on, only the signed-in user\'s own share, named by 
     share('1111', 'me');
     share('2222', 'alice');
     await settle();
-    assert.deepEqual(fetched, ['https://dollforum.com/forum/chat/plugins/share/view.php?id=111100000000000']);
+    assert.deepEqual(fetched, ['https://chat.example.com/forum/chat/plugins/share/view.php?id=111100000000000']);
   } finally {
     console.error = logged;
     clearGalleryErrors();
