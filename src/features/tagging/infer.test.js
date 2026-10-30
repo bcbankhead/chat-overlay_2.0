@@ -145,16 +145,8 @@ test('countLikes counts distinct senders across every smilie, with your own mark
     'me',
     CODES,
   );
-  assert.deepEqual(countLikes(tags, A), {
-    count: 3,
-    mine: true,
-    senders: [
-      { sender: 'bob', codes: [':h', ':d'] },
-      { sender: 'me', codes: [':h'] },
-      { sender: 'carol', codes: [':L'] },
-    ],
-  });
-  assert.deepEqual(countLikes(tags, B), { count: 0, mine: false, senders: [] });
+  assert.deepEqual(countLikes(tags, A), { count: 3, mine: true }, 'bob counts once across two smilies');
+  assert.deepEqual(countLikes(tags, B), { count: 0, mine: false });
 });
 
 test('a span- or font-wrapped token tags the image as the plain one does', () => {

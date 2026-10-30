@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
 import { DEFAULT_REPLAY_LIMIT } from '../src/core/history.js';
@@ -819,4 +820,124 @@ test('the overlay has no theme button of its own', async () => {
   const { root } = await setup();
   assert.equal(root.querySelector('.tdf-theme-toggle'), null);
   assert.equal(root.dataset.theme, undefined);
+});
+
+const preview = (root) => root.querySelector('.tdf-preview');
+
+test('a direct image link previews the image under the body, linking to it', async () => {
+  const { view, root } = await setup();
+  view.append(rec({ text: 'see https://example.com/pic.JPG?x=1' }));
+  const block = preview(root);
+  assert.equal(block.parentElement.className, 'tdf-line');
+  assert.equal(block.previousElementSibling.className, 'tdf-body');
+  const a = block.querySelector('a');
+  assert.equal(a.getAttribute('href'), 'https://example.com/pic.JPG?x=1');
+  assert.equal(a.getAttribute('target'), '_blank');
+  assert.equal(a.getAttribute('rel'), 'noopener noreferrer');
+  const img = a.querySelector('img.tdf-preview-img');
+  assert.equal(img.getAttribute('src'), 'https://example.com/pic.JPG?x=1');
+  assert.equal(img.getAttribute('referrerpolicy'), 'no-referrer');
+  assert.equal(img.getAttribute('loading'), 'lazy');
+});
+
+test('a YouTube link previews its thumbnail with a play badge, never an iframe', async () => {
+  const { view, root } = await setup();
+  view.append(rec({ text: 'watch https://youtu.be/dQw4w9WgXcQ' }));
+  const a = preview(root).querySelector('a');
+  assert.equal(a.getAttribute('href'), 'https://youtu.be/dQw4w9WgXcQ');
+  assert.equal(a.getAttribute('target'), '_blank');
+  const img = a.querySelector('img.tdf-preview-img');
+  assert.equal(img.getAttribute('src'), 'https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg');
+  assert.equal(img.getAttribute('referrerpolicy'), 'no-referrer');
+  assert.ok(a.querySelector('.tdf-play'));
+  assert.equal(root.querySelector('iframe'), null);
+});
+
+test('any other link previews as a hostname chip, and only the first link previews', async () => {
+  const { view, root } = await setup();
+  view.append(rec({ text: 'see http://news.example.com/a and https://example.com/b.png' }));
+  assert.equal(root.querySelectorAll('.tdf-preview').length, 1);
+  const chip = preview(root).querySelector('a.tdf-chip');
+  assert.equal(chip.textContent, 'news.example.com');
+  assert.equal(chip.getAttribute('href'), 'http://news.example.com/a');
+  assert.equal(preview(root).querySelector('img'), null);
+});
+
+test('a link shown as a posted image is skipped and the next link previews', async () => {
+  // Linking off: the engine's linker would otherwise rewrite an absolute src into an anchor.
+  const { view, root } = await setup({ globals: { enableUrl: '0' } });
+  view.append(rec({ text: '<img src="https://example.com/p.jpg"> <a href="https://example.com/p.jpg">p</a> <a href="https://other.example/x">x</a>' }));
+  assert.equal(preview(root).querySelector('.tdf-chip').textContent, 'other.example');
+  const wrapped = await setup({ globals: { enableUrl: '0' } });
+  wrapped.view.append(rec({ text: '<a href="https://example.com/full.jpg"><img src="https://example.com/t.jpg"></a>' }));
+  assert.equal(preview(wrapped.root), null);
+});
+
+test('relative, mailto and sanitised-away links get no preview', async () => {
+  const { view, root } = await setup();
+  view.append(rec({ text: '<a href="plugins/share/x.jpg">s</a> mail a@example.com <a href="javascript:alert(1)">j</a> https://ok.example/' }));
+  assert.equal(root.querySelectorAll('.tdf-preview').length, 1);
+  assert.equal(preview(root).querySelector('.tdf-chip').textContent, 'ok.example');
+  view.append(rec({ id: '2', text: '<a href="//example.com/p.jpg">p</a> plain words' }));
+  assert.equal(root.querySelectorAll('.tdf-preview').length, 1);
+});
+
+test('previews sit outside the body, which is unchanged by them', async () => {
+  const { view, root } = await setup();
+  view.append(rec({ text: 'see https://example.com/pic.png' }));
+  assert.ok(preview(root));
+  assert.equal(preview(root).parentElement.className, 'tdf-line');
+  assert.equal(root.querySelector('.tdf-body .tdf-preview'), null);
+  assert.equal(root.querySelectorAll('.tdf-body img').length, 0);
+});
+
+test('an unconfirmed message with a link is labelled after its text, not after the preview', async () => {
+  const { view, root } = await setup();
+  view.append(rec({ id: 'local-1', mTime: '', confirm: 'pending', text: 'see https://example.com/pic.png' }));
+  view.markUnconfirmed('local-1');
+  const css = readFileSync(new URL('../src/core/theme.css', import.meta.url), 'utf8');
+  const [, selector] = css.match(/([^{}]+)::after\s*\{\s*content:\s*" \(not confirmed\)"/);
+  const labelled = root.querySelector(selector.trim());
+  assert.equal(labelled, root.querySelector('.tdf-body'));
+  assert.ok(labelled.textContent.includes('see'));
+  assert.equal(labelled.querySelector('.tdf-preview'), null);
+  assert.ok(preview(root));
+});
+
+test('a preview image that fails becomes its hostname chip, and a pinned view follows', async () => {
+  const { win, view, root, frames } = await setup();
+  const geo = stubScroll(root.querySelector('.tdf-list'));
+  view.append(rec({ text: 'https://img.example.com/pic.gif' }));
+  view.append(rec({ id: '2', text: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }));
+  frames.finish();
+  geo.height = 520;
+  for (const img of root.querySelectorAll('.tdf-preview-img')) img.dispatchEvent(new win.Event('error'));
+  const chips = [...root.querySelectorAll('.tdf-preview')].map((b) => [b.querySelector('.tdf-chip')?.textContent, b.querySelector('img')]);
+  assert.deepEqual(chips, [['img.example.com', null], ['www.youtube.com', null]]);
+  assert.equal(root.querySelectorAll('.tdf-chip')[1].getAttribute('href'), 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+  assert.equal(geo.top, 520);
+});
+
+test('a pinned view stays at the bottom when a preview loads late', async () => {
+  const { win, view, root, frames } = await setup();
+  const geo = stubScroll(root.querySelector('.tdf-list'));
+  view.append(rec({ text: 'https://example.com/pic.webp' }));
+  frames.finish();
+  assert.equal(geo.top, 500);
+  geo.height = 760;
+  loadImg(win, root.querySelector('.tdf-preview-img'));
+  assert.equal(geo.top, 760);
+  assert.ok(!root.querySelector('.tdf-preview-img').classList.contains('tdf-posted'));
+});
+
+test('with Auto-scroll off a failed preview becomes a chip without moving the view', async () => {
+  const { win, doc, view, root, frames } = await setup();
+  const geo = stubScroll(root.querySelector('.tdf-list'));
+  view.append(rec({ text: 'https://img.example.com/pic.gif' }));
+  frames.finish();
+  doc.getElementById('autoScrollID').checked = false;
+  geo.height = 520;
+  root.querySelector('.tdf-preview-img').dispatchEvent(new win.Event('error'));
+  assert.equal(preview(root).querySelector('.tdf-chip').textContent, 'img.example.com');
+  assert.equal(geo.top, 500);
 });

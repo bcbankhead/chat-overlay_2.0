@@ -9,7 +9,7 @@ import { overLimit } from './shareParse.js';
 
 /**
  * @typedef {object} ImageRecord
- * @property {string} id            the 15-digit share id; the URL is derived from it
+ * @property {string} id            the share id; the URL is derived from it
  * @property {string} messageId     the message it arrived in (provisional `local-…` for an own echo)
  * @property {string} user          sender, as the engine passed it
  * @property {string} mTime         unix seconds, '' for an own pending echo

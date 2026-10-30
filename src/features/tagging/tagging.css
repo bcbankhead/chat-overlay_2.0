@@ -1,46 +1,109 @@
-/* Image likes under a posted image (ui.js). Scoped to .tdf-rx-*, coloured from the
-   data-tdf-theme tokens (theme.css). Yours is outlined; a queued one is dimmed; a failed one
-   is marked in red. The floating hearts (hearts.js) sit on the page body, outside the
-   overlay's tokens, so they carry their own colour. */
+/* Image likes on a posted image (ui.js). Scoped to .tdf-rx-*. The icons sit over the image,
+   so they are white with a shadow rather than coloured from the theme tokens. The corner heart
+   shows on hover or keyboard focus (always on a device without hover); a heart you gave stays. Everything waits
+   for .tdf-posted, which the view adds once the image has loaded. The floating hearts
+   (hearts.js) sit on the page body, outside the overlay, so they carry their own colour. */
 
-#tdf-chat .tdf-rx-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin: 4px 0 2px;
+#tdf-chat .tdf-rx-frame {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
 }
 
-#tdf-chat .tdf-rx-heart {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px 2px 6px;
-  border: 1px solid var(--tdf-border);
-  border-radius: 999px;
-  background: var(--tdf-hover-bg);
-  color: var(--tdf-fg);
-  font: 12px var(--tdf-ui-font);
-  cursor: default;
+/* The image keeps theme.css's pointer, since clicking it opens it full size. Its fade, theme.css's
+   --tdf-posted-hover-opacity, holds while the pointer is on the heart. */
+#tdf-chat .tdf-body .tdf-rx-frame:hover img.tdf-posted {
+  opacity: var(--tdf-posted-hover-opacity);
 }
 
-#tdf-chat .tdf-rx-heart-icon {
-  color: #e0245e;
-  font-size: 14px;
-  line-height: 1;
+#tdf-chat .tdf-rx-like {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: none;
+  margin: 0;
+  padding: 3px;
+  border: 0;
+  background: none;
+  line-height: 0;
+  cursor: pointer;
+  filter: drop-shadow(0 0 2px rgb(0 0 0 / 0.6));
 }
 
-#tdf-chat .tdf-rx-heart.tdf-rx-mine {
-  border-color: var(--tdf-link);
+#tdf-chat .tdf-rx-frame:has(img.tdf-posted):hover > .tdf-rx-like,
+#tdf-chat .tdf-rx-frame:has(img.tdf-posted):focus-within > .tdf-rx-like,
+#tdf-chat .tdf-rx-frame:has(img.tdf-posted) > .tdf-rx-like.tdf-rx-mine {
+  display: block;
 }
 
-#tdf-chat .tdf-rx-heart.tdf-rx-queued {
+@media (hover: none) {
+  #tdf-chat .tdf-rx-frame:has(img.tdf-posted) > .tdf-rx-like {
+    display: block;
+  }
+}
+
+#tdf-chat .tdf-rx-like svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 2;
+}
+
+#tdf-chat .tdf-rx-like.tdf-rx-queued {
   opacity: 0.55;
 }
 
-#tdf-chat .tdf-rx-heart.tdf-rx-failed {
-  border-color: #d1242f;
-  border-style: dashed;
-  cursor: pointer;
+#tdf-chat .tdf-rx-like.tdf-rx-failed svg {
+  fill: none;
+  stroke: #ffffff;
+  stroke-dasharray: 3 2;
+}
+
+/* Filled, the heart drops its white outline. Pointing at an unfilled one fills it, a failed
+   one included, since clicking it likes. */
+#tdf-chat .tdf-rx-like.tdf-rx-mine:not(.tdf-rx-failed) svg,
+#tdf-chat .tdf-rx-like:not(.tdf-rx-queued):hover svg {
+  fill: #e0245e;
+  stroke: none;
+}
+
+/* One heart per liker, at most three, fanned at three angles. Shown without hover. */
+#tdf-chat .tdf-rx-stack {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  display: none;
+  pointer-events: none;
+  filter: drop-shadow(0 0 2px rgb(0 0 0 / 0.6));
+}
+
+#tdf-chat .tdf-rx-frame:has(img.tdf-posted) > .tdf-rx-stack {
+  display: block;
+}
+
+#tdf-chat .tdf-rx-stack svg {
+  position: absolute;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  fill: #e0245e;
+  stroke: none;
+}
+
+#tdf-chat .tdf-rx-stack svg:nth-child(1) {
+  left: 0;
+  transform: rotate(-14deg);
+}
+
+#tdf-chat .tdf-rx-stack svg:nth-child(2) {
+  left: 9px;
+  transform: rotate(0deg);
+}
+
+#tdf-chat .tdf-rx-stack svg:nth-child(3) {
+  left: 18px;
+  transform: rotate(14deg);
 }
 
 .tdf-hearts-float {
@@ -50,18 +113,18 @@
   color: #e0245e;
   font-size: 16px;
   line-height: 1;
-  transform: translate(-50%, 0);
+  transform: translate(-50%, -100%);
   animation: tdf-hearts-rise 1.2s ease-out both;
 }
 
 @keyframes tdf-hearts-rise {
   from {
     opacity: 1;
-    transform: translate(-50%, 0) scale(0.8);
+    transform: translate(-50%, -100%) scale(0.8);
   }
   to {
     opacity: 0;
-    transform: translate(calc(-50% + var(--tdf-drift, 0px)), -90px) scale(1.2);
+    transform: translate(calc(-50% + var(--tdf-drift, 0px)), calc(-100% - 90px)) scale(1.2);
   }
 }
 

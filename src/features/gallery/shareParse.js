@@ -1,9 +1,11 @@
 // Text rules for shared images and the gallery's size limit. Pure: no DOM, no network.
-// A share arrives as `[[img src="plugins/share/view.php?id=<15 digits>" ...]]` in a message's
+// A share arrives as `[[img src="plugins/share/view.php?id=<digits>" ...]]` in a message's
 // text field (reference/ANALYSIS.md, Images); the share id is the `images` key and the URL
 // is derived from it, so a host or path change does not duplicate entries.
 
-const SHARE_ID = /view\.php\?id=(\d{15})(?!\d)/g;
+// Ids are usually 15 digits but not always: 17933387086952 was seen live (2026-10-30). Six is
+// the floor, since a like names its image by the id's last six digits (tagging/reactions.js).
+const SHARE_ID = /plugins\/share\/view\.php\?id=(\d{6,})(?!\d)/g;
 const SHARE_PATH = 'plugins/share/view.php?id=';
 
 /** @type {Record<string, string>} */

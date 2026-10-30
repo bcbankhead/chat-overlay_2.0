@@ -12,9 +12,27 @@ test('a share message yields its one id, though the text names it twice', () => 
 });
 
 test('several shares in one message, in order, deduplicated; other digits are ignored', () => {
-  const text = `${SHARE} and view.php?id=999999999999999 then view.php?id=123456789012345`;
+  const text = `${SHARE} and plugins/share/view.php?id=999999999999999 then plugins/share/view.php?id=123456789012345`;
   assert.deepEqual(extractShareIds(text), ['123456789012345', '999999999999999']);
-  assert.deepEqual(extractShareIds('view.php?id=12345 view.php?id=1234567890123456 plain text'), []);
+  assert.deepEqual(extractShareIds('plugins/share/view.php?id=12345 plain text'), [], 'too short for a like to name');
+});
+
+test('only the share path counts: another page or site with an id is not a share', () => {
+  assert.deepEqual(extractShareIds('see preview.php?id=123456'), []);
+  assert.deepEqual(extractShareIds('https://example.com/view.php?id=1234567'), []);
+  assert.deepEqual(
+    extractShareIds('https://dollforum.com/forum/chat/plugins/share/view.php?id=123456789012345'),
+    ['123456789012345'],
+  );
+});
+
+test('an id of other than 15 digits is still a share id', () => {
+  assert.deepEqual(
+    extractShareIds(
+      'plugins/share/view.php?id=17933387086952 plugins/share/view.php?id=1234567890123456 plugins/share/view.php?id=123456',
+    ),
+    ['17933387086952', '1234567890123456', '123456'],
+  );
 });
 
 test('the URL is derived from the id against the chat page', () => {
