@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import 'fake-indexeddb/auto';
 import { Window } from 'happy-dom';
-import { onClearView } from '../../core/events.js';
+import { openDb } from '../../core/db.js';
+import { onClearView, onDeleted } from '../../core/events.js';
+import { createLimits } from './limits.js';
 import { renderSettings } from './panel.js';
 import { MB_BYTES } from './selectors.js';
 
@@ -27,12 +30,45 @@ function stubSettings(values = {}, { fail = false } = {}) {
   };
 }
 
-/** A limits stand-in: previews report `lines` / `images`, prunes are recorded. */
-function stubLimits({ lines = 0, images = 0, failPrune = false } = {}) {
+/**
+ * A limits stand-in: previews report `lines` / `images`, prunes and deletions are recorded.
+ * `stored` is the saved history's line count by sender, which Clear and delete-by-user empty.
+ */
+function stubLimits({ lines = 0, images = 0, failPrune = false, stored = {}, failDelete = false } = {}) {
   /** @type {unknown[][]} */
   const calls = [];
+  /** @type {Record<string, number>} */
+  const history = { ...stored };
+  const total = () => Object.values(history).reduce((a, b) => a + b, 0);
+  const ids = (/** @type {number} */ n) => Array.from({ length: n }, (_, i) => String(i));
   return {
     calls,
+    async countAll() {
+      calls.push(['countAll']);
+      return total();
+    },
+    async clearHistory() {
+      calls.push(['clearHistory']);
+      if (failDelete) throw new Error('delete failed');
+      const n = total();
+      for (const user of Object.keys(history)) delete history[user];
+      return ids(n);
+    },
+    async senders() {
+      calls.push(['senders']);
+      return Object.entries(history).map(([user, count]) => ({ user, count }));
+    },
+    async countByUser(/** @type {string} */ user) {
+      calls.push(['countByUser', user]);
+      return history[user] ?? 0;
+    },
+    async deleteByUser(/** @type {string} */ user) {
+      calls.push(['deleteByUser', user]);
+      if (failDelete) throw new Error('delete failed');
+      const n = history[user] ?? 0;
+      delete history[user];
+      return ids(n);
+    },
     async previewHistory(/** @type {number | null} */ days) {
       calls.push(['previewHistory', days]);
       return lines;
@@ -353,4 +389,414 @@ test('Store images offline is a checkbox row after Include my images, showing an
   offline.dispatchEvent(new win.Event('change'));
   await settle();
   assert.equal(/** @type {HTMLElement} */ (row.nextElementSibling).textContent, 'Could not apply: write failed');
+});
+
+/** @param {HTMLElement} container @param {string} text */
+const button = (container, text) =>
+  /** @type {HTMLButtonElement} */ ([...container.querySelectorAll('button')].find((b) => b.textContent === text));
+
+/** The Clear history now control: its button, its confirm row and its hint. */
+const clearControl = (/** @type {HTMLElement} */ container) => {
+  const clear = button(container, 'Clear history now');
+  const ask = /** @type {HTMLElement} */ (clear.nextElementSibling);
+  const hint = /** @type {HTMLElement} */ (ask.nextElementSibling);
+  return { clear, ask, hint, yes: button(ask, 'Confirm'), no: button(ask, 'Cancel') };
+};
+
+/** The Delete messages by user control. */
+const senderControl = (/** @type {HTMLElement} */ container) => {
+  const select = /** @type {HTMLSelectElement} */ (container.querySelector('.tdf-opt-sender select'));
+  const remove = /** @type {HTMLButtonElement} */ (select.closest('label')?.nextElementSibling);
+  const ask = /** @type {HTMLElement} */ (remove.nextElementSibling);
+  const hint = /** @type {HTMLElement} */ (ask.nextElementSibling);
+  return { select, remove, ask, hint, yes: button(ask, 'Confirm'), no: button(ask, 'Cancel') };
+};
+
+const deletions = (/** @type {{ calls: unknown[][] }} */ limits) =>
+  limits.calls.filter(([name]) => name === 'clearHistory' || name === 'deleteByUser');
+
+test('Clear history now and Delete messages by user sit after the Chat history field', () => {
+  const { container } = setup();
+  const { clear } = clearControl(container);
+  const historyHint = /** @type {HTMLElement} */ (clear.previousElementSibling);
+  assert.match(String(historyHint.previousElementSibling?.textContent), /Chat history/);
+  const { remove, hint } = senderControl(container);
+  assert.match(String(remove.previousElementSibling?.textContent), /^Delete messages by user/);
+  assert.match(String(hint.nextElementSibling?.textContent), /Gallery size limit/);
+});
+
+test('Clear history now asks with the count first; Cancel deletes nothing', async () => {
+  const limits = stubLimits({ stored: { a: 2, b: 1 } });
+  const { container } = setup({ limits });
+  const { clear, ask, no } = clearControl(container);
+  assert.equal(ask.hidden, true);
+  clear.click();
+  await settle();
+  assert.equal(clear.hidden, true);
+  assert.equal(ask.hidden, false);
+  assert.equal(ask.querySelector('span')?.textContent, 'Delete 3 messages?');
+  no.click();
+  assert.equal(ask.hidden, true);
+  assert.equal(clear.hidden, false);
+  assert.equal(clear.disabled, false);
+  assert.deepEqual(deletions(limits), []);
+});
+
+test('Confirm clears the history once and the hint reports the count', async () => {
+  const limits = stubLimits({ stored: { a: 2, b: 1 } });
+  const { container } = setup({ limits });
+  const { clear, ask, yes, hint } = clearControl(container);
+  clear.click();
+  await settle();
+  yes.click();
+  yes.click();
+  await settle();
+  assert.deepEqual(deletions(limits), [['clearHistory']]);
+  assert.equal(hint.textContent, 'Deleted 3 messages.');
+  assert.equal(ask.hidden, true);
+  assert.equal(clear.hidden, false);
+  // The sender list follows: nothing is left to pick.
+  assert.equal(senderControl(container).select.disabled, true);
+});
+
+test('Clear history now over no saved history says so and asks nothing', async () => {
+  const limits = stubLimits();
+  const { container } = setup({ limits });
+  const { clear, ask, hint } = clearControl(container);
+  clear.click();
+  await settle();
+  assert.equal(ask.hidden, true);
+  assert.equal(hint.textContent, 'No saved history.');
+  assert.deepEqual(deletions(limits), []);
+});
+
+test('closing the flyout while a deletion asks restores the button and deletes nothing', async () => {
+  const limits = stubLimits({ stored: { a: 2 } });
+  const { container, cleanup } = setup({ limits });
+  const { clear, ask } = clearControl(container);
+  clear.click();
+  await settle();
+  assert.equal(ask.hidden, false);
+  cleanup();
+  assert.equal(ask.hidden, true);
+  assert.equal(clear.hidden, false);
+  assert.deepEqual(deletions(limits), []);
+});
+
+test('a failed deletion is reported in its hint', async () => {
+  const limits = stubLimits({ stored: { a: 2 }, failDelete: true });
+  const { container } = setup({ limits });
+  const { clear, yes, hint } = clearControl(container);
+  clear.click();
+  await settle();
+  yes.click();
+  await settle();
+  assert.equal(hint.textContent, 'Could not delete: delete failed');
+  assert.ok(hint.classList.contains('tdf-warn'));
+  assert.equal(clear.hidden, false);
+});
+
+test('the sender picker lists every stored sender with a count, labelled decoded, valued raw', async () => {
+  const { container } = setup({ limits: stubLimits({ stored: { 'Big%20Bob': 2, carol: 1 } }) });
+  await settle();
+  const { select, remove } = senderControl(container);
+  assert.deepEqual(
+    [...select.options].map((o) => [o.value, o.textContent]),
+    [['Big%20Bob', 'Big Bob (2)'], ['carol', 'carol (1)']],
+  );
+  assert.equal(select.disabled, false);
+  assert.equal(remove.textContent, 'Delete');
+});
+
+test('with no saved history the sender picker and its Delete button are disabled', async () => {
+  const { container } = setup();
+  await settle();
+  const { select, remove } = senderControl(container);
+  assert.equal(select.disabled, true);
+  assert.equal(remove.disabled, true);
+  assert.equal(select.options[0]?.textContent, 'No saved history');
+});
+
+test('Delete messages by user asks, deletes the chosen sender once, and refreshes the list', async () => {
+  const limits = stubLimits({ stored: { 'Big%20Bob': 2, carol: 1 } });
+  const { container } = setup({ limits });
+  await settle();
+  const { select, remove, ask, yes, no, hint } = senderControl(container);
+  select.value = 'Big%20Bob';
+  remove.click();
+  await settle();
+  assert.equal(ask.querySelector('span')?.textContent, 'Delete 2 messages from Big Bob?');
+  no.click();
+  assert.deepEqual(deletions(limits), []);
+  remove.click();
+  await settle();
+  yes.click();
+  await settle();
+  assert.deepEqual(deletions(limits), [['deleteByUser', 'Big%20Bob']]);
+  assert.equal(hint.textContent, 'Deleted 2 messages.');
+  assert.deepEqual([...select.options].map((o) => o.value), ['carol']);
+});
+
+test('the real limits behind the flyout: Confirm empties the view through onDeleted', async (t) => {
+  const db = await openDb({ name: `panel-clear-${Date.now()}` });
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction('messages', 'readwrite');
+    for (const id of ['a', 'b']) tx.objectStore('messages').put({ id, roomID: '1', mTime: id, user: 'u', receivedAt: 1 });
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+  const limits = createLimits({ db, gallery: { usage: async () => ({ used: 0, preview: null }), enforceLimit: async () => [] } });
+  const { doc, container } = setup({ limits: /** @type {any} */ (limits) });
+  // Stands in for the view's own removeById.
+  t.after(onDeleted((ids) => ids.forEach((id) => doc.querySelector(`[data-id="${id}"]`)?.remove())));
+  const { clear, yes, hint } = clearControl(container);
+  clear.click();
+  await settle();
+  yes.click();
+  await settle();
+  assert.equal(hint.textContent, 'Deleted 2 messages.');
+  assert.equal(doc.querySelectorAll('#tdf-chat .tdf-msg').length, 0);
+  assert.equal(await limits.countAll(), 0);
+});
+
+test('a count that fails is reported in the hint and asks nothing', async () => {
+  const limits = stubLimits({ stored: { a: 2 } });
+  limits.countAll = async () => {
+    throw new Error('read failed');
+  };
+  const { container } = setup({ limits });
+  const { clear, ask, hint } = clearControl(container);
+  clear.click();
+  await settle();
+  assert.equal(hint.textContent, 'Could not check: read failed');
+  assert.ok(hint.classList.contains('tdf-warn'));
+  assert.equal(ask.hidden, true);
+  assert.equal(clear.disabled, false);
+});
+
+test('a sender with nothing left to delete says so and asks nothing', async () => {
+  const limits = stubLimits({ stored: { 'Big%20Bob': 2 } });
+  limits.countByUser = async () => 0;
+  const { container } = setup({ limits });
+  await settle();
+  const { remove, ask, hint } = senderControl(container);
+  remove.click();
+  await settle();
+  assert.equal(hint.textContent, 'No saved messages from Big Bob.');
+  assert.equal(ask.hidden, true);
+  assert.deepEqual(deletions(limits), []);
+});
+
+test('a count or a deletion that settles after close writes nothing', async () => {
+  /** @type {(n: number) => void} */
+  let counted = () => {};
+  /** @type {(ids: string[]) => void} */
+  let cleared = () => {};
+  const limits = stubLimits({ stored: { a: 2 } });
+  limits.countAll = () => new Promise((r) => (counted = r));
+  const first = setup({ limits });
+  const one = clearControl(first.container);
+  one.clear.click();
+  first.cleanup();
+  counted(2);
+  await settle();
+  assert.equal(one.ask.hidden, true);
+  assert.equal(one.hint.textContent, '');
+
+  limits.countAll = async () => 2;
+  limits.clearHistory = () => new Promise((r) => (cleared = r));
+  const second = setup({ limits });
+  const two = clearControl(second.container);
+  two.clear.click();
+  await settle();
+  two.yes.click();
+  second.cleanup();
+  cleared(['x', 'y']);
+  await settle();
+  assert.equal(two.hint.textContent, '');
+});
+
+test('a sender list that fails to read is reported under Delete', async () => {
+  const limits = stubLimits();
+  limits.senders = async () => {
+    throw new Error('read failed');
+  };
+  const { container } = setup({ limits });
+  await settle();
+  const { hint } = senderControl(container);
+  assert.equal(hint.textContent, 'Could not read saved senders: read failed');
+  assert.ok(hint.classList.contains('tdf-warn'));
+});
+
+test('a refresh keeps the chosen sender while they are still listed', async () => {
+  const limits = stubLimits({ stored: { 'Big%20Bob': 2, carol: 1 }, failDelete: true });
+  const { container } = setup({ limits });
+  await settle();
+  const { select } = senderControl(container);
+  select.value = 'carol';
+  const { clear, yes } = clearControl(container);
+  clear.click();
+  await settle();
+  yes.click();
+  await settle();
+  // The failed clear still refreshed the list: both senders remain, carol still chosen.
+  assert.ok(limits.calls.filter(([name]) => name === 'senders').length >= 2);
+  assert.equal(select.value, 'carol');
+});
+
+test('only the latest sender read fills the list', async () => {
+  /** @type {Array<(list: Array<{ user: string, count: number }>) => void>} */
+  const reads = [];
+  const limits = stubLimits({ stored: { a: 1 } });
+  limits.senders = () => new Promise((r) => reads.push(r));
+  const { container } = setup({ limits });
+  const { clear, yes, select } = { ...clearControl(container), ...senderControl(container) };
+  clear.click();
+  await settle();
+  yes.click();
+  await settle();
+  assert.equal(reads.length, 2);
+  reads[1]([{ user: 'new', count: 1 }]);
+  await settle();
+  reads[0]([{ user: 'stale', count: 9 }]);
+  await settle();
+  assert.deepEqual([...select.options].map((o) => o.value), ['new']);
+});
+
+test('Delete messages by user deletes the sender it asked about, with the picker locked meanwhile', async () => {
+  const limits = stubLimits({ stored: { 'Big%20Bob': 2, carol: 1 } });
+  const { container, history, type } = setup({ limits });
+  await settle();
+  const { select, remove, ask, yes, no } = senderControl(container);
+  select.value = 'Big%20Bob';
+  remove.click();
+  await settle();
+  assert.equal(ask.querySelector('span')?.textContent, 'Delete 2 messages from Big Bob?');
+  assert.equal(select.disabled, true);
+  no.click();
+  assert.equal(select.disabled, false);
+  remove.click();
+  await settle();
+  // A refresh while the question is open does not unlock the picker.
+  const reads = limits.calls.filter(([name]) => name === 'senders').length;
+  type(history, '2', 'change');
+  await settle();
+  assert.equal(limits.calls.filter(([name]) => name === 'senders').length, reads + 1);
+  assert.equal(select.disabled, true);
+  select.value = 'carol';
+  yes.click();
+  await settle();
+  assert.deepEqual(deletions(limits), [['deleteByUser', 'Big%20Bob']]);
+  assert.equal(select.disabled, false);
+});
+
+test('Cancel is disabled while a deletion runs', async () => {
+  /** @type {(ids: string[]) => void} */
+  let done = () => {};
+  const limits = stubLimits({ stored: { a: 2 } });
+  limits.clearHistory = () => new Promise((r) => (done = r));
+  const { container } = setup({ limits });
+  const { clear, ask, yes, no, hint } = clearControl(container);
+  clear.click();
+  await settle();
+  yes.click();
+  assert.equal(no.disabled, true);
+  no.click();
+  assert.equal(ask.hidden, false);
+  assert.equal(clear.hidden, true);
+  done(['x', 'y']);
+  await settle();
+  assert.equal(hint.textContent, 'Deleted 2 messages.');
+  assert.equal(no.disabled, false);
+});
+
+test('a sender list that fails to read disables the picker and Delete; a later read clears the warning', async () => {
+  const limits = stubLimits({ stored: { carol: 1 } });
+  const read = limits.senders;
+  limits.senders = async () => {
+    throw new Error('read failed');
+  };
+  const { container, history, type } = setup({ limits });
+  await settle();
+  const { select, remove, hint } = senderControl(container);
+  assert.equal(select.disabled, true);
+  assert.equal(remove.disabled, true);
+  limits.senders = read;
+  type(history, '5', 'change');
+  await settle();
+  assert.equal(hint.textContent, '');
+  assert.equal(hint.classList.contains('tdf-warn'), false);
+  assert.equal(select.disabled, false);
+  assert.equal(remove.disabled, false);
+});
+
+test('a later sender read keeps a deletion report shown since the warning', async () => {
+  const limits = stubLimits({ stored: { carol: 1, dave: 1 } });
+  const read = limits.senders;
+  let fail = true;
+  limits.senders = async () => {
+    if (fail) throw new Error('read failed');
+    return read();
+  };
+  const { container, history, type } = setup({ limits });
+  await settle();
+  const { hint } = senderControl(container);
+  assert.equal(hint.textContent, 'Could not read saved senders: read failed');
+  // Stands in for a report written over the warning before the next read.
+  hint.textContent = 'Deleted 1 message.';
+  hint.classList.remove('tdf-warn');
+  fail = false;
+  type(history, '2', 'change');
+  await settle();
+  assert.equal(hint.textContent, 'Deleted 1 message.');
+});
+
+test('committing Chat history refreshes the sender list after the prune', async () => {
+  const limits = stubLimits({ stored: { carol: 1 } });
+  const { container, history, type } = setup({ limits });
+  await settle();
+  limits.calls.length = 0;
+  type(history, '2', 'change');
+  await settle();
+  const names = limits.calls.map(([name]) => name);
+  assert.ok(names.indexOf('senders') > names.indexOf('pruneHistory'));
+  assert.ok(names.includes('pruneHistory'));
+  assert.deepEqual([...senderControl(container).select.options].map((o) => o.value), ['carol']);
+});
+
+test('a count, deletion or sender read that fails after close writes nothing', async () => {
+  /** @type {(e: Error) => void} */
+  let failCount = () => {};
+  /** @type {(e: Error) => void} */
+  let failRun = () => {};
+  /** @type {(e: Error) => void} */
+  let failSenders = () => {};
+  const limits = stubLimits({ stored: { a: 2 } });
+  limits.countAll = () => new Promise((_, reject) => (failCount = reject));
+  const first = setup({ limits });
+  const one = clearControl(first.container);
+  one.clear.click();
+  first.cleanup();
+  failCount(new Error('read failed'));
+  await settle();
+  assert.equal(one.hint.textContent, '');
+
+  limits.countAll = async () => 2;
+  limits.clearHistory = () => new Promise((_, reject) => (failRun = reject));
+  const second = setup({ limits });
+  const two = clearControl(second.container);
+  two.clear.click();
+  await settle();
+  two.yes.click();
+  second.cleanup();
+  failRun(new Error('delete failed'));
+  await settle();
+  assert.equal(two.hint.textContent, '');
+
+  limits.senders = () => new Promise((_, reject) => (failSenders = reject));
+  const third = setup({ limits });
+  third.cleanup();
+  failSenders(new Error('read failed'));
+  await settle();
+  assert.equal(senderControl(third.container).hint.textContent, '');
 });

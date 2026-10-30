@@ -6,6 +6,8 @@ import { createHistory } from '../../core/history.js';
 import { SMILIE_CODES_FIXTURE as CODES } from './smilieCodes.fixture.js';
 import { deriveTags } from './infer.js';
 import { createTagStore } from './store.js';
+import { onDeleted } from '../../core/events.js';
+import { createLimits } from '../options/limits.js';
 
 const A = '100000000111111';
 const img = (/** @type {string} */ id) => `[[img src="plugins/share/view.php?id=${id}"]]`;
@@ -225,4 +227,30 @@ test('a delete announced while a rebuild reads is applied over the read', async 
   await store.applyDeleted([like.id]);
   await rebuilding;
   assert.equal(store.likesFor(A).count, 0);
+});
+
+test('deleting a sender through Storage removes the tag rows their messages made, in every room', async (t) => {
+  const { db, history, store, rows } = await fresh();
+  const gallery = { usage: async () => ({ used: 0, preview: null }), enforceLimit: async () => [] };
+  const limits = createLimits({ db, gallery });
+  /** @type {Promise<void>[]} */
+  const applied = [];
+  t.after(onDeleted((ids) => applied.push(store.applyDeleted(ids))));
+  const image = msg('alice', img(A));
+  const like = msg('bob', ':h');
+  const keep = msg('carol', ':h ^111111');
+  for (const m of [image, like, keep]) await history.put(m);
+  await store.rebuildRoom();
+  // A row bob's message in another room made.
+  const away = msg('bob', ':o', { roomID: '2' });
+  await history.put(away);
+  const tx = db.transaction(STORES.tags, 'readwrite');
+  tx.objectStore(STORES.tags).add({ imageId: A, code: ':o', sender: 'bob', roomID: '2', sourceMessageId: away.id, certain: false });
+  await new Promise((r) => (tx.oncomplete = r));
+  assert.equal(store.likesFor(A).count, 2);
+
+  await limits.deleteByUser('bob');
+  await Promise.all(applied);
+  assert.equal(store.likesFor(A).count, 1);
+  assert.deepEqual((await rows()).map((r) => `${r.roomID} ${r.sender} ${r.code}`), ['1 carol :h']);
 });

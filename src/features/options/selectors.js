@@ -1,5 +1,8 @@
-// Pure rules behind the Settings flyout's Storage limits: what a typed value means, and which
-// records a limit removes. No I/O; limits.js applies them to the stores.
+// Pure rules behind the Settings flyout's Storage section: what a typed value means, which
+// records a limit removes, and how a stored sender is shown. No I/O; limits.js applies them to
+// the stores.
+
+import { safeDecodeURIComponent } from '../../core/parse.js';
 
 export const DAY_MS = 86_400_000;
 export const MB_BYTES = 1_048_576;
@@ -49,4 +52,14 @@ export function parseMegabytes(input) {
 /** @param {number} mb */
 export function megabytesToBytes(mb) {
   return mb * MB_BYTES;
+}
+
+/**
+ * A stored sender as the message view shows it. The raw value stays the key: it is what
+ * `messages.user` holds.
+ * @param {string} raw
+ * @returns {string}
+ */
+export function senderLabel(raw) {
+  return safeDecodeURIComponent(raw);
 }

@@ -189,7 +189,8 @@
   white-space: pre-wrap;
 }
 
-#tdf-chat .tdf-body img {
+#tdf-chat .tdf-body img,
+#tdf-chat .tdf-preview-img {
   max-width: 250px;
   max-height: 250px;
   vertical-align: middle;
@@ -224,7 +225,7 @@
   opacity: 0.65;
 }
 
-#tdf-chat .tdf-unconfirmed .tdf-line::after {
+#tdf-chat .tdf-unconfirmed .tdf-body::after {
   content: " (not confirmed)";
   color: var(--tdf-muted);
   font-size: 0.85em;
@@ -306,23 +307,69 @@
   display: none;
 }
 
-/* Posted images (not smilies): a pointer and a fade on hover. A wrapping link is sized to
-   the image and never takes the link-hover background, which showed through the fade. */
-#tdf-chat .tdf-body img.tdf-posted {
+/* Posted images (not smilies) and preview images: a pointer and a fade on hover. A wrapping
+   link is sized to the image and never takes the link-hover background, which showed
+   through the fade. */
+#tdf-chat .tdf-body img.tdf-posted,
+#tdf-chat .tdf-preview-img {
   cursor: pointer;
   transition: opacity 120ms;
 }
 
+#tdf-chat .tdf-preview-img:hover,
 #tdf-chat .tdf-body img.tdf-posted:hover {
   opacity: var(--tdf-posted-hover-opacity);
 }
 
-#tdf-chat .tdf-body a:has(> img.tdf-posted) {
+#tdf-chat .tdf-body a:has(> img.tdf-posted),
+#tdf-chat .tdf-preview a:has(> img.tdf-preview-img) {
   display: inline-block;
 }
 
-#tdf-chat .tdf-body a:has(> img.tdf-posted):hover {
+#tdf-chat .tdf-body a:has(> img.tdf-posted):hover,
+#tdf-chat .tdf-preview a:has(> img.tdf-preview-img):hover {
   background: none;
+}
+
+/* Link previews, under the body: an image or thumbnail sized and faded like a posted image
+   (above), or a chip naming the link's host. The link holds the play badge over a thumbnail. */
+#tdf-chat .tdf-preview {
+  margin-top: 4px;
+}
+
+#tdf-chat .tdf-preview a:has(> img.tdf-preview-img) {
+  position: relative;
+  vertical-align: top;
+}
+
+#tdf-chat .tdf-preview-img {
+  display: block;
+}
+
+#tdf-chat .tdf-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #ffffff;
+  font-size: 18px;
+  line-height: 44px;
+  text-align: center;
+  pointer-events: none;
+}
+
+#tdf-chat .tdf-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid var(--tdf-border);
+  border-radius: 10px;
+  color: var(--tdf-link);
+  font-size: 12px;
+  text-decoration: none;
 }
 
 #tdf-chat .tdf-notice {

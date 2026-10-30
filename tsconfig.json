@@ -22,6 +22,7 @@
     "src/core/scroll.js",
     "src/core/initials.js",
     "src/core/forumAvatar.js",
+    "src/core/preview.js",
     "src/features/composer/link.js",
     "src/features/composer/sharetext.js",
     "src/features/profile/textStyle.js",
