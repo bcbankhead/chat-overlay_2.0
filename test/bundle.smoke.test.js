@@ -218,6 +218,25 @@ test('a failure after the view mounts restores the original chat, as the banner 
   assert.match(document.querySelector('[role="status"]').textContent, /did not start \(observer broke\); showing the original chat/);
 });
 
+test('a successful start publishes the avatar resolver for the rail and the profile flyout', async () => {
+  const { window } = await page(await bundled(), new IDBFactory());
+  assert.ok(window.document.getElementById('tdf-chat'), 'overlay mounted');
+  assert.equal(typeof window.__tdfChat2Avatars?.resolve, 'function');
+});
+
+test('a start that fails after the avatar resolver is published removes it', async () => {
+  const globals = {
+    ResizeObserver: class {
+      constructor() {
+        throw new Error('observer broke');
+      }
+    },
+  };
+  const { window, document } = await page(await bundled(), new IDBFactory(), { globals });
+  assert.match(document.querySelector('[role="status"]').textContent, /did not start \(observer broke\)/);
+  assert.equal('__tdfChat2Avatars' in window, false);
+});
+
 test('the site include behaves as the userscript: overlays, stores and replays', async () => {
   const include = await included();
   const indexedDB = new IDBFactory();

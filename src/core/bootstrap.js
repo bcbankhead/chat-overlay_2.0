@@ -2,6 +2,7 @@
 // second copy — userscript plus site include — sets up nothing, and since feature modules
 // act only through core's extension points, its features stay inert too.
 
+import { createAvatarResolver } from './avatarResolver.js';
 import { openDb } from './db.js';
 import { installEngineHook } from './engine-hook.js';
 import { describeError } from './errors.js';
@@ -46,12 +47,16 @@ async function start() {
     const { pending } = await history.expirePending(roomID);
     const records = await history.recent(roomID);
 
-    const view = createView({ doc: document, win, container, css });
+    // Published for the rail and the profile flyout, which show the same avatars.
+    const avatars = createAvatarResolver({ win, db });
+    win.__tdfChat2Avatars = avatars;
+    const view = createView({ doc: document, win, container, css, avatars });
     replay(view, records);
     hook.attach({ history, view, pending, replayed: records });
   } catch (err) {
     // Undo whatever had mounted, so the banner's "showing the original chat" holds.
     hook.abandon();
+    delete win.__tdfChat2Avatars;
     unmount();
     theme?.stop();
     delete html.dataset.tdfTheme;

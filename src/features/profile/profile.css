@@ -33,10 +33,13 @@
 }
 
 #tdf-rail .tdf-profile-avatar {
+  position: relative;
+  flex: 0 0 auto;
   width: 48px;
   height: 48px;
   border-radius: 8px;
-  object-fit: cover;
+  overflow: hidden;
+  font-size: 18px;
 }
 
 #tdf-rail .tdf-profile-name {

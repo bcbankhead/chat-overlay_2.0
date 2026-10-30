@@ -4,6 +4,7 @@
 import { expand } from './expand.js';
 import { clockHHMM, continuesGroup, groupTime } from './group.js';
 import { DEFAULT_REPLAY_LIMIT } from './history.js';
+import { renderAvatar } from './avatar.js';
 import { adapt, THEME_BG } from './ink.js';
 import { safeDecodeURIComponent } from './parse.js';
 import { sanitize } from './sanitize.js';
@@ -63,9 +64,10 @@ function regroup(el) {
  *   win: Window & { addSmilie?: (text: string) => string, enableEmail?: unknown, enableUrl?: unknown },
  *   container: HTMLElement,
  *   css: string,
- * }} deps
+ *   avatars?: import('./avatarResolver.js').AvatarResolver | null,
+ * }} deps `avatars` looks up forum pictures for senders with no chat avatar
  */
-export function createView({ doc, win, container, css }) {
+export function createView({ doc, win, container, css, avatars = null }) {
   const style = doc.createElement('style');
   style.id = 'tdf-chat-style';
   style.textContent = css;
@@ -175,15 +177,15 @@ export function createView({ doc, win, container, css }) {
     }
 
     if (chat) {
-      const avatar = doc.createElement('img');
-      avatar.className = 'tdf-avatar';
-      avatar.alt = '';
-      avatar.setAttribute('loading', 'lazy');
-      // A failed avatar falls back to the neutral square, as a missing one does. Expected and
-      // harmless: a deleted or broken avatar file loses only the picture, never the message.
-      avatar.addEventListener('error', () => avatar.removeAttribute('src'));
-      if (record.avatar) avatar.src = `avatars/40/${encodeURIComponent(record.avatar)}`;
-      el.appendChild(avatar);
+      el.appendChild(
+        renderAvatar(doc, {
+          name: safeDecodeURIComponent(record.user),
+          file: record.avatar,
+          src: `avatars/40/${encodeURIComponent(record.avatar)}`,
+          className: 'tdf-avatar',
+          resolver: avatars,
+        }),
+      );
     }
 
     const showName = record.user && record.kind !== 'entry' && record.kind !== 'exit';

@@ -397,6 +397,7 @@ export function startRail({ doc, win, css, shell }) {
         attachScrollbar: shell.attachScrollbar,
         onUser: menu.open,
         onError: rail.report,
+        avatars: () => w.__tdfChat2Avatars ?? null,
       });
       undo.push(rooms(rail.slots));
     } catch (err) {
