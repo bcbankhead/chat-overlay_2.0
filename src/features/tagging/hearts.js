@@ -1,4 +1,5 @@
-// Floating hearts for a like (TDF-0011): a few hearts rise from the image's heart and fade
+// Floating hearts for a like (TDF-0011, TDF-0014): a few hearts rise from the image's
+// bottom edge and fade
 // over the interface. Each is `position: fixed` on the page body, so no overflow in the view
 // clips it, and is removed when its animation ends, or by a backstop if that never fires.
 // Nothing plays when the reader asks for reduced motion.
@@ -30,7 +31,7 @@ function onScreen(win, anchor, rect) {
 }
 
 /**
- * Float hearts up from `anchor`, unless it is off screen.
+ * Float hearts up from the middle of `anchor`'s bottom edge, unless it is off screen.
  * @param {Document} doc
  * @param {any} win
  * @param {Element} anchor
@@ -42,7 +43,7 @@ export function burst(doc, win, anchor, random = Math.random) {
   const rect = anchor.getBoundingClientRect();
   if (!onScreen(win, anchor, rect)) return [];
   const x = rect.left + rect.width / 2;
-  const y = rect.top;
+  const y = rect.bottom;
   /** @type {HTMLElement[]} */
   const hearts = [];
   for (let i = 0; i < HEARTS; i += 1) {

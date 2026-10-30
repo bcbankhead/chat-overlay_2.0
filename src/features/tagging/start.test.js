@@ -13,7 +13,28 @@ import { FALLBACK_TOKEN_BG, nativeChatBackground, reporter, startTagging } from 
 const A = '100000000111111';
 const settle = () => new Promise((r) => setTimeout(r, 50));
 
-test('start wires inbound messages to the heart, and a pick and a right-click to the engine', async () => {
+/**
+ * Click a posted image's corner heart.
+ * @param {any} win
+ * @param {Element} img
+ */
+const likeImage = (win, img) => {
+  const event = new win.MouseEvent('click', { bubbles: true, cancelable: true });
+  img.closest('.tdf-rx-frame')?.querySelector('.tdf-rx-like')?.dispatchEvent(event);
+  return event;
+};
+
+/**
+ * Each liked image's stack, as `♥<hearts>`, marked when your like failed.
+ * @param {Document} doc
+ */
+const stacks = (doc) =>
+  [...doc.querySelectorAll('.tdf-rx-frame')]
+    .map((f) => ({ n: f.querySelectorAll('.tdf-rx-stack svg').length, failed: f.querySelector('.tdf-rx-like.tdf-rx-failed') !== null }))
+    .filter(({ n }) => n > 0)
+    .map(({ n, failed }) => `♥${n}${failed ? ' failed' : ''}`);
+
+test('start wires inbound messages to the like stack, and the corner heart to the engine', async () => {
   const win = /** @type {any} */ (new Window({ url: 'https://dollforum.com/forum/chat/index.php' }));
   const doc = win.document;
   Object.assign(win, { roomID: '1', userName: 'me', mySmilies: [...CODES], mySmiliesImg: [] });
@@ -45,9 +66,9 @@ test('start wires inbound messages to the heart, and a pick and a right-click to
   doc.querySelector('.tdf-list').innerHTML =
     `<div class="tdf-msg tdf-kind-public" data-id="1"><span class="tdf-body"><a href="plugins/share/view.php?id=${A}"><img class="tdf-posted" src="plugins/share/view.php?id=${A}"></a></span></div>`;
   await settle();
-  assert.deepEqual([...doc.querySelectorAll('.tdf-rx-heart')].map((c) => c.textContent), ['♥1']);
+  assert.deepEqual(stacks(doc), ['♥1']);
 
-  doc.querySelector('img.tdf-posted').dispatchEvent(new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  likeImage(win, doc.querySelector('img.tdf-posted'));
   await settle();
   // happy-dom computes no background for the chat, so the fallback colour hides the token.
   assert.deepEqual(sent, [`:h [[span style=color:${FALLBACK_TOKEN_BG}]]^111111[[/span]]`]);
@@ -72,8 +93,7 @@ function chatPage() {
   // Reduced motion: no floating hearts, so the only held timers are the queue's.
   win.matchMedia = () => ({ matches: true });
   win.sendReq = { readyState: 4, status: 200, addEventListener: () => {} };
-  const hearts = () =>
-    [...doc.querySelectorAll('.tdf-rx-heart')].map((c) => `${c.textContent}${c.classList.contains('tdf-rx-failed') ? ' failed' : ''}`);
+  const hearts = () => stacks(doc);
   return { win, doc, held, hearts };
 }
 
@@ -100,7 +120,7 @@ test('an own message spaces the next reaction; an echo core marks unconfirmed st
   // Your own message just now: the reaction waits the whole interval after it.
   emitInbound(record('local-2', 'me', 'hello', 4, { mTime: '' }));
   win.addMessage = () => false;
-  doc.querySelector('img.tdf-posted').dispatchEvent(new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  likeImage(win, doc.querySelector('img.tdf-posted'));
   assert.equal(held.length, 1);
   assert.ok(held[0].ms > 14_000 && held[0].ms <= 15_000, String(held[0].ms));
 
@@ -188,16 +208,19 @@ test('the token colour is the native chat background: #chatContainer, else an op
   assert.equal(nativeChatBackground(doc, win), FALLBACK_TOKEN_BG, 'no chat container');
 });
 
-test('a right-click likes through the engine with the hidden token', async () => {
+test('the corner heart likes through the engine with the hidden token; a right-click likes nothing', async () => {
   const { win, doc } = chatPage();
   /** @type {string[]} */
   const sent = [];
   win.addMessage = (/** @type {string} */ input) => (sent.push(doc.getElementById(input).value), undefined);
   await startTagging({ win, doc, css: '', indexedDB: new IDBFactory() });
   await settle();
-  const event = new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true });
-  doc.querySelector('img.tdf-posted').dispatchEvent(event);
-  assert.equal(event.defaultPrevented, true);
+  const menu = new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+  doc.querySelector('img.tdf-posted').dispatchEvent(menu);
+  assert.equal(menu.defaultPrevented, false, 'the browser menu opens');
+  await settle();
+  assert.deepEqual(sent, []);
+  assert.equal(likeImage(win, doc.querySelector('img.tdf-posted')).defaultPrevented, true);
   await settle();
   assert.deepEqual(sent, [`:h [[span style=color:${FALLBACK_TOKEN_BG}]]^111111[[/span]]`]);
 });
@@ -224,7 +247,7 @@ test('the fallback token colour gives its reason', () => {
 });
 
 /**
- * Right-clicks two images, so two likes take their token colour.
+ * Likes two images from their corner hearts, so two likes take their token colour.
  * @param {(doc: Document) => void} arrange
  * @param {(doc: Document) => void} [started]  run once tagging has started
  */
@@ -249,7 +272,7 @@ async function likeTwice(arrange, started = () => {}) {
     await ready;
     await settle();
     for (const img of doc.querySelectorAll('img.tdf-posted')) {
-      img.dispatchEvent(new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      likeImage(win, img);
     }
     await settle();
   } finally {
@@ -306,8 +329,8 @@ test('a like, made or arriving live, floats hearts over the page', async () => {
   await startTagging({ win, doc, css: '', indexedDB });
   await settle();
   const floating = () => doc.querySelectorAll('body > .tdf-hearts-float').length;
-  doc.querySelector('img.tdf-posted').dispatchEvent(new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-  assert.ok(floating() > 0, 'a right-click floats hearts');
+  likeImage(win, doc.querySelector('img.tdf-posted'));
+  assert.ok(floating() > 0, 'the corner heart floats hearts');
   for (const heart of doc.querySelectorAll('.tdf-hearts-float')) heart.remove();
   emitInbound(record('5', 'bob', ':h ^111111', 5, { receivedAt: Date.now() }));
   await settle();

@@ -29,8 +29,8 @@ Source snapshot: `reference/site-js/` (fetched unauthenticated; `settings.js.php
 ## Images
 - No inline image upload in the composer. **Share Files** plugin: `plugins/share/index.php`, multipart POST `shareID` (public/private radio), `shareWithUser`, `uploadedfile`. Live form (observed 2026-10-28): `action="index.php"`, `shareID` radios valued `1` (Public) and `2` (Private), each named only by bare text in its own table cell (no `<label>`), and a named submit `submit=Upload File`.
 - **Observed share message** (public, 2026-10-26). Body has only 5 `|` fields (no irc/lineBreak flags); text field:
-  `[[br]][[a href="plugins/share/view.php?id=<15 digits>" target="_blank"]][[img src="plugins/share/view.php?id=<same>" style="max-width:250px; max-height:250px;" border="0"]][[/a]]`
-  Quotes are `"`. Detect images by `plugins/share/view.php?id=` in the text field.
+  `[[br]][[a href="plugins/share/view.php?id=<digits>" target="_blank"]][[img src="plugins/share/view.php?id=<same>" style="max-width:250px; max-height:250px;" border="0"]][[/a]]`
+  Quotes are `"`. Detect images by `plugins/share/view.php?id=` in the text field. Ids are usually 15 digits, not always: `17933387086952` (14) was seen live on 2026-10-30.
 - `GET plugins/share/view.php?id=…` (same-origin, session cookie) → `200 image/jpeg`, raw bytes (1.7 MB sample, full resolution), no `Content-Disposition`, `no-store`. Bytes can be fetched into IndexedDB as a Blob. Content-type must be read from the response (do not assume JPEG).
 - Server returns no history, so an image is only capturable while the script is running and polling.
 

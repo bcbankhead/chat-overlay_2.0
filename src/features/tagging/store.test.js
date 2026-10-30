@@ -50,14 +50,7 @@ test('rebuildRoom derives the room from stored messages and persists the tags', 
   const messages = [msg('alice', img(A)), msg('bob', ':h'), msg('me', ':L ^111111')];
   for (const m of messages) await history.put(m);
   await store.rebuildRoom();
-  assert.deepEqual(store.likesFor(A), {
-    count: 2,
-    mine: true,
-    senders: [
-      { sender: 'bob', codes: [':h'] },
-      { sender: 'me', codes: [':L'] },
-    ],
-  });
+  assert.deepEqual(store.likesFor(A), { count: 2, mine: true });
   const stored = (await rows()).map(({ id: _id, ...tag }) => tag);
   assert.deepEqual(stored, deriveTags(messages, 'me', CODES));
 });
@@ -96,11 +89,11 @@ test('applyInbound re-derives the room, and holds what arrives before the first 
   await store.applyInbound(early);
   assert.equal(store.likesFor(A).count, 0);
   await store.rebuildRoom();
-  assert.deepEqual(store.likesFor(A).senders.map((s) => s.sender), ['bob']);
+  assert.deepEqual(store.likesFor(A), { count: 1, mine: false });
 
   await store.applyInbound(msg('me', ':L ^111111'));
   await store.applyInbound(msg('x', ':o', { roomID: '2' }));
-  assert.deepEqual(store.likesFor(A).senders.map((s) => s.sender), ['bob', 'me']);
+  assert.deepEqual(store.likesFor(A), { count: 2, mine: true });
   assert.deepEqual((await rows()).map((r) => r.code), [':h', ':L']);
   assert.deepEqual(changes, [1, 2]);
 });
@@ -145,7 +138,7 @@ test('a message that arrives while a rebuild reads is not dropped by it', async 
   // Not yet in history, as when the hook's own write is still queued.
   await store.applyInbound(msg('bob', ':h'));
   await rebuilding;
-  assert.deepEqual(store.likesFor(A).senders.map((s) => s.sender), ['bob']);
+  assert.deepEqual(store.likesFor(A), { count: 1, mine: false });
 });
 
 test('onLike fires for a live inbound like from someone else, once per image and sender', async () => {
