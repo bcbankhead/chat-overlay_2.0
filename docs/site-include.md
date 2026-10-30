@@ -49,9 +49,13 @@ The build exits with an error (do not upload its output) if either file would us
    </head>
    ```
 
-   Placed in `<head>`, the script hides the page (showing only its background colour) until
-   the overlay has mounted, so members never see the original chat flash first on a slow
-   load. If the overlay has not mounted after 5 seconds the page is shown anyway.
+   Placed in `<head>`, the script keeps the page transparent (showing only its background
+   colour, and taking no clicks or keystrokes) until the page has finished loading and been laid out by the
+   chat engine, and the overlay and every feature — the sidebar, the composer, the gallery,
+   reactions and settings — have finished starting. It then fades the page in, so members
+   never see the original chat, or a half-styled overlay, on a slow load. If that has not
+   happened after 8 seconds the page is shown anyway, and the browser console names what was
+   still starting. A tag at the end of the body does not hide the page at all.
 
    Wherever the tag sits, the script waits until the page has been parsed, then needs the
    chat container and the engine's globals (`roomID`, `handleMessages`, `receiveMesReq`, …).

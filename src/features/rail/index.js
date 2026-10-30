@@ -4,8 +4,20 @@
 // (build.mjs's second-copy check) from touching the document.
 
 import { whenDomReady } from '../../core/ready.js';
+import { expectReady } from '../../core/reveal.js';
 import * as shell from '../../core/shell.js';
 import css from './rail.css';
 import { startRail } from './rail.js';
 
-if (!(/** @type {any} */ (window).__tdfChat2Rail)) whenDomReady(document, () => startRail({ doc: document, win: window, css, shell }));
+if (!(/** @type {any} */ (window).__tdfChat2Rail)) {
+  // Ready once the rail has first mounted beside #tdf-chat, or will not start at all.
+  const done = expectReady('rail');
+  whenDomReady(document, () => {
+    try {
+      startRail({ doc: document, win: window, css, shell, onReady: done });
+    } catch (err) {
+      done();
+      throw err;
+    }
+  });
+}
