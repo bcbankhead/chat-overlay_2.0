@@ -19,7 +19,7 @@ const PREVIEW_TEXT = 'Your messages will look like this';
  * @property {() => 'light' | 'dark' | null} currentTheme
  * @property {(fn: (theme: 'light' | 'dark') => void) => () => void} onThemeChange
  * @property {(color: string, theme: 'light' | 'dark') => string} shift
- *   the colour to show on that theme, or '' for the theme's own text colour
+ *   the colour to paint on that theme (ink.js themeInk)
  * @property {(target: Node, fn: () => void) => () => void} observe
  */
 
@@ -205,8 +205,7 @@ export function renderProfile(container, { doc, engine, currentTheme, onThemeCha
     const theme = currentTheme();
     if (!textColor) preview.style.color = '';
     else if (!theme) preview.style.color = textColor;
-    // '' is a grey that fails contrast: the theme's own text colour stands in.
-    else preview.style.color = shift(textColor, theme) || 'var(--tdf-fg)';
+    else preview.style.color = shift(textColor, theme);
   }
 
   function paint() {

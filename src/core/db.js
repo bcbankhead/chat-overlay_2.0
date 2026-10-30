@@ -35,20 +35,36 @@ function createSchema(db) {
 }
 
 /**
- * Open (creating on first use) the database.
+ * Open (creating on first use) the database. The connection closes itself when a newer
+ * version asks to upgrade, and an open blocked by an older connection waits for it to close.
  * @param {{ indexedDB?: IDBFactory, name?: string }} [options]
  * @returns {Promise<IDBDatabase>}
  */
 export function openDb({ indexedDB = globalThis.indexedDB, name = DB_NAME } = {}) {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(name, DB_VERSION);
+    let blocked = false;
     req.onupgradeneeded = (event) => {
-      if (event.oldVersion < 1) createSchema(req.result);
-      else if (event.oldVersion < 2) req.transaction?.objectStore(STORES.images).createIndex('hash', 'hash');
+      if (event.oldVersion < 1) return createSchema(req.result);
+      const tx = /** @type {IDBTransaction} */ (req.transaction);
+      if (event.oldVersion < 2) tx.objectStore(STORES.images).createIndex('hash', 'hash');
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-    req.onblocked = () => reject(new Error(`${name} is blocked by another open connection`));
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => db.close();
+      resolve(db);
+    };
+    req.onerror = () => {
+      const reason = req.error ?? new Error(`${name} failed to open`);
+      reject(
+        blocked
+          ? new Error(`${name} was blocked by another open connection: ${reason}`, { cause: reason })
+          : reason,
+      );
+    };
+    req.onblocked = () => {
+      blocked = true;
+    };
   });
 }
 

@@ -2,10 +2,11 @@
 // whispered to, the box gets a blue border and a "Whisper <name> ×" chip on its top border at
 // the right; × clears the whisper.
 //
-// whisperUser() and clearWhisper() are the only writers of #whisperID and assign .value with
-// no event, so both globals are wrapped to re-read it — by this slice alone (TDF-0009 Shared
-// Contract, Single wrappers). Inline handlers and the engine's own calls resolve them by
-// global name and get the wrappers.
+// whisperUser() and clearWhisper() assign #whisperID's .value with no event, so both globals
+// are wrapped to re-read it — by this slice alone (TDF-0009 Shared Contract, Single wrappers).
+// Inline handlers and the engine's own calls resolve them by global name and get the wrappers.
+// The one other writer, tagging/engineSend.js, saves, clears and restores it around a single
+// synchronous addMessage call, so the value is back before anything could re-read it.
 
 /**
  * @param {HTMLTextAreaElement} bar

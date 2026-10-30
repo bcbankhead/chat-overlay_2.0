@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { onInbound } from '../src/core/events.js';
+import { onConfirmChange, onDeleted, onInbound } from '../src/core/events.js';
 import { engineAvailable, installEngineHook } from '../src/core/engine-hook.js';
 
 /** A fake engine: createMessageDiv renders unless the body says FILTERED or repeats. */
@@ -66,13 +66,13 @@ const xml = (...messages) => ({
 const um = (id, user, text, mTime, toUser = '') =>
   `${id}}{9}{chatContainer}{${user}}{${toUser}}{${encodeURI(`av.gif|#000|12px|verdana|${text}|0|0`)}}{x}{beep_high.mp3}{${mTime}`;
 
-function setup() {
+function setup({ storing = undefined } = {}) {
   const win = fakeEngine();
   const calls = [];
   const history = new Proxy({}, { get: (_, op) => async (...args) => calls.push([op, ...args]) });
   const view = new Proxy({}, { get: (_, op) => (...args) => calls.push([`view.${op}`, ...args]) });
   const hook = installEngineHook({ win, roomID: '1' });
-  hook.attach({ history, view });
+  hook.attach({ history, view, ...(storing ? { storing } : {}) });
   const poll = (...messages) => {
     win.receiveMesReq.responseXML = xml(...messages);
     win.handleMessages();
@@ -536,4 +536,61 @@ test('engineAvailable needs every wrapped global', () => {
     delete partial[key];
     assert.equal(engineAvailable(partial), false, key);
   }
+});
+
+test('a pending own message going unconfirmed is announced, by its send or its timer', (t) => {
+  const changes = [];
+  t.after(onConfirmChange((c) => changes.push(c)));
+  const failed = setup();
+  sendOwn(failed.win, 'server error');
+  const id = failed.calls.find((c) => c[0] === 'addPending')[1].id;
+  failed.win.sendReq.finish(500);
+  const timed = setup();
+  timed.win.createMessageDiv(0, '9', 'chatContainer', 1, 'av.gif|#000|12px|verdana|lonely|0|0', 'beep_high.mp3', 'alice', '', '');
+  const lonely = timed.calls.find((c) => c[0] === 'addPending')[1].id;
+  timed.win.timers.forEach((fn) => fn());
+  assert.deepEqual(changes, [
+    { roomID: '1', ids: [id], confirm: 'unconfirmed' },
+    { roomID: '1', ids: [lonely], confirm: 'unconfirmed' },
+  ]);
+  // A confirmed one is not announced: its timer finds nothing left to mark.
+  const sent = setup();
+  sendOwn(sent.win, 'fine');
+  sent.win.sendReq.finish(200);
+  sent.win.timers.forEach((fn) => fn());
+  assert.equal(changes.length, 2);
+});
+
+test('an admin delete announces the stored record it deleted, once committed', async (t) => {
+  const deleted = [];
+  t.after(onDeleted((ids) => deleted.push(ids)));
+  const win = fakeEngine();
+  const calls = [];
+  const history = { deleteByMTime: async () => ['904-target'] };
+  const view = new Proxy({}, { get: (_, op) => (...args) => calls.push([`view.${op}`, ...args]) });
+  installEngineHook({ win, roomID: '1' }).attach({ history, view });
+  win.receiveMesReq.responseXML = xml(um('904', 'mod', 'DELETEMESSAGE_1700', '1703'));
+  win.handleMessages();
+  assert.deepEqual(calls, [['view.removeByMTime', '1700']]);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(deleted, [['904-target']]);
+});
+
+test('with Chat history at 0 days nothing is written, but messages are still shown and announced', () => {
+  let storing = false;
+  const { win, calls, poll } = setup({ storing: () => storing });
+  const seen = [];
+  const off = onInbound((r) => seen.push(r.id));
+  poll(um('950', 'bob', 'hello', '1750'));
+  sendOwn(win, 'mine');
+  win.sendReq.finish(200);
+  off();
+  const ops = calls.map((c) => c[0]);
+  for (const op of ['put', 'addPending', 'confirmPending']) assert.ok(!ops.includes(op), op);
+  assert.ok(ops.includes('view.append') && ops.includes('view.confirm'));
+  assert.equal(seen.length, 2);
+  // Read per message: a limit set later stores again.
+  storing = true;
+  poll(um('951', 'bob', 'again', '1751'));
+  assert.ok(calls.some((c) => c[0] === 'put' && c[1].id === '951'));
 });

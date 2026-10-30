@@ -30,12 +30,8 @@ export function startSettings({ win, doc, css, indexedDB = win.indexedDB }) {
   const ready = openDb({ indexedDB }).then((db) => {
     const settings = createSettings(db);
     const gallery = createImageStore(db);
-    const limits = createLimits({ db, doc, gallery });
-    const galleryBytes = async () => {
-      const { originals, thumbs } = await gallery.stats();
-      return originals + thumbs;
-    };
-    return { settings, limits, galleryBytes };
+    const limits = createLimits({ db, gallery });
+    return { settings, limits };
   });
 
   registerRailPanel({

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
-import { adapt, THEME_BG } from '../../core/ink.js';
+import { adapt, THEME_BG, themeInk } from '../../core/ink.js';
 import { createEngine } from './engine.js';
 import { ORDER, renderProfile, startProfile } from './flyout.js';
 
@@ -58,7 +58,7 @@ function setup({ flags = {}, row = true, select = '2', credits = true, theme = s
     engine: createEngine(/** @type {any} */ (win), /** @type {any} */ (doc)),
     currentTheme: theme.currentTheme,
     onThemeChange: theme.onThemeChange,
-    shift: (color, t) => adapt(color, THEME_BG[t]),
+    shift: themeInk,
     observe(target, fn) {
       const observer = new win.MutationObserver(fn);
       observer.observe(/** @type {any} */ (target), { childList: true, characterData: true, subtree: true });
@@ -302,7 +302,7 @@ test('startProfile injects the styles and registers the panel once', () => {
     register: (/** @type {any} */ p) => panels.push(p),
     currentTheme: theme.currentTheme,
     onThemeChange: theme.onThemeChange,
-    shift: (/** @type {string} */ c, /** @type {'light' | 'dark'} */ t) => adapt(c, THEME_BG[t]),
+    shift: themeInk,
   };
   assert.equal(startProfile(deps), true);
   assert.equal(startProfile(deps), false);

@@ -9,11 +9,11 @@
 
 /** @typedef {[number, number, number]} Triple */
 
-export const MIN_CONTRAST = 4.5;
+const MIN_CONTRAST = 4.5;
 /** Searched-for contrast: a margin over MIN_CONTRAST that survives rounding to hex. */
-export const SEARCH_CONTRAST = 4.6;
+const SEARCH_CONTRAST = 4.6;
 /** OKLab chroma below which a colour is treated as grey. */
-export const NEUTRAL_CHROMA = 0.02;
+const NEUTRAL_CHROMA = 0.02;
 
 /**
  * Each theme's `--tdf-bg`, as `theme.css` defines it. Duplicated because the shift is
@@ -27,7 +27,7 @@ export const THEME_BG = /** @type {const} */ ({ light: '#ffffff', dark: '#16191d
  * @param {string} color
  * @returns {Triple | null}
  */
-export function parseColor(color) {
+function parseColor(color) {
   const text = String(color).trim();
   const fn = /^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i.exec(text);
   if (fn) return /** @type {Triple} */ (fn.slice(1, 4).map((v) => Math.min(Number(v), 255) / 255));
@@ -105,7 +105,7 @@ function lchToRgb(L, C, h) {
  * WCAG relative luminance of sRGB channels in [0, 1].
  * @param {Triple} rgb
  */
-export function luminance(rgb) {
+function luminance(rgb) {
   const [r, g, b] = rgb.map(toLinear);
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
@@ -115,7 +115,7 @@ export function luminance(rgb) {
  * @param {Triple} a
  * @param {Triple} b
  */
-export function contrastRatio(a, b) {
+function contrastRatio(a, b) {
   const la = luminance(a);
   const lb = luminance(b);
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
@@ -154,4 +154,16 @@ export function adapt(color, bg) {
     else near = mid;
   }
   return toHex(lchToRgb(far, C, h));
+}
+
+/**
+ * The colour to paint text in for chosen colour `color` on `theme`: `adapt`ed to its
+ * background, with the theme's own text colour standing in for a grey that fails. The one
+ * rule for the message box (composer/box.js) and the Profile preview (profile/flyout.js).
+ * @param {string} color
+ * @param {'light' | 'dark'} theme
+ * @returns {string}
+ */
+export function themeInk(color, theme) {
+  return adapt(color, THEME_BG[theme]) || 'var(--tdf-fg)';
 }

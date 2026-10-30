@@ -65,6 +65,19 @@ const thumbBytes = (r) => r.thumb?.size ?? 0;
 /** @param {ImageRecord[]} rows newest first */
 const newestFirst = (rows) => rows.sort((a, b) => b.receivedAt - a.receivedAt);
 
+/**
+ * What a size limit of `limitBytes` would delete from `rows`.
+ * @param {ImageRecord[]} rows
+ * @param {number} limitBytes
+ * @returns {{ ids: string[], count: number, bytes: number }}
+ */
+function limitPreview(rows, limitBytes) {
+  const ids = overLimit(rows, limitBytes);
+  const chosen = new Set(ids);
+  const bytes = rows.reduce((sum, r) => sum + (chosen.has(r.id) ? r.bytes || 0 : 0), 0);
+  return { ids, count: ids.length, bytes };
+}
+
 /** @param {IDBDatabase} db */
 export function createImageStore(db) {
   /** @param {IDBTransactionMode} mode */
@@ -228,22 +241,22 @@ export function createImageStore(db) {
     },
 
     /**
-     * What a Gallery size limit of `limitBytes` would delete, for the Settings hint (A2).
-     * @param {number} limitBytes
-     * @returns {Promise<{ ids: string[], count: number, bytes: number }>}
+     * The gallery's size on disk (originals plus thumbnails, as `stats` sums them) and what a
+     * Gallery size limit of `limitBytes` would delete, null for no limit, from one read: the
+     * Settings hint (A2) asks on every keystroke.
+     * @param {number | null} limitBytes
+     * @returns {Promise<{ used: number, preview: { ids: string[], count: number, bytes: number } | null }>}
      */
-    async previewLimit(limitBytes) {
+    async usage(limitBytes) {
       const rows = await all();
-      const ids = overLimit(rows, limitBytes);
-      const chosen = new Set(ids);
-      const bytes = rows.reduce((sum, r) => sum + (chosen.has(r.id) ? r.bytes || 0 : 0), 0);
-      return { ids, count: ids.length, bytes };
+      const used = rows.reduce((sum, r) => sum + originalBytes(r) + thumbBytes(r), 0);
+      return { used, preview: limitBytes === null ? null : limitPreview(rows, limitBytes) };
     },
 
     /**
      * Delete oldest non-favourites until the gallery fits `limitBytes` (A2, A10). Resolves to
-     * the removed ids, oldest first; TDF-0009.4 deletes their tags. Its reader is TDF-0009.4's
-     * Settings flyout (accepted plan, A2), as is previewLimit's.
+     * the removed ids, oldest first. Its reader is TDF-0009.4's Settings flyout (accepted
+     * plan, A2), as is usage's.
      * @param {number} limitBytes
      */
     enforceLimit(limitBytes) {

@@ -254,6 +254,35 @@ test('removeByMTime removes only the first entry in list order with that mTime',
   assert.deepEqual(msgs(root).map((el) => el.dataset.id), ['b']);
 });
 
+test('removeById drops the rows, unindexed, and the next row heads its group', async () => {
+  const { view, root } = await setup();
+  view.replay([rec({ id: 'a', mTime: '1000' }), rec({ id: 'b', mTime: '1001' }), rec({ id: 'c', mTime: '1002' })]);
+  assert.deepEqual(heads(root), ['h', 'c', 'c']);
+  view.removeById(['a', 'missing']);
+  assert.deepEqual(msgs(root).map((el) => el.dataset.id), ['b', 'c']);
+  assert.deepEqual(heads(root), ['h', 'c']);
+  // Unindexed: neither lookup finds the removed row.
+  view.removeByMTime('1000');
+  view.markUnconfirmed('a');
+  assert.deepEqual(msgs(root).map((el) => el.dataset.id), ['b', 'c']);
+});
+
+test('clear empties every row and notice, keeps the scrollbar, and leaves nothing indexed', async () => {
+  const { view, root } = await setup();
+  view.replay([rec({ id: 'a', mTime: '1000' }), rec({ id: 'b', mTime: '1001' })]);
+  view.notice('trouble');
+  const list = root.querySelector('.tdf-list');
+  const others = list.children.length - msgs(root).length;
+  view.clear();
+  assert.equal(msgs(root).length, 0);
+  assert.equal(list.children.length, others);
+  view.confirm('a', rec({ id: 'z' }));
+  view.removeByMTime('1001');
+  assert.equal(msgs(root).length, 0);
+  view.append(rec({ id: 'n', mTime: '2000' }));
+  assert.deepEqual(heads(root), ['h']);
+});
+
 test('the list is capped: the oldest entries are trimmed and lookups still work', async () => {
   const { view, root } = await setup();
   const over = DEFAULT_REPLAY_LIMIT + 5;
