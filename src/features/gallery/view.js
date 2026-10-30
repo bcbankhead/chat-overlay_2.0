@@ -4,7 +4,8 @@
 // grid of stored 128×128 thumbnails. Opening never fetches a full image. Each tile: trash
 // top left, star top right, shown on hover; a favourite keeps its star and its trash is
 // disabled. A tile click opens the image in a new tab (TDF-0023, reversing A4); a record with
-// nothing to open (open.js isUnavailable) is faded and labelled, and its click does nothing.
+// nothing to open (open.js isUnavailable) is faded and labelled, and its click retries the
+// server copy, which makes the tile openable again when it loads.
 // Tiles are kept by id across refreshes, so a star or a new capture does not replay the
 // fade-in, which gallery.css keys on the rail's `tdf-settled` (set once the flyout's slide ends).
 
@@ -16,6 +17,7 @@ import { formatBytes } from './shareParse.js';
 import { onImagesChange } from './store.js';
 
 const REMOVE_MS = 180;
+const UNAVAILABLE = 'Image unavailable from server';
 
 const ICONS = {
   star: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3.2l2.7 5.5 6 .9-4.4 4.2 1 6-5.3-2.8-5.3 2.8 1-6L3.3 9.6l6-.9z"/></svg>',
@@ -36,6 +38,7 @@ const ICONS = {
  * @property {Window & typeof globalThis} win
  * @property {Promise<import('./store.js').ImageStore>} store
  * @property {(item: import('./store.js').ImageRecord) => import('./open.js').OpenResult} open  synchronous, so the tab opens inside the click
+ * @property {(item: import('./store.js').ImageRecord) => Promise<void>} retry  re-probes an unavailable image; rejects while it stays unavailable
  * @property {(err: unknown) => void} report
  */
 
@@ -55,7 +58,7 @@ const ICONS = {
  * @param {GalleryDeps} deps
  * @returns {() => void} cleanup
  */
-export function renderGallery(container, arg, { doc, win, store: storeReady, open, report }) {
+export function renderGallery(container, arg, { doc, win, store: storeReady, open, retry, report }) {
   const given = /** @type {GalleryArg} */ (arg && typeof arg === 'object' ? arg : undefined);
   /** @type {{ user: string, label: string } | null} */
   let userFilter = given?.user ? { user: given.user, label: given.label || given.user } : null;
@@ -145,7 +148,6 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, ope
     // Open is the tile's own action, so the tile is a keyboard-reachable button.
     el.tabIndex = 0;
     el.setAttribute('role', 'button');
-    el.setAttribute('aria-label', `Open image from ${item.user}`);
     /** @type {string | null} */
     let url = null;
     if (item.thumb) {
@@ -168,7 +170,7 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, ope
     badge.innerHTML = ICONS.broken;
     const unavailable = doc.createElement('span');
     unavailable.className = 'tdf-gallery-unavailable';
-    unavailable.textContent = 'Image unavailable from server';
+    unavailable.textContent = UNAVAILABLE;
     const trash = doc.createElement('button');
     trash.type = 'button';
     trash.className = 'tdf-gallery-btn tdf-gallery-trash';
@@ -225,9 +227,20 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, ope
         });
       }, REMOVE_MS);
     });
-    // Nothing is awaited before open: the browser blocks a tab opened outside the click.
+    // Nothing is awaited before open: the browser blocks a tab opened outside the click. An
+    // unavailable tile retries instead, once at a time; its store change redraws the tile.
+    let retrying = false;
     const openTile = () => {
-      if (isUnavailable(tile.item)) return;
+      if (isUnavailable(tile.item)) {
+        if (retrying) return;
+        retrying = true;
+        retry(tile.item)
+          .catch(report)
+          .finally(() => {
+            retrying = false;
+          });
+        return;
+      }
       try {
         if (open(tile.item) === 'blocked') report(new Error('gallery: the browser blocked the new tab'));
       } catch (err) {
@@ -259,10 +272,14 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, ope
     tile.el.classList.toggle('tdf-broken', item.broken);
     const gone = isUnavailable(item);
     tile.el.classList.toggle('tdf-unavailable', gone);
-    tile.el.setAttribute('aria-disabled', String(gone));
+    // Not aria-disabled: activating an unavailable tile retries it.
     tile.el.title = gone
-      ? `Image unavailable from server${item.brokenReason ? `: ${item.brokenReason}` : ''}`
+      ? `${UNAVAILABLE}${item.brokenReason ? `: ${item.brokenReason}` : ''} — click to retry`
       : `${item.user} — click to open`;
+    tile.el.setAttribute(
+      'aria-label',
+      gone ? `Image from ${item.user} unavailable from server — activate to retry` : `Open image from ${item.user}`,
+    );
     tile.badge.title = item.brokenReason
       ? `The server copy no longer loads: ${item.brokenReason}`
       : 'The server copy no longer loads';

@@ -28,8 +28,12 @@ const image = (over = {}) => ({
   ...over,
 });
 
-/** @param {unknown} [arg] @param {{ storeFails?: boolean, blocked?: boolean, openThrows?: boolean }} [opts] */
-async function open(arg, { storeFails = false, blocked = false, openThrows = false } = {}) {
+/**
+ * @param {unknown} [arg]
+ * @param {{ storeFails?: boolean, blocked?: boolean, openThrows?: boolean, retryFails?: string }} [opts]
+ *   retryFails: the reason a retry's probe fails with; without it, a retry loads and repairs
+ */
+async function open(arg, { storeFails = false, blocked = false, openThrows = false, retryFails } = {}) {
   const win = /** @type {any} */ (new Window());
   const doc = win.document;
   const store = createImageStore(await openDb({ name: `gallery-view-${++n}` }));
@@ -39,6 +43,8 @@ async function open(arg, { storeFails = false, blocked = false, openThrows = fal
   const errors = [];
   /** @type {string[]} */
   const opened = [];
+  /** @type {string[]} */
+  const retried = [];
   const mount = () =>
     renderGallery(container, arg, {
       doc,
@@ -49,10 +55,16 @@ async function open(arg, { storeFails = false, blocked = false, openThrows = fal
         if (openThrows) throw new Error('open broke');
         return blocked ? 'blocked' : 'opened';
       },
+      retry: async (item) => {
+        retried.push(item.id);
+        if (!retryFails) return store.repair(item.id);
+        await store.markBroken(item.id, retryFails);
+        throw new Error(`still unavailable: ${retryFails}`);
+      },
       report: (err) => errors.push(err),
     });
   const tiles = () => [...container.querySelectorAll('.tdf-gallery-tile')];
-  return { win, store, container, mount, tiles, errors, opened };
+  return { win, store, container, mount, tiles, errors, opened, retried };
 }
 
 test('an action and a decoration render on every item, registered before or after the flyout opens', async () => {
@@ -314,25 +326,31 @@ test('a tile is a focusable button: Enter and Space open it, keys on its own but
 });
 
 test('a broken record with no stored original is faded and labelled, and opens nothing; trash and star still work', async () => {
-  const g = await open();
+  const g = await open(undefined, { retryFails: 'HTTP 404' });
   await g.store.put(image({ id: 'a', receivedAt: 1, broken: true, brokenReason: 'HTTP 404' }));
-  await g.store.put(image({ id: 'b', receivedAt: 2, broken: true, brokenReason: 'HTTP 404', blob: new Blob(['x']) }));
+  await g.store.put(image({ id: 'b', receivedAt: 2, broken: true, brokenReason: 'HTTP 404', blob: new Blob(['x'], { type: 'image/png' }) }));
   const cleanup = g.mount();
   await settle();
   const gone = /** @type {HTMLElement} */ (g.tiles().find((t) => t.dataset.id === 'a'));
   const kept = /** @type {HTMLElement} */ (g.tiles().find((t) => t.dataset.id === 'b'));
   assert.ok(gone.classList.contains('tdf-unavailable'));
-  assert.equal(gone.getAttribute('aria-disabled'), 'true');
+  assert.equal(gone.hasAttribute('aria-disabled'), false, 'activating it retries, so it is not disabled');
+  assert.equal(gone.getAttribute('aria-label'), 'Image from alice unavailable from server — activate to retry');
   assert.equal(gone.querySelector('.tdf-gallery-unavailable')?.textContent, 'Image unavailable from server');
-  assert.equal(gone.title, 'Image unavailable from server: HTTP 404');
+  assert.equal(gone.title, 'Image unavailable from server: HTTP 404 — click to retry');
   assert.equal(kept.classList.contains('tdf-unavailable'), false, 'a kept original still opens');
   assert.ok(kept.classList.contains('tdf-broken'), 'and keeps its broken badge');
-  assert.equal(kept.getAttribute('aria-disabled'), 'false');
+  assert.equal(kept.getAttribute('aria-label'), 'Open image from alice');
 
   gone.click();
   gone.dispatchEvent(new g.win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
   kept.click();
   assert.deepEqual(g.opened, ['b']);
+  assert.deepEqual(g.retried, ['a'], 'one retry at a time, the Enter came while the click was in flight');
+  await settle();
+  assert.ok(gone.classList.contains('tdf-unavailable'), 'a retry that fails keeps it unavailable');
+  assert.deepEqual(g.errors.map((e) => /** @type {Error} */ (e).message), ['still unavailable: HTTP 404']);
+  g.errors.length = 0;
 
   /** @type {HTMLButtonElement} */ (gone.querySelector('.tdf-gallery-star')).click();
   await settle();
@@ -360,7 +378,26 @@ test('a broken record with no stored original and no reason is titled without on
   await settle();
   const tile = /** @type {HTMLElement} */ (g.tiles()[0]);
   assert.ok(tile.classList.contains('tdf-unavailable'));
-  assert.equal(tile.title, 'Image unavailable from server');
+  assert.equal(tile.title, 'Image unavailable from server — click to retry');
+  cleanup();
+  assert.deepEqual(g.errors, []);
+});
+
+test('a retry that loads makes an unavailable tile openable again, without opening it', async () => {
+  const g = await open();
+  await g.store.put(image({ id: 'a', broken: true, brokenReason: 'no answer within 30000 ms' }));
+  const cleanup = g.mount();
+  await settle();
+  const tile = /** @type {HTMLElement} */ (g.tiles()[0]);
+  tile.click();
+  await settle();
+  assert.deepEqual(g.retried, ['a']);
+  assert.deepEqual(g.opened, [], 'a tab opened after the probe would be blocked');
+  assert.equal(tile.classList.contains('tdf-unavailable'), false);
+  assert.equal(tile.getAttribute('aria-label'), 'Open image from alice');
+  assert.equal(tile.title, 'alice — click to open');
+  tile.click();
+  assert.deepEqual(g.opened, ['a'], 'the next click opens it');
   cleanup();
   assert.deepEqual(g.errors, []);
 });

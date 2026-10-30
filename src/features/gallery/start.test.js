@@ -102,6 +102,12 @@ test('clicking a Gallery tile opens its share URL in a new tab through win.open'
     calls.push(args);
     return {};
   };
+  /** @type {string[]} */
+  const fetched = [];
+  win.fetch = async (/** @type {unknown} */ input) => {
+    fetched.push(String(input));
+    return new Response('gone', { status: 404 });
+  };
   const logged = console.error;
   console.error = () => {};
   try {
@@ -119,6 +125,10 @@ test('clicking a Gallery tile opens its share URL in a new tab through win.open'
     assert.ok(tile);
     tile.click();
     assert.deepEqual(calls, [[shareUrl(ID, win.location.href), '_blank']]);
+    await settle();
+    assert.deepEqual(fetched, [shareUrl(ID, win.location.href)], 'the background probe goes through win.fetch');
+    const store = createImageStore(await openDb({ indexedDB }));
+    assert.equal((await store.list())[0].brokenReason, 'HTTP 404', 'and marks a dead copy broken');
     if (typeof cleanup === 'function') cleanup();
   } finally {
     console.error = logged;

@@ -249,14 +249,10 @@
   height: 14px;
 }
 
-/* Unavailable (broken, no stored original): washed white and labelled, with nothing to open.
+/* Unavailable (broken, no stored original): washed white and labelled; a click retries the fetch.
    The trash and star still work; the broken badge gives way to the label. */
 :root[data-tdf-theme] #tdf-rail .tdf-gallery-unavailable {
   display: none;
-}
-
-:root[data-tdf-theme] #tdf-rail .tdf-gallery-tile.tdf-unavailable {
-  cursor: default;
 }
 
 :root[data-tdf-theme] #tdf-rail .tdf-gallery-tile.tdf-unavailable .tdf-gallery-unavailable {
@@ -274,8 +270,12 @@
   pointer-events: none;
 }
 
-:root[data-tdf-theme] #tdf-rail .tdf-gallery-tile.tdf-unavailable:is(:hover, :focus-visible) .tdf-gallery-thumb {
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-tile.tdf-unavailable:hover:not(:focus-visible) .tdf-gallery-thumb {
   outline: none;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-tile.tdf-unavailable:focus-visible .tdf-gallery-thumb {
+  outline-color: var(--tdf-muted);
 }
 
 :root[data-tdf-theme] #tdf-rail .tdf-gallery-tile.tdf-unavailable .tdf-gallery-broken {
