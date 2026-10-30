@@ -35,6 +35,7 @@
     "src/features/tagging/infer.js",
     "src/features/tagging/queue.js",
     "src/features/options/selectors.js",
-    "src/forum/navbar.js"
+    "src/forum/navbar.js",
+    "src/forum/searchModal.js"
   ]
 }

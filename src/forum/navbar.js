@@ -5,6 +5,8 @@
 // A row already built — by this include or by the Tampermonkey copy (`tm-` ids) — stops a
 // second one.
 
+import { installSearch } from './searchModal.js';
+
 export const ROW_ID = 'tdf-chat-row';
 export const USERS_ID = 'tdf-chatting-users';
 export const STICKY_CLASS = 'tdf-sticky-nav';
@@ -57,10 +59,7 @@ export function buildChatRow(doc) {
   if (doc.getElementById(ROW_ID) || doc.getElementById(LEGACY_ROW_ID)) return null;
   const nav = doc.getElementById('nav-main');
   if (!nav) return null;
-  const row = doc.createElement('ul');
-  row.id = ROW_ID;
-  row.className = 'linklist navlinks';
-  row.setAttribute('role', 'menubar');
+  const row = newRow(doc);
   const chat = findChatItem(nav);
   if (chat) row.appendChild(chat);
   const users = findChattingUsers(doc);
@@ -71,8 +70,43 @@ export function buildChatRow(doc) {
     row.appendChild(li);
   }
   if (!row.children.length) return null;
-  (doc.getElementById('nav-breadcrumbs') ?? nav).after(row);
+  placeRow(doc, nav, row);
   return row;
+}
+
+/**
+ * The row other items join (TDF-0029): this include's, else the Tampermonkey copy's, else a new
+ * empty one in the place buildChatRow uses.
+ * @param {Document} doc
+ * @returns {Element | null} null only without `#nav-main`
+ */
+export function chatRow(doc) {
+  const existing = doc.getElementById(ROW_ID) ?? doc.getElementById(LEGACY_ROW_ID);
+  if (existing) return existing;
+  const nav = doc.getElementById('nav-main');
+  if (!nav) return null;
+  const row = newRow(doc);
+  placeRow(doc, nav, row);
+  return row;
+}
+
+/** @param {Document} doc */
+function newRow(doc) {
+  const row = doc.createElement('ul');
+  row.id = ROW_ID;
+  row.className = 'linklist navlinks';
+  row.setAttribute('role', 'menubar');
+  return row;
+}
+
+/**
+ * Under `#nav-breadcrumbs`, or after `#nav-main` without them.
+ * @param {Document} doc
+ * @param {Element} nav
+ * @param {Element} row
+ */
+function placeRow(doc, nav, row) {
+  (doc.getElementById('nav-breadcrumbs') ?? nav).after(row);
 }
 
 /**
@@ -107,10 +141,12 @@ export function injectStyle(doc, css) {
 }
 
 /**
- * Both DOM moves: the row first, so it travels with the navbar block.
+ * Both DOM moves: the row and its search input (TDF-0029) first, so they travel with the navbar
+ * block.
  * @param {Document} doc
  */
 export function installForumNavbar(doc) {
   buildChatRow(doc);
+  installSearch(doc, chatRow);
   pinNavbar(doc);
 }

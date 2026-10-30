@@ -17,3 +17,65 @@
 :where(.tdf-sticky-nav) {
   background-color: #fff;
 }
+
+/* TDF-0029: the navbar search input, right-aligned in the chat row, and the modal it opens
+   (searchModal.js). The modal sits above the sticky navbar's z-index. */
+#tdf-search-input {
+  width: 12em;
+}
+
+.tdf-search-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10vh;
+}
+
+.tdf-search-backdrop[hidden] {
+  display: none;
+}
+
+.tdf-search-dialog {
+  width: min(28em, calc(100vw - 2em));
+  padding: 1em;
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3);
+}
+
+.tdf-search-dialog form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+}
+
+.tdf-search-dialog input[type="search"] {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.tdf-search-note {
+  margin: 0;
+  font-size: 0.9em;
+}
+
+.tdf-search-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+:where(.tdf-search-backdrop) {
+  background-color: rgba(0, 0, 0, 0.4);
+}
+
+:where(.tdf-search-dialog) {
+  background-color: #fff;
+  color: #333;
+}
+
+:where(.tdf-search-note) {
+  color: #666;
+}

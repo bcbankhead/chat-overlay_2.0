@@ -280,3 +280,14 @@ test('the bundle loaded twice gives one style, one row and one move', () => {
   assert.equal(document.querySelectorAll(`#${ROW_ID}`).length, 1);
   assert.equal(document.querySelectorAll(`.${STICKY_CLASS}`).length, 1);
 });
+
+test('the bundle loaded twice on a page with #search-box gives one search input and one modal', () => {
+  const { window, document } = bundlePage('loading');
+  document.getElementById('page-header')?.insertAdjacentHTML('afterbegin', '<div id="search-box"></div>');
+  window.eval(bundle);
+  window.eval(bundle);
+  document.dispatchEvent(new window.Event('DOMContentLoaded'));
+  assert.equal(document.querySelectorAll('#tdf-search-input').length, 1);
+  assert.equal(document.querySelectorAll('#tdf-search-modal').length, 1);
+  assert.equal(document.getElementById('tdf-search')?.parentElement?.id, ROW_ID);
+});
