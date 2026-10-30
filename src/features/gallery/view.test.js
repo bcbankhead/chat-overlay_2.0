@@ -401,3 +401,38 @@ test('a retry that loads makes an unavailable tile openable again, without openi
   cleanup();
   assert.deepEqual(g.errors, []);
 });
+
+test('each tile shows its size on disk, orange from 1 MB, refreshed when a repair changes it', async () => {
+  const g = await open();
+  await g.store.put(image({ id: 'a', receivedAt: 3, bytes: 1048575 }));
+  await g.store.put(image({ id: 'b', receivedAt: 2, bytes: 1048576 }));
+  await g.store.put(image({ id: 'c', receivedAt: 1, bytes: 1536, broken: true }));
+  await g.store.put(image({ id: 'd', receivedAt: 0, bytes: 512, broken: true, blob: new Blob(['x']) }));
+  const cleanup = g.mount();
+  await settle();
+  /** @param {string} id */
+  const chip = (id) =>
+    /** @type {HTMLElement} */ (g.tiles().find((t) => t.dataset.id === id)?.querySelector('.tdf-gallery-size'));
+  assert.equal(chip('a').textContent, '1024.0 KB');
+  assert.equal(chip('a').classList.contains('tdf-large'), false);
+  assert.equal(chip('b').textContent, '1.0 MB');
+  assert.ok(chip('b').classList.contains('tdf-large'));
+  assert.equal(chip('c').textContent, '1.5 KB', 'an unavailable tile keeps its chip');
+  assert.equal(chip('d').textContent, '512 B', 'a broken tile keeps its chip');
+
+  const before = chip('c');
+  await g.store.repair('c', { bytes: 2 * 1048576 });
+  await settle();
+  assert.equal(chip('c'), before, 'the same chip, updated in place');
+  assert.equal(chip('c').textContent, '2.0 MB');
+  assert.ok(chip('c').classList.contains('tdf-large'));
+
+  const large = chip('b');
+  await g.store.repair('b', { bytes: 1048575 });
+  await settle();
+  assert.equal(chip('b'), large, 'the same chip, updated in place');
+  assert.equal(chip('b').textContent, '1024.0 KB');
+  assert.equal(chip('b').classList.contains('tdf-large'), false);
+  cleanup();
+  assert.deepEqual(g.errors, []);
+});

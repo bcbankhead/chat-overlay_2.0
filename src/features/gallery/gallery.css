@@ -4,6 +4,11 @@
 
 :root[data-tdf-theme] #tdf-rail .tdf-gallery {
   --tdf-gallery-star: #e3b341;
+  /* The size chip sits over the image, not the theme, so it is the same in both themes. */
+  --tdf-gallery-size-bg: rgba(87, 96, 106, 0.72);
+  --tdf-gallery-size-border: #ffffff;
+  --tdf-gallery-size-text: #ffffff;
+  --tdf-gallery-size-large: #ffa657;
 }
 
 /* Sticks to the top of the flyout body while the grid scrolls under it (the body pads 10px). */
@@ -247,6 +252,34 @@
 :root[data-tdf-theme] #tdf-rail .tdf-gallery-broken svg {
   width: 14px;
   height: 14px;
+}
+
+/* Size on disk, lower left, always shown. A broken tile's badge holds the corner, so the chip
+   moves right of it. An unavailable tile hides the badge, so the chip keeps the corner,
+   above the wash. */
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-size {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  z-index: 1;
+  padding: 1px 5px;
+  color: var(--tdf-gallery-size-text);
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  background: var(--tdf-gallery-size-bg);
+  border: 1px solid var(--tdf-gallery-size-border);
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-size.tdf-large {
+  color: var(--tdf-gallery-size-large);
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-tile.tdf-broken:not(.tdf-unavailable) .tdf-gallery-size {
+  left: 32px;
 }
 
 /* Unavailable (broken, no stored original): washed white and labelled; a click retries the fetch.

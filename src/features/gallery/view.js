@@ -3,7 +3,8 @@
 // `N images · size on disk`, the favourites filter, the user-filter chip), then a 3-column
 // grid of stored 128×128 thumbnails. Opening never fetches a full image. Each tile: trash
 // top left, star top right, shown on hover; a favourite keeps its star and its trash is
-// disabled. A tile click opens the image in a new tab (TDF-0023, reversing A4); a record with
+// disabled. A chip in the lower left shows the record's size on disk, orange once large
+// (TDF-0024). A tile click opens the image in a new tab (TDF-0023, reversing A4); a record with
 // nothing to open (open.js isUnavailable) is faded and labelled, and its click retries the
 // server copy, which makes the tile openable again when it loads.
 // Tiles are kept by id across refreshes, so a star or a new capture does not replay the
@@ -13,7 +14,7 @@ import { renderIcon } from '../rail/icons.js';
 import { listGalleryItemActions, listGalleryItemDecorations, onGalleryRegistryChange } from './api.js';
 import { clearGalleryErrors, listGalleryErrors, onGalleryErrors } from './errors.js';
 import { isUnavailable } from './open.js';
-import { formatBytes } from './shareParse.js';
+import { formatBytes, isLarge } from './shareParse.js';
 import { onImagesChange } from './store.js';
 
 const REMOVE_MS = 180;
@@ -48,6 +49,7 @@ const ICONS = {
  * @property {HTMLButtonElement} star
  * @property {HTMLButtonElement} trash
  * @property {HTMLElement} badge   the broken-link badge, titled with the failure's reason
+ * @property {HTMLElement} size    the size-on-disk chip
  * @property {import('./store.js').ImageRecord} item
  * @property {string | null} url   the thumbnail's object URL
  */
@@ -171,6 +173,9 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, ope
     const unavailable = doc.createElement('span');
     unavailable.className = 'tdf-gallery-unavailable';
     unavailable.textContent = UNAVAILABLE;
+    // After the wash, so an unavailable tile still shows its size above it.
+    const size = doc.createElement('span');
+    size.className = 'tdf-gallery-size';
     const trash = doc.createElement('button');
     trash.type = 'button';
     trash.className = 'tdf-gallery-btn tdf-gallery-trash';
@@ -179,7 +184,7 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, ope
     star.type = 'button';
     star.className = 'tdf-gallery-btn tdf-gallery-star';
     star.innerHTML = ICONS.star;
-    el.append(badge, unavailable, trash, star);
+    el.append(badge, unavailable, size, trash, star);
 
     const actions = listGalleryItemActions();
     if (actions.length) {
@@ -208,7 +213,7 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, ope
     }
 
     /** @type {Tile} */
-    const tile = { el, star, trash, badge, item, url };
+    const tile = { el, star, trash, badge, size, item, url };
 
     star.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -283,6 +288,8 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, ope
     tile.badge.title = item.brokenReason
       ? `The server copy no longer loads: ${item.brokenReason}`
       : 'The server copy no longer loads';
+    tile.size.textContent = formatBytes(item.bytes);
+    tile.size.classList.toggle('tdf-large', isLarge(item.bytes));
     tile.star.setAttribute('aria-pressed', String(item.favorite));
     const starLabel = item.favorite ? 'Remove from favourites' : 'Add to favourites';
     tile.star.title = starLabel;
