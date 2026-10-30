@@ -96,6 +96,21 @@ test('a rendered server message is stored with its server id and emitted', () =>
   assert.deepEqual(seen, ['901']);
 });
 
+test("a main-room message to the server's placeholder '_' is public; a named recipient is a whisper", () => {
+  const { calls, poll } = setup();
+  poll(um('905', 'bob', 'hi all', '1705', '_'), um('906', 'bob', 'psst', '1706', 'carol'));
+  const puts = calls.filter((c) => c[0] === 'put').map((c) => [c[1].id, c[1].kind, c[1].toUser]);
+  const shown = calls.filter((c) => c[0] === 'view.append').map((c) => [c[1].id, c[1].kind]);
+  assert.deepEqual(puts, [
+    ['905', 'public', '_'],
+    ['906', 'whisper', 'carol'],
+  ]);
+  assert.deepEqual(shown, [
+    ['905', 'public'],
+    ['906', 'whisper'],
+  ]);
+});
+
 test('a message the engine filters is neither stored nor shown', () => {
   const { calls, poll } = setup();
   poll(um('902', 'bob', 'FILTERED', '1701'));

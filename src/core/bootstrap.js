@@ -39,10 +39,15 @@ async function start() {
   const html = document.documentElement;
   /** @type {import('./theme.js').Theme | null} */
   let theme = null;
+  /** @type {import('./view.js').View | null} */
+  let shown = null;
   /** @type {Array<() => void>} */
   const unsubscribe = [];
   try {
-    const db = await openDb();
+    // Before the view mounts, a closed connection fails the start, and the banner says so.
+    const db = await openDb({
+      onVersionChange: () => shown?.notice('TDF Chat was updated in another tab; reload this tab to keep saving history.'),
+    });
     const history = createHistory(db);
     const settings = createSettings(db);
     theme = createTheme({ win, settings, root: html });
@@ -65,6 +70,7 @@ async function start() {
       onClearView(() => view.clear()),
     );
     replay(view, records);
+    shown = view;
     hook.attach({ history, view, pending, replayed: records, storing: () => retentionDays !== 0 });
     // Expired with no inbound event; a feature that read the room before the expiry follows it.
     if (expired.length) {

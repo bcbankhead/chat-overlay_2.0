@@ -35,10 +35,10 @@ const msg = (over) => ({
   ...over,
 });
 
-test('opens at version 2 with every store and index', async () => {
+test('opens at version 3 with every store and index', async () => {
   const db = await fresh();
   assert.equal(db.version, DB_VERSION);
-  assert.equal(DB_VERSION, 2);
+  assert.equal(DB_VERSION, 3);
   assert.deepEqual([...db.objectStoreNames].sort(), ['images', 'messages', 'settings', 'tags']);
   const t = db.transaction(['messages', 'images', 'tags'], 'readonly');
   const messages = t.objectStore('messages');
@@ -90,11 +90,12 @@ const openV1 = (name) => {
   return /** @type {Promise<IDBDatabase>} */ (settled(open));
 };
 
-test('a version 1 database upgrades to version 2 with its records intact and a hash index', async () => {
+test('a version 1 database upgrades to the current version with its records intact and a hash index', async () => {
   const name = `test-v1-${++n}`;
   const v1 = await openV1(name);
   const w = v1.transaction(['messages', 'settings', 'images', 'tags'], 'readwrite');
   w.objectStore('messages').put(msg({ id: 'm1' }));
+  w.objectStore('messages').put(msg({ id: 'w1', toUser: '_', kind: 'whisper' }));
   w.objectStore('settings').put({ key: 'theme', value: 'dark' });
   w.objectStore('images').put({ id: 'img1', user: 'alice', receivedAt: 1, favorite: true });
   w.objectStore('tags').put({ imageId: 'img1', tag: ':h', sourceMessageId: 'm1' });
@@ -102,11 +103,12 @@ test('a version 1 database upgrades to version 2 with its records intact and a h
   v1.close();
 
   const db = await openDb({ name });
-  assert.equal(db.version, 2);
+  assert.equal(db.version, DB_VERSION);
   const t = db.transaction(['messages', 'settings', 'images', 'tags'], 'readonly');
   const images = t.objectStore('images');
   assert.deepEqual([...images.indexNames].sort(), ['hash', 'receivedAt', 'user']);
   assert.equal((await settled(t.objectStore('messages').get('m1'))).text, 'hi');
+  assert.equal((await settled(t.objectStore('messages').get('w1'))).kind, 'public');
   assert.equal((await settled(t.objectStore('settings').get('theme'))).value, 'dark');
   assert.equal((await settled(images.get('img1'))).favorite, true);
   assert.equal((await settled(t.objectStore('tags').getAll())).length, 1);
@@ -115,14 +117,90 @@ test('a version 1 database upgrades to version 2 with its records intact and a h
   db.close();
 });
 
-test('openDb connections close on versionchange, so a newer open is not left blocked', async () => {
-  const name = `test-vc-${++n}`;
-  const first = await openDb({ name });
-  const upgraded = /** @type {IDBDatabase} */ (await settled(indexedDB.open(name, DB_VERSION + 1)));
-  assert.equal(upgraded.version, DB_VERSION + 1);
-  // The first connection was closed, so it can no longer start a transaction.
-  assert.throws(() => first.transaction('messages'), { name: 'InvalidStateError' });
-  upgraded.close();
+test('a version 2 database upgrades to version 3, reclassifying placeholder whispers as public', async () => {
+  const name = `test-v2-${++n}`;
+  // The version 2 schema: version 1 plus the images hash index (TDF-0009.13).
+  const open = indexedDB.open(name, 2);
+  open.onupgradeneeded = () => {
+    const v2 = open.result;
+    const messages = v2.createObjectStore('messages', { keyPath: 'id' });
+    for (const i of ['roomID', 'mTime', 'user', 'receivedAt']) messages.createIndex(i, i);
+    messages.createIndex('roomID_receivedAt', ['roomID', 'receivedAt']);
+    v2.createObjectStore('settings', { keyPath: 'key' });
+    const images = v2.createObjectStore('images', { keyPath: 'id' });
+    for (const i of ['user', 'receivedAt', 'hash']) images.createIndex(i, i);
+    const tags = v2.createObjectStore('tags', { keyPath: 'id', autoIncrement: true });
+    tags.createIndex('imageId', 'imageId');
+    tags.createIndex('sourceMessageId', 'sourceMessageId');
+  };
+  const v2 = /** @type {IDBDatabase} */ (await settled(open));
+  const w = v2.transaction('messages', 'readwrite');
+  const seed = [
+    msg({ id: 'underscore', toUser: '_', kind: 'whisper' }),
+    msg({ id: 'empty', toUser: '', kind: 'whisper' }),
+    msg({ id: 'named', toUser: 'bob', kind: 'whisper' }),
+    msg({ id: 'echo', toUser: '', kind: 'whisper', ircFlag: '1', text: ' &#187; bob: psst' }),
+    msg({ id: 'public', toUser: '', kind: 'public' }),
+    msg({ id: 'entry', toUser: '_', kind: 'entry', avatar: '1' }),
+  ];
+  for (const record of seed) w.objectStore('messages').put(record);
+  await settled(w);
+  v2.close();
+
+  const db = await openDb({ name });
+  assert.equal(db.version, 3);
+  const kinds = Object.fromEntries(
+    (await settled(db.transaction('messages').objectStore('messages').getAll())).map((r) => [r.id, r.kind]),
+  );
+  assert.deepEqual(kinds, {
+    underscore: 'public',
+    empty: 'public',
+    named: 'whisper',
+    echo: 'whisper',
+    public: 'public',
+    entry: 'entry',
+  });
+  assert.equal((await stored(db, 'underscore')).text, 'hi');
+  db.close();
+});
+
+test('an open connection closes itself when a later version opens, so the bump is not blocked', async () => {
+  const name = `test-bump-${++n}`;
+  const db = await openDb({ name });
+  const next = indexedDB.open(name, DB_VERSION + 1);
+  let blocked = false;
+  next.onblocked = () => {
+    blocked = true;
+  };
+  const bumped = /** @type {IDBDatabase} */ (await settled(next));
+  assert.equal(blocked, false);
+  assert.equal(bumped.version, DB_VERSION + 1);
+  bumped.close();
+  db.close();
+});
+
+test('onVersionChange is called once, after the connection has closed', async () => {
+  const name = `test-bump-notify-${++n}`;
+  let calls = 0;
+  let closed = false;
+  const db = await openDb({
+    name,
+    onVersionChange: () => {
+      calls += 1;
+      try {
+        db.transaction('messages');
+      } catch (err) {
+        closed = err.name === 'InvalidStateError';
+      }
+    },
+  });
+  const bumped = /** @type {IDBDatabase} */ (await settled(indexedDB.open(name, DB_VERSION + 1)));
+  assert.equal(calls, 1);
+  assert.equal(closed, true);
+  bumped.close();
+  const again = /** @type {IDBDatabase} */ (await settled(indexedDB.open(name, DB_VERSION + 2)));
+  assert.equal(calls, 1);
+  again.close();
 });
 
 test('a blocked open keeps waiting and resolves once the blocker closes', async () => {
@@ -138,7 +216,7 @@ test('a blocked open keeps waiting and resolves once the blocker closes', async 
   assert.equal(settledYet, false);
   v1.close();
   const db = await opening;
-  assert.equal(db.version, 2);
+  assert.equal(db.version, DB_VERSION);
   db.close();
 });
 
