@@ -1,10 +1,14 @@
 // The one IndexedDB database (TDF-0009 Shared Contract). Every store and index is created
 // here; no slice bumps the version without amending the contract. Version 1 created every
 // store; version 2 (TDF-0009.13) adds the images `hash` index, with no data migration:
-// records captured before it carry no hash, and the index skips them.
+// records captured before it carry no hash, and the index skips them. Version 3 (TDF-0012)
+// reclassifies stored messages: a `whisper` record whose only whisper signal was the `_`
+// placeholder toUser is rewritten `public`. Nothing is deleted.
+
+import { MAIN_DIV, isWhisper } from './parse.js';
 
 export const DB_NAME = 'tdf-chat-2';
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 
 export const STORES = Object.freeze({
   messages: 'messages',
@@ -35,6 +39,25 @@ function createSchema(db) {
 }
 
 /**
+ * Rewrite stored whispers the narrowed rule no longer counts as whispers (version 3). Only
+ * `whisper` records are touched: the rule only narrowed. MAIN_DIV is assumed because the
+ * old toUser branch already required it.
+ * @param {IDBObjectStore} messages
+ */
+function reclassifyWhispers(messages) {
+  const cursorReq = messages.openCursor();
+  cursorReq.onsuccess = () => {
+    const cursor = cursorReq.result;
+    if (!cursor) return;
+    const record = cursor.value;
+    if (record.kind === 'whisper' && !isWhisper({ targetDiv: MAIN_DIV, toUser: record.toUser, body: record })) {
+      cursor.update({ ...record, kind: 'public' });
+    }
+    cursor.continue();
+  };
+}
+
+/**
  * Open (creating on first use) the database.
  * @param {{ indexedDB?: IDBFactory, name?: string }} [options]
  * @returns {Promise<IDBDatabase>}
@@ -43,12 +66,33 @@ export function openDb({ indexedDB = globalThis.indexedDB, name = DB_NAME } = {}
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(name, DB_VERSION);
     req.onupgradeneeded = (event) => {
-      if (event.oldVersion < 1) createSchema(req.result);
-      else if (event.oldVersion < 2) req.transaction?.objectStore(STORES.images).createIndex('hash', 'hash');
+      const { oldVersion } = event;
+      // A fresh database gets the current schema and has nothing to migrate.
+      if (oldVersion < 1) {
+        createSchema(req.result);
+        return;
+      }
+      const tx = req.transaction;
+      if (!tx) return;
+      if (oldVersion < 2) tx.objectStore(STORES.images).createIndex('hash', 'hash');
+      if (oldVersion < 3) reclassifyWhispers(tx.objectStore(STORES.messages));
     };
-    req.onsuccess = () => resolve(req.result);
+    let blocked = false;
+    req.onsuccess = () => {
+      const db = req.result;
+      // A connection arriving after the blocked rejection has no holder, and would block the next bump.
+      if (blocked) {
+        db.close();
+        return;
+      }
+      db.onversionchange = () => db.close();
+      resolve(db);
+    };
     req.onerror = () => reject(req.error);
-    req.onblocked = () => reject(new Error(`${name} is blocked by another open connection`));
+    req.onblocked = () => {
+      blocked = true;
+      reject(new Error(`${name} is blocked by another open connection`));
+    };
   });
 }
 

@@ -140,3 +140,9 @@ test('theme.css fades under the class theme.js sets, and defines both token sets
   assert.match(css, new RegExp(`\\.${FADE_CLASS} \\*,`));
   for (const name of ['light', 'dark']) assert.match(css, new RegExp(`:root\\[data-tdf-theme="${name}"\\] \\{`));
 });
+
+test('TDF-0012: public rows have no hover tint, and whispers keep their background', () => {
+  const css = readFileSync(new URL('../src/core/theme.css', import.meta.url), 'utf8');
+  assert.doesNotMatch(css, /\.tdf-msg:hover/);
+  assert.match(css, /#tdf-chat \.tdf-kind-whisper \{[^}]*\bbackground(-color)?\s*:/);
+});

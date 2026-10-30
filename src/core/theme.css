@@ -114,10 +114,6 @@
   overflow-wrap: anywhere;
 }
 
-#tdf-chat .tdf-msg:hover {
-  background: var(--tdf-hover-bg);
-}
-
 #tdf-chat .tdf-msg * {
   font-size: inherit;
 }
@@ -170,12 +166,6 @@
   padding: 0 12px 0 70px;
   font-size: 12px;
   color: var(--tdf-muted);
-}
-
-#tdf-chat .tdf-kind-entry:hover,
-#tdf-chat .tdf-kind-exit:hover,
-#tdf-chat .tdf-kind-system:hover {
-  background: none;
 }
 
 #tdf-chat .tdf-pending {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { classify, isDelete, parseBody, parseUserMessage, whisperTarget } from '../src/core/parse.js';
+import { classify, isDelete, isWhisper, NO_RECIPIENT, parseBody, parseUserMessage, whisperTarget } from '../src/core/parse.js';
 
 const lang = { publicEntry: 'has joined the room ...', publicExit: 'has left the room ...' };
 
@@ -41,6 +41,24 @@ test('classify derives kind from avatar, toUser and body', () => {
   assert.equal(at({ avatar: '../images/notice.gif' }), 'system');
   assert.equal(at({ ircFlag: '1', text: ' &#187; bob: psst' }), 'whisper');
   assert.equal(at({ ircFlag: '1', text: ' waves ...' }), 'public');
+});
+
+test('classify treats the "_" placeholder toUser as no recipient (TDF-0012)', () => {
+  const body = (over) => ({ ...parseBody('av.gif|#000|12px|verdana|hi|0|0'), ...over });
+  const at = (toUser, over = {}) => classify({ targetDiv: 'chatContainer', toUser, body: body(over) }, lang);
+  assert.equal(at('_'), 'public');
+  assert.equal(at(''), 'public');
+  assert.equal(at('bob'), 'whisper');
+  const prefixed = { ircFlag: '1', text: ' &#187; bob: psst' };
+  assert.equal(at('', prefixed), 'whisper');
+  assert.equal(at('_', prefixed), 'whisper');
+});
+
+test('isWhisper requires the main room for a toUser whisper', () => {
+  const body = { text: 'hi', ircFlag: '0' };
+  assert.equal(isWhisper({ targetDiv: 'chatContainer', toUser: 'bob', body }), true);
+  assert.equal(isWhisper({ targetDiv: 'pcontent_bob', toUser: 'bob', body }), false);
+  assert.ok(NO_RECIPIENT.has('_') && NO_RECIPIENT.has(''));
 });
 
 test('whisperTarget reads the recipient from the prefix', () => {
