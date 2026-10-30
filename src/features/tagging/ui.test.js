@@ -91,7 +91,7 @@ test('clicking a posted image opens the picker below the pointer; a pick queues 
   const event = p.click(img, 50, 60);
   assert.equal(event.defaultPrevented, true);
   assert.equal(p.pickers.length, 1);
-  assert.deepEqual([p.pickers[0].x, p.pickers[0].y], [50, 68]);
+  assert.deepEqual([p.pickers[0].x, p.pickers[0].y, p.pickers[0].below], [50, 68, true]);
   assert.deepEqual(p.pickers[0].extraRows.map((/** @type {any} */ r) => r.label), ['Open full size']);
   p.pickers[0].onPick(':h');
   assert.deepEqual(p.chips(), [':h 1 mine queued']);

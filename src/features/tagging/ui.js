@@ -18,7 +18,7 @@ const CHIP = 'tdf-rx-chip';
  *   win: any,
  *   store: { reactionsFor: (imageId: string) => import('./infer.js').ReactionCount[], onChange: (fn: () => void) => () => void },
  *   queue: import('./queue.js').ReactionQueue,
- *   openSmileyPicker: (options: { x: number, y: number, extraRows?: { label: string, run: () => void }[], onPick: (code: string) => void }) => () => void,
+ *   openSmileyPicker: (options: { x: number, y: number, below?: boolean, extraRows?: { label: string, run: () => void }[], onPick: (code: string) => void }) => () => void,
  * }} deps
  * @returns {() => void} uninstall
  */
@@ -147,6 +147,7 @@ export function installReactionUi({ doc, win, store, queue, openSmileyPicker }) 
     openSmileyPicker({
       x: event.clientX,
       y: event.clientY + 8,
+      below: true,
       extraRows: [{ label: 'Open full size', run: () => win.open(href, '_blank', 'noopener') }],
       onPick: (code) => toggle(shareId, code),
     });

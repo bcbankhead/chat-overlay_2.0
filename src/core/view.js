@@ -375,6 +375,22 @@ export function createView({ doc, win, container, css }) {
       if (first) remove(first);
     },
 
+    /**
+     * Remove every rendered entry with one of these ids: stored records that were deleted.
+     * @param {Iterable<string>} ids
+     */
+    removeById(ids) {
+      for (const id of ids) for (const el of entries('id', id)) remove(el);
+    },
+
+    /** Empty the list: every entry and notice goes; the scrollbar's thumb stays. */
+    clear() {
+      for (const el of [...shown]) /** @type {HTMLElement} */ (el).remove();
+      byKey.id.clear();
+      byKey.mtime.clear();
+      settle();
+    },
+
     notice,
   };
 }

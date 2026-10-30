@@ -5,7 +5,7 @@
 // is always read from the engine's textColor, never back from the box, so the shown colour is
 // never mistaken for the chosen one.
 
-import { adapt, THEME_BG } from '../../core/ink.js';
+import { themeInk } from '../../core/ink.js';
 import { currentTheme, onThemeChange } from '../../core/shell.js';
 
 /** @param {HTMLTextAreaElement} bar */
@@ -16,8 +16,7 @@ export function installBox(bar) {
     const theme = currentTheme();
     const chosen = win.textColor;
     if (!theme || typeof chosen !== 'string' || !chosen) return;
-    // '' is a grey that fails contrast: the theme's own text colour stands in.
-    bar.style.color = adapt(chosen, THEME_BG[theme]) || 'var(--tdf-fg)';
+    bar.style.color = themeInk(chosen, theme);
   };
 
   const original = win.changeMessBoxStyle;

@@ -5,6 +5,7 @@ import { IDBFactory } from 'fake-indexeddb';
 import 'fake-indexeddb/auto';
 import { Window } from 'happy-dom';
 import { openDb } from '../../core/db.js';
+import { onDeleted } from '../../core/events.js';
 import { createSettings } from '../../core/settings.js';
 import { listPanels } from '../rail/api.js';
 import { DAY_MS } from './selectors.js';
@@ -73,18 +74,23 @@ test('start registers the Settings gear at the end of the icon row and opens the
   if (typeof cleanup === 'function') cleanup();
 });
 
-test('the default 30-day limit runs once the message view exists, deleting older lines', async () => {
+test('the default 30-day limit runs once the message view exists, deleting older lines', async (t) => {
   const win = /** @type {any} */ (new Window());
   const doc = win.document;
   const indexedDB = await seeded();
+  /** @type {string[][]} */
+  const deleted = [];
+  t.after(onDeleted((ids) => deleted.push(ids)));
   startSettings({ win, doc, css: '', indexedDB });
   await settle();
   // Waiting for the view: nothing deleted yet.
   assert.deepEqual(await storedIds(indexedDB), ['new', 'old']);
-  doc.body.innerHTML = '<div id="tdf-chat"><div class="tdf-list"><div class="tdf-msg" data-id="old"></div></div></div>';
+  doc.body.innerHTML = '<div id="tdf-chat"><div class="tdf-list"></div></div>';
   await until(async () => (await storedIds(indexedDB)).length === 1);
   assert.deepEqual(await storedIds(indexedDB), ['new']);
-  assert.equal(doc.querySelectorAll('.tdf-msg').length, 0);
+  // Announced for the view and tagging to follow.
+  await until(() => deleted.length === 1);
+  assert.deepEqual(deleted, [['old']]);
 });
 
 test('a load-time limit that fails is shown at the top of the flyout', async () => {

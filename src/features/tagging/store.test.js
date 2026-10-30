@@ -143,3 +143,50 @@ test('a message that arrives while a rebuild reads is not dropped by it', async 
   await rebuilding;
   assert.deepEqual(store.reactionsFor(A).map((r) => r.code), [':h']);
 });
+
+test('a pending echo unconfirmed while a rebuild reads stops counting once it finishes', async () => {
+  const { history, store } = await fresh();
+  await history.put(msg('alice', img(A)));
+  const echo = msg('me', ':h ^111111', { id: 'local-1', mTime: '' });
+  await history.addPending(echo);
+  // The read starts first and sees the echo pending, as when bootstrap's expirePending races it.
+  const rebuilding = store.rebuildRoom();
+  await store.applyConfirmChange({ roomID: '1', ids: ['local-1'], confirm: 'unconfirmed' });
+  await rebuilding;
+  assert.deepEqual(store.reactionsFor(A), []);
+  // Another room's change is not this store's.
+  await store.applyInbound(msg('bob', ':h'));
+  await store.applyConfirmChange({ roomID: '2', ids: [String(at)], confirm: 'unconfirmed' });
+  assert.equal(store.reactionsFor(A).length, 1);
+});
+
+test('deleted messages leave the snapshot: a later change does not write their tags back', async () => {
+  const { db, history, store, rows } = await fresh();
+  const image = msg('alice', img(A));
+  const like = msg('bob', ':h');
+  for (const m of [image, like]) await history.put(m);
+  await store.rebuildRoom();
+  // Another room's row whose message the same prune deleted.
+  const t = db.transaction(STORES.tags, 'readwrite');
+  t.objectStore(STORES.tags).add({ imageId: A, code: ':o', sender: 'dave', roomID: '2', sourceMessageId: 'gone', certain: false });
+  await new Promise((r) => (t.oncomplete = r));
+  const purge = db.transaction(STORES.messages, 'readwrite');
+  purge.objectStore(STORES.messages).delete(like.id);
+  await new Promise((r) => (purge.oncomplete = r));
+
+  await store.applyDeleted([like.id, 'gone']);
+  assert.deepEqual(store.reactionsFor(A), []);
+  assert.deepEqual(await rows(), []);
+  await store.applyInbound(msg('carol', ':d'));
+  assert.deepEqual((await rows()).map((r) => `${r.sender} ${r.code}`), ['carol :d']);
+});
+
+test('a delete announced while a rebuild reads is applied over the read', async () => {
+  const { history, store } = await fresh();
+  const like = msg('bob', ':h');
+  for (const m of [msg('alice', img(A)), like]) await history.put(m);
+  const rebuilding = store.rebuildRoom();
+  await store.applyDeleted([like.id]);
+  await rebuilding;
+  assert.deepEqual(store.reactionsFor(A), []);
+});

@@ -3,9 +3,10 @@ import { test } from 'node:test';
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { Window } from 'happy-dom';
-import { openDb } from '../../core/db.js';
-import { emitInbound } from '../../core/events.js';
+import { STORES, openDb, request } from '../../core/db.js';
+import { emitConfirmChange, emitInbound } from '../../core/events.js';
 import { createHistory } from '../../core/history.js';
+import { createLimits } from '../options/limits.js';
 import { SMILIE_CODES_FIXTURE as CODES } from './smilieCodes.fixture.js';
 import { reporter, startTagging } from './start.js';
 
@@ -82,7 +83,7 @@ function chatPage() {
 const record = (id, user, text, at, over = {}) =>
   /** @type {any} */ ({ id, roomID: '1', mTime: String(at), user, toUser: '', kind: 'public', text, receivedAt: at, ...over });
 
-test('an own message spaces the next reaction; a failed send re-derives from stored messages', async (t) => {
+test('an own message spaces the next reaction; an echo core marks unconfirmed stops counting', async (t) => {
   const { win, doc, held, chips } = chatPage();
   const indexedDB = new IDBFactory();
   const history = createHistory(await openDb({ indexedDB }));
@@ -102,8 +103,9 @@ test('an own message spaces the next reaction; a failed send re-derives from sto
   assert.equal(held.length, 1);
   assert.ok(held[0].ms > 14_000 && held[0].ms <= 15_000, String(held[0].ms));
 
-  // The earlier reaction's send failed meanwhile; the refused one triggers a re-derive.
+  // The earlier reaction's send failed meanwhile: core marks it and announces the change.
   await history.markUnconfirmed('local-1');
+  emitConfirmChange({ roomID: '1', ids: ['local-1'], confirm: 'unconfirmed' });
   const later = Date.now() + 20_000;
   t.mock.method(Date, 'now', () => later);
   held.shift()?.fn();
@@ -166,4 +168,48 @@ test('non-string or empty entries in mySmilies are not reaction codes', async ()
   await startTagging({ win, doc, css: '', indexedDB, openSmileyPicker: () => () => {} });
   await settle();
   assert.deepEqual(chips(), [':h 1']);
+});
+
+test('a pending echo core expires while the first rebuild reads stops counting', async () => {
+  const { win, doc, chips } = chatPage();
+  const indexedDB = new IDBFactory();
+  const history = createHistory(await openDb({ indexedDB }));
+  await history.put(record('1', 'alice', `[[img src="plugins/share/view.php?id=${A}"]]`, 1));
+  await history.addPending(record('local-1', 'me', ':h ^111111', 2, { mTime: '' }));
+  const started = startTagging({ win, doc, css: '', indexedDB, openSmileyPicker: () => () => {} });
+  // As bootstrap does: expirePending commits, then the change is announced, whichever of the
+  // two the tagging read sees first.
+  await history.markUnconfirmed('local-1');
+  emitConfirmChange({ roomID: '1', ids: ['local-1'], confirm: 'unconfirmed' });
+  await started;
+  await settle();
+  assert.deepEqual(chips(), []);
+});
+
+test('a Storage limit prune is not undone by the next reaction change', async () => {
+  const { win, doc, chips } = chatPage();
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  const history = createHistory(db);
+  const now = Date.now();
+  const day = 86_400_000;
+  // Two posts of the image: the first, and bob's like of it, are past the limit.
+  await history.put(record('1', 'alice', `[[img src="plugins/share/view.php?id=${A}"]]`, 1, { receivedAt: now - 4 * day }));
+  await history.put(record('2', 'bob', ':h', 2, { receivedAt: now - 3 * day }));
+  await history.put(record('3', 'dave', `[[img src="plugins/share/view.php?id=${A}"]]`, 3, { receivedAt: now - 1000 }));
+  await startTagging({ win, doc, css: '', indexedDB, openSmileyPicker: () => () => {} });
+  await settle();
+  assert.deepEqual(chips(), [':h 1']);
+
+  const gallery = { usage: async () => ({ used: 0, preview: null }), enforceLimit: async () => [] };
+  assert.deepEqual(await createLimits({ db, gallery }).pruneHistory(2), ['1', '2']);
+  await settle();
+  assert.deepEqual(chips(), []);
+  // A later reaction re-derives and persists the room: bob's pruned :h stays gone.
+  emitInbound(record('4', 'carol', ':d', 4, { receivedAt: now }));
+  await settle();
+  /** @type {Array<{ sender: string }>} */
+  const rows = await request(db.transaction(STORES.tags).objectStore(STORES.tags).getAll());
+  assert.deepEqual(rows.map((r) => r.sender), ['carol']);
+  assert.deepEqual(chips(), [':d 1']);
 });

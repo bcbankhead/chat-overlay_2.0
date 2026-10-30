@@ -59,7 +59,7 @@ test('the size limit never deletes a favourite; enforceLimit resolves to the rem
   await store.put(image({ id: 'fav', receivedAt: 1, favorite: true }));
   await store.put(image({ id: 'old', receivedAt: 2 }));
   await store.put(image({ id: 'new', receivedAt: 3 }));
-  assert.deepEqual(await store.previewLimit(150), { ids: ['old', 'new'], count: 2, bytes: 200 });
+  assert.deepEqual((await store.usage(150)).preview, { ids: ['old', 'new'], count: 2, bytes: 200 });
   assert.deepEqual(await store.enforceLimit(250), ['old']);
   assert.deepEqual(await store.enforceLimit(0), ['new']);
   assert.deepEqual(await store.enforceLimit(0), []);
@@ -74,6 +74,28 @@ test('stats split originals and thumbnails and count favourites', async () => {
   await store.put(image({ id: 'c' }));
   const totals = await store.stats();
   assert.deepEqual(totals, { count: 3, originals: 1000, thumbs: 50, favorites: 1 });
+});
+
+test('usage reads size on disk and the limit preview together, in one read', async () => {
+  const db = await openDb({ name: `gallery-store-${++n}` });
+  const store = createImageStore(db);
+  const bytes = (/** @type {number} */ size) => new Blob([new Uint8Array(size)]);
+  await store.put(image({ id: 'old', receivedAt: 1, blob: bytes(1000), thumb: bytes(30) }));
+  await store.put(image({ id: 'new', receivedAt: 2, thumb: bytes(20) }));
+  const proto = Object.getPrototypeOf(db.transaction('images', 'readonly').objectStore('images'));
+  const getAll = proto.getAll;
+  let reads = 0;
+  proto.getAll = function (...args) {
+    reads += 1;
+    return getAll.apply(this, args);
+  };
+  try {
+    assert.deepEqual(await store.usage(150), { used: 1050, preview: { ids: ['old'], count: 1, bytes: 100 } });
+    assert.deepEqual(await store.usage(null), { used: 1050, preview: null });
+  } finally {
+    proto.getAll = getAll;
+  }
+  assert.equal(reads, 2);
 });
 
 test('markBroken flags the record, and every write notifies', async () => {

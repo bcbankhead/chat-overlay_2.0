@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
+import { onClearView } from '../../core/events.js';
 import { renderSettings } from './panel.js';
 import { MB_BYTES } from './selectors.js';
 
@@ -9,7 +10,7 @@ const settle = () => new Promise((r) => setTimeout(r, 20));
 /** A settings stand-in over a plain object; `fail` makes every read reject. */
 function stubSettings(values = {}, { fail = false } = {}) {
   /** @type {Record<string, unknown>} */
-  const store = { retentionDays: 30, galleryLimitMB: null, includeMyImages: false, ...values };
+  const store = { retentionDays: 30, galleryLimitMB: null, includeMyImages: false, storeImagesOffline: false, ...values };
   /** @type {unknown[][]} */
   const writes = [];
   return {
@@ -43,7 +44,7 @@ function stubLimits({ lines = 0, images = 0, failPrune = false } = {}) {
     },
     async previewGallery(/** @type {number | null} */ mb) {
       calls.push(['previewGallery', mb]);
-      return mb === null ? null : { ids: [], count: images, bytes: images * MB_BYTES };
+      return { used: 3 * MB_BYTES, preview: mb === null ? null : { ids: [], count: images, bytes: images * MB_BYTES } };
     },
     async pruneGallery(/** @type {number | null} */ mb) {
       calls.push(['pruneGallery', mb]);
@@ -65,7 +66,6 @@ function setup({ settings = stubSettings(), limits = stubLimits(), engine = true
     win,
     settings: /** @type {any} */ (settings),
     limits: /** @type {any} */ (limits),
-    galleryBytes: async () => 3 * MB_BYTES,
     ...(loadFailure ? { loadFailure } : {}),
   });
   const [history, gallery] = /** @type {HTMLInputElement[]} */ ([...container.querySelectorAll('.tdf-opt-field input')]);
@@ -217,19 +217,34 @@ test('without the engine checkbox the Auto-scroll switch is disabled', () => {
   assert.equal(/** @type {HTMLInputElement} */ (container.querySelector('.tdf-opt-switch')).disabled, true);
 });
 
-test('Clear chat buffer calls the engine clrScreen and empties the overlay rows', () => {
+test('Clear chat buffer calls the engine clrScreen and clears the view through core', (t) => {
   const { win, doc, container } = setup();
   let cleared = 0;
   win.clrScreen = () => cleared++;
+  let viewCleared = 0;
+  t.after(onClearView(() => viewCleared++));
   /** @type {HTMLButtonElement} */ (container.querySelector('.tdf-opt-clear')).click();
   assert.equal(cleared, 1);
-  assert.equal(doc.querySelectorAll('#tdf-chat .tdf-msg').length, 0);
+  assert.equal(viewCleared, 1);
+  // The panel no longer removes the view's rows behind its back.
+  assert.equal(doc.querySelectorAll('#tdf-chat .tdf-msg').length, 2);
 });
 
-test('Clear chat buffer without the engine clrScreen still empties the overlay rows', () => {
-  const { doc, container } = setup();
+test('Clear chat buffer without the engine clrScreen still clears the view', (t) => {
+  const { container } = setup();
+  let viewCleared = 0;
+  t.after(onClearView(() => viewCleared++));
   /** @type {HTMLButtonElement} */ (container.querySelector('.tdf-opt-clear')).click();
-  assert.equal(doc.querySelectorAll('#tdf-chat .tdf-msg').length, 0);
+  assert.equal(viewCleared, 1);
+});
+
+test('the gallery hint makes one usage read per keystroke', async () => {
+  const { gallery, type, limits } = setup({ settings: stubSettings({ galleryLimitMB: 50 }) });
+  await settle();
+  limits.calls.length = 0;
+  type(gallery, '10');
+  await settle();
+  assert.deepEqual(limits.calls, [['previewGallery', 10]]);
 });
 
 test('a load-time limit failure is shown at the top of the flyout; none shows nothing', () => {
@@ -315,4 +330,27 @@ test('an Include my images read or failed write that settles after close is not 
   await settle();
   assert.equal(box.checked, false);
   assert.equal(hint.textContent, '');
+});
+
+test('Store images offline is a checkbox row after Include my images, showing and writing the setting', async () => {
+  const settings = stubSettings({ storeImagesOffline: true });
+  const { win, container } = setup({ settings });
+  await settle();
+  const [mine, offline] = /** @type {HTMLInputElement[]} */ ([...container.querySelectorAll('input.tdf-opt-check')]);
+  const row = /** @type {HTMLElement} */ (offline.closest('label.tdf-opt-row'));
+  assert.equal(row.textContent, 'Store images offline');
+  assert.equal(row.previousElementSibling?.previousElementSibling, mine.closest('label'));
+  assert.equal(offline.checked, true);
+  offline.checked = false;
+  offline.dispatchEvent(new win.Event('change'));
+  await settle();
+  assert.deepEqual(settings.writes, [['storeImagesOffline', false]]);
+
+  settings.set = async () => {
+    throw new Error('write failed');
+  };
+  offline.checked = true;
+  offline.dispatchEvent(new win.Event('change'));
+  await settle();
+  assert.equal(/** @type {HTMLElement} */ (row.nextElementSibling).textContent, 'Could not apply: write failed');
 });

@@ -184,6 +184,35 @@ test('a message the engine renders during startup is shown after the replay and 
   assert.deepEqual(shownIds(third.document), ['1', '2']);
 });
 
+test('with Chat history at 0 days messages are shown but never stored, and nothing replays', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('retentionDays', 0);
+  const count = () =>
+    new Promise((resolve) => {
+      const req = db.transaction('messages').objectStore('messages').count();
+      req.onsuccess = () => resolve(req.result);
+    });
+
+  const first = await page(bundle, indexedDB);
+  first.poll(um('1', 'bob', 'hello', '100'));
+  await settle();
+  assert.deepEqual(shownIds(first.document), ['1']);
+  assert.equal(await count(), 0);
+
+  // A line stored before the 0 was set is not replayed.
+  const t = db.transaction('messages', 'readwrite');
+  t.objectStore('messages').put({
+    id: 'legacy', roomID: '1', mTime: '99', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '',
+    size: '', family: '', text: 'old', ircFlag: '0', lineBreakFlag: '0', receivedAt: Date.now(),
+  });
+  await new Promise((resolve) => (t.oncomplete = resolve));
+  db.close();
+  const second = await page(bundle, indexedDB);
+  assert.deepEqual(shownIds(second.document), []);
+});
+
 test('a stored record that will not render is skipped with a notice; the rest replay', async () => {
   const indexedDB = new IDBFactory();
   const db = await openDb({ indexedDB });

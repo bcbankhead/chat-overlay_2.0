@@ -58,15 +58,17 @@ function reclassifyWhispers(messages) {
 }
 
 /**
- * Open (creating on first use) the database. The connection closes itself when a later
- * version opens elsewhere, so that open is not blocked; `onVersionChange` is then called
- * once, after the close, as every later use of the connection fails.
+ * Open (creating on first use) the database. The connection closes itself when a newer
+ * version asks to upgrade, and `onVersionChange` is then called once, after the close, as
+ * every later use of the connection fails. An open blocked by an older connection waits for
+ * it to close.
  * @param {{ indexedDB?: IDBFactory, name?: string, onVersionChange?: () => void }} [options]
  * @returns {Promise<IDBDatabase>}
  */
 export function openDb({ indexedDB = globalThis.indexedDB, name = DB_NAME, onVersionChange } = {}) {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(name, DB_VERSION);
+    let blocked = false;
     req.onupgradeneeded = (event) => {
       const { oldVersion } = event;
       // A fresh database gets the current schema and has nothing to migrate.
@@ -79,24 +81,24 @@ export function openDb({ indexedDB = globalThis.indexedDB, name = DB_NAME, onVer
       if (oldVersion < 2) tx.objectStore(STORES.images).createIndex('hash', 'hash');
       if (oldVersion < 3) reclassifyWhispers(tx.objectStore(STORES.messages));
     };
-    let blocked = false;
     req.onsuccess = () => {
       const db = req.result;
-      // A connection arriving after the blocked rejection has no holder, and would block the next bump.
-      if (blocked) {
-        db.close();
-        return;
-      }
       db.onversionchange = () => {
         db.close();
         onVersionChange?.();
       };
       resolve(db);
     };
-    req.onerror = () => reject(req.error);
+    req.onerror = () => {
+      const reason = req.error ?? new Error(`${name} failed to open`);
+      reject(
+        blocked
+          ? new Error(`${name} was blocked by another open connection: ${reason}`, { cause: reason })
+          : reason,
+      );
+    };
     req.onblocked = () => {
       blocked = true;
-      reject(new Error(`${name} is blocked by another open connection`));
     };
   });
 }

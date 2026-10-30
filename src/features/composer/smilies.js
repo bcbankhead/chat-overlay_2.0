@@ -74,12 +74,13 @@ function closePicker() {
 }
 
 /**
- * Open the picker with its bottom-left corner at viewport point (x, y), kept on screen.
- * `extraRows` add one action row each under the grid; a row closes the picker, then runs.
- * @param {{ x: number, y: number, extraRows?: ExtraRow[], onPick: (code: string, src: string) => void }} options
+ * Open the picker with its bottom-left corner at viewport point (x, y), or its top-left when
+ * `below`, kept on screen. `extraRows` add one action row each under the grid; a row closes
+ * the picker, then runs.
+ * @param {{ x: number, y: number, below?: boolean, extraRows?: ExtraRow[], onPick: (code: string, src: string) => void }} options
  * @returns {() => void} close
  */
-export function openSmileyPicker({ x, y, extraRows = [], onPick }) {
+export function openSmileyPicker({ x, y, below = false, extraRows = [], onPick }) {
   picker ??= build();
   onPicked = onPick;
   const extra = /** @type {HTMLElement} */ (picker.querySelector('.tdf-sm-extra'));
@@ -98,7 +99,7 @@ export function openSmileyPicker({ x, y, extraRows = [], onPick }) {
   picker.hidden = false;
   const rect = picker.getBoundingClientRect();
   const left = Math.min(Math.max(8, x), window.innerWidth - rect.width - 8);
-  const top = Math.min(Math.max(8, y - rect.height), window.innerHeight - rect.height - 8);
+  const top = Math.min(Math.max(8, below ? y : y - rect.height), window.innerHeight - rect.height - 8);
   picker.style.left = `${left + window.scrollX}px`;
   picker.style.top = `${top + window.scrollY}px`;
   return closePicker;

@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import 'fake-indexeddb/auto';
 import { Window } from 'happy-dom';
 import { openDb } from '../../core/db.js';
+import { onDeleted } from '../../core/events.js';
+import { createView } from '../../core/view.js';
 import { createLimits } from './limits.js';
 import { DAY_MS, MB_BYTES } from './selectors.js';
 
@@ -28,22 +30,16 @@ const all = (db, store) =>
 
 const msg = (id, ageDays) => ({ id, roomID: '1', mTime: id, user: 'a', receivedAt: NOW - ageDays * DAY_MS });
 
-async function setup({ gallery = fakeGallery([]) } = {}) {
+/** @param {import('node:test').TestContext} t */
+async function setup(t, { gallery = fakeGallery([]) } = {}) {
   const db = await openDb({ name: `limits-${++n}` });
   await seed(db, 'messages', [msg('old', 3), msg('day', 1.5), msg('new', 0.5)]);
-  await seed(db, 'tags', [
-    { sourceMessageId: 'old', imageId: 'i-old' },
-    { sourceMessageId: 'new' },
-    { imageId: 'i-old' },
-    { imageId: 'i-new' },
-  ]);
-  const { document: doc } = new Window();
-  doc.body.innerHTML =
-    '<div id="tdf-chat"><div class="tdf-list">' +
-    ['old', 'day', 'new'].map((id) => `<div class="tdf-msg" data-id="${id}"></div>`).join('') +
-    '</div></div>';
-  const limits = createLimits({ db, doc: /** @type {any} */ (doc), gallery, now: () => NOW });
-  return { db, doc, limits };
+  await seed(db, 'tags', [{ sourceMessageId: 'old', imageId: 'i-old' }, { imageId: 'i-new' }]);
+  const limits = createLimits({ db, gallery, now: () => NOW });
+  /** @type {string[][]} */
+  const deleted = [];
+  t.after(onDeleted((ids) => deleted.push(ids)));
+  return { db, limits, deleted };
 }
 
 /** Stands in for TDF-0009.5's store: removes the listed ids when over any limit. */
@@ -51,9 +47,10 @@ function fakeGallery(removes) {
   const calls = [];
   return {
     calls,
-    async previewLimit(bytes) {
-      calls.push(['preview', bytes]);
-      return { ids: removes, count: removes.length, bytes: removes.length * 10 };
+    async usage(bytes) {
+      calls.push(['usage', bytes]);
+      const preview = bytes === null ? null : { ids: removes, count: removes.length, bytes: removes.length * 10 };
+      return { used: 42, preview };
     },
     async enforceLimit(bytes) {
       calls.push(['enforce', bytes]);
@@ -62,10 +59,8 @@ function fakeGallery(removes) {
   };
 }
 
-const rows = (doc) => [...doc.querySelectorAll('.tdf-msg')].map((el) => el.dataset.id);
-
-test('previewHistory counts without deleting', async () => {
-  const { db, limits } = await setup();
+test('previewHistory counts without deleting', async (t) => {
+  const { db, limits } = await setup(t);
   assert.equal(await limits.previewHistory(1), 2);
   assert.equal(await limits.previewHistory(2), 1);
   assert.equal(await limits.previewHistory(0), 3);
@@ -73,42 +68,65 @@ test('previewHistory counts without deleting', async () => {
   assert.equal((await all(db, 'messages')).length, 3);
 });
 
-test('pruneHistory deletes older lines, their tags and their rows; newer records stay', async () => {
-  const { db, doc, limits } = await setup();
+test('pruneHistory deletes older lines and announces them; newer records and every tag row stay', async (t) => {
+  const { db, limits, deleted } = await setup(t);
   assert.deepEqual(await limits.pruneHistory(1), ['old', 'day']);
   assert.deepEqual((await all(db, 'messages')).map((m) => m.id), ['new']);
-  const tags = await all(db, 'tags');
-  assert.deepEqual(
-    tags.map((t) => t.sourceMessageId ?? t.imageId),
-    ['new', 'i-old', 'i-new'],
-  );
-  assert.deepEqual(rows(doc), ['new']);
+  // Tagging owns the tags store and re-derives on the announcement.
+  assert.equal((await all(db, 'tags')).length, 2);
+  assert.deepEqual(deleted, [['old', 'day']]);
 });
 
-test('pruneHistory(0) deletes every line; null deletes none', async () => {
-  const { db, doc, limits } = await setup();
+test('pruneHistory(0) deletes every line; null deletes none and announces nothing', async (t) => {
+  const { db, limits, deleted } = await setup(t);
   assert.deepEqual(await limits.pruneHistory(null), []);
   assert.equal((await all(db, 'messages')).length, 3);
+  assert.deepEqual(deleted, []);
   assert.equal((await limits.pruneHistory(0)).length, 3);
   assert.deepEqual(await all(db, 'messages'), []);
-  assert.deepEqual(rows(doc), []);
+  assert.equal(deleted.length, 1);
 });
 
-test('pruneGallery calls enforceLimit in bytes and deletes the removed images\' tags', async () => {
+test('pruned lines leave the open view through its own removal: the next row regroups', async (t) => {
+  const { limits } = await setup(t);
+  const win = new Window({ url: 'https://example.test/chat/' });
+  const doc = win.document;
+  doc.body.innerHTML = '<div id="chatContainer"></div>';
+  const view = createView({ doc, win, container: doc.getElementById('chatContainer'), css: '' });
+  t.after(onDeleted((ids) => view.removeById(ids)));
+  // One sender, close together: one group headed by the oldest.
+  const t0 = Date.UTC(2026, 0, 1) / 1000;
+  view.replay(
+    ['old', 'day', 'new'].map((id, i) => ({
+      id, roomID: '1', mTime: String(t0 + i), user: 'a', toUser: '', kind: 'public', text: id,
+      ircFlag: '0', lineBreakFlag: '0', receivedAt: i,
+    })),
+  );
+  assert.ok(doc.querySelector('[data-id="new"]').classList.contains('tdf-cont'));
+  await limits.pruneHistory(1);
+  const rows = [...doc.querySelectorAll('#tdf-chat .tdf-msg')];
+  assert.deepEqual(rows.map((el) => el.dataset.id), ['new']);
+  assert.ok(rows[0].classList.contains('tdf-head'));
+  assert.ok(!rows[0].classList.contains('tdf-cont'));
+  // The removed rows are unindexed: an admin delete by their mTime finds nothing.
+  view.removeByMTime(String(t0));
+  assert.equal(doc.querySelectorAll('#tdf-chat .tdf-msg').length, 1);
+});
+
+test('pruneGallery calls enforceLimit in bytes and leaves the tags store to tagging', async (t) => {
   const gallery = fakeGallery(['i-old']);
-  const { db, limits } = await setup({ gallery });
+  const { db, limits } = await setup(t, { gallery });
   assert.deepEqual(await limits.pruneGallery(2), ['i-old']);
   assert.deepEqual(gallery.calls, [['enforce', 2 * MB_BYTES]]);
-  const tags = await all(db, 'tags');
-  assert.deepEqual(tags.map((t) => t.sourceMessageId ?? t.imageId), ['new', 'i-new']);
+  assert.equal((await all(db, 'tags')).length, 2);
 });
 
-test('no gallery limit calls nothing', async () => {
+test('no gallery limit enforces nothing; the preview reads usage once per call', async (t) => {
   const gallery = fakeGallery(['i-old']);
-  const { limits } = await setup({ gallery });
-  assert.equal(await limits.previewGallery(null), null);
+  const { limits } = await setup(t, { gallery });
+  assert.deepEqual(await limits.previewGallery(null), { used: 42, preview: null });
   assert.deepEqual(await limits.pruneGallery(null), []);
-  assert.deepEqual(gallery.calls, []);
-  assert.deepEqual(await limits.previewGallery(5), { ids: ['i-old'], count: 1, bytes: 10 });
-  assert.deepEqual(gallery.calls, [['preview', 5 * MB_BYTES]]);
+  assert.deepEqual(gallery.calls, [['usage', null]]);
+  assert.deepEqual(await limits.previewGallery(5), { used: 42, preview: { ids: ['i-old'], count: 1, bytes: 10 } });
+  assert.deepEqual(gallery.calls, [['usage', null], ['usage', 5 * MB_BYTES]]);
 });

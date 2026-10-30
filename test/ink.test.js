@@ -1,13 +1,24 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { adapt, contrastRatio, MIN_CONTRAST, parseColor, THEME_BG } from '../src/core/ink.js';
+import { adapt, THEME_BG, themeInk } from '../src/core/ink.js';
 
-test('parseColor reads #rgb, #rrggbb and rgb(); anything else is null', () => {
-  assert.deepEqual(parseColor('#fff'), [1, 1, 1]);
-  assert.deepEqual(parseColor('#000000'), [0, 0, 0]);
-  assert.deepEqual(parseColor('rgb(255, 0, 0)'), [1, 0, 0]);
-  assert.equal(parseColor('teal'), null);
+/** WCAG contrast of two `#rrggbb` colours, computed here independently of ink.js. */
+function contrast(/** @type {string} */ a, /** @type {string} */ b) {
+  const lum = (/** @type {string} */ hex) => {
+    const [r, g, bl] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+    const lin = (/** @type {number} */ c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(bl);
+  };
+  const [x, y] = [lum(a), lum(b)];
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+}
+
+test('#rgb, #rrggbb and rgb() all parse; anything else is returned unchanged', () => {
+  assert.equal(adapt('#00f', THEME_BG.dark), '#427aff');
+  assert.equal(adapt('rgb(0, 0, 255)', THEME_BG.dark), '#427aff');
+  assert.equal(adapt('#fff', THEME_BG.light), '');
+  assert.equal(adapt('xrgb(0, 0, 0)', THEME_BG.light), 'xrgb(0, 0, 0)');
 });
 
 test('the spec vectors: dark blue lightens on dark, hot pink deepens on light', () => {
@@ -39,9 +50,7 @@ test('an unparseable background leaves the colour unchanged', () => {
   assert.equal(adapt('#003366', 'transparent'), '#003366');
 });
 
-test('rgb() is read only at the start, and a channel above 255 is clamped as painted', () => {
-  assert.deepEqual(parseColor('rgb(0, 0, 999)'), [0, 0, 1]);
-  assert.equal(parseColor('xrgb(0, 0, 0)'), null);
+test('an rgb() channel above 255 is clamped as painted', () => {
   // Clamped, rgb(0,0,999) paints as pure blue, which fails on dark and must shift.
   assert.equal(adapt('rgb(0, 0, 999)', THEME_BG.dark), '#427aff');
 });
@@ -52,9 +61,18 @@ test('every shifted colour reaches the minimum contrast on both themes', () => {
     for (const color of samples) {
       const shown = adapt(color, bg);
       if (shown === '') continue;
-      assert.ok(contrastRatio(parseColor(shown), parseColor(bg)) >= MIN_CONTRAST, `${color} on ${bg} → ${shown}`);
+      const hex = shown.startsWith('#') ? shown : null;
+      assert.ok(hex, `${color} on ${bg} kept unparsed as ${shown}`);
+      assert.ok(contrast(hex, bg) >= 4.5, `${color} on ${bg} → ${shown}`);
     }
   }
+});
+
+test('themeInk paints the adapted colour, or the theme text colour for a failing grey', () => {
+  assert.equal(themeInk('#003366', 'dark'), adapt('#003366', THEME_BG.dark));
+  assert.equal(themeInk('#003366', 'light'), '#003366');
+  assert.equal(themeInk('#000000', 'dark'), 'var(--tdf-fg)');
+  assert.equal(themeInk('teal', 'light'), 'teal');
 });
 
 test('drift: THEME_BG matches each theme\'s --tdf-bg in theme.css', () => {

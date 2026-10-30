@@ -348,6 +348,18 @@ test('openSmileyPicker takes extra rows and a pick callback, and closes on Escap
   assert.equal(picker.hidden, true, 'the returned close closes it');
 });
 
+test('openSmileyPicker sits above (x, y) by default, and below it when asked', () => {
+  const { document, win } = page();
+  win.__test.openSmileyPicker({ x: 40, y: 300, onPick: () => {} });
+  const picker = /** @type {any} */ (document.querySelector('.tdf-sm-picker'));
+  picker.getBoundingClientRect = () => ({ width: 200, height: 120, top: 0, left: 0, right: 200, bottom: 120 });
+  win.__test.openSmileyPicker({ x: 40, y: 300, onPick: () => {} });
+  assert.equal(picker.style.top, `${300 - 120 + win.scrollY}px`, 'bottom edge at y');
+  win.__test.openSmileyPicker({ x: 40, y: 300, below: true, onPick: () => {} });
+  assert.equal(picker.style.top, `${300 + win.scrollY}px`, 'top edge at y');
+  assert.equal(picker.style.left, `${40 + win.scrollX}px`);
+});
+
 test('whispering shows the chip and blue border; its × stops the whisper', () => {
   const { document, bar, win } = page();
   const chip = /** @type {any} */ (document.querySelector('.tdf-whisper-chip'));
