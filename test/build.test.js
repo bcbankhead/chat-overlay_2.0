@@ -13,6 +13,7 @@ test('build emits the userscript banner and discovers feature modules', async ()
   const root = mkdtempSync(path.join(tmpdir(), 'tdf-build-'));
   try {
     cpSync(path.join(repo, 'src', 'core'), path.join(root, 'src', 'core'), { recursive: true });
+    cpSync(path.join(repo, 'src', 'forum'), path.join(root, 'src', 'forum'), { recursive: true });
     cpSync(path.join(repo, 'package.json'), path.join(root, 'package.json'));
     mkdirSync(path.join(root, 'src', 'features', 'stub'), { recursive: true });
     writeFileSync(
@@ -38,6 +39,7 @@ test('build emits the userscript banner and discovers feature modules', async ()
 function rootWith(source) {
   const root = mkdtempSync(path.join(tmpdir(), 'tdf-build-'));
   cpSync(path.join(repo, 'src', 'core'), path.join(root, 'src', 'core'), { recursive: true });
+  cpSync(path.join(repo, 'src', 'forum'), path.join(root, 'src', 'forum'), { recursive: true });
   cpSync(path.join(repo, 'package.json'), path.join(root, 'package.json'));
   if (source !== undefined) {
     mkdirSync(path.join(root, 'src', 'features', 'stub'), { recursive: true });
@@ -168,6 +170,7 @@ test('build succeeds with no feature modules', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'tdf-build-'));
   try {
     cpSync(path.join(repo, 'src', 'core'), path.join(root, 'src', 'core'), { recursive: true });
+    cpSync(path.join(repo, 'src', 'forum'), path.join(root, 'src', 'forum'), { recursive: true });
     cpSync(path.join(repo, 'package.json'), path.join(root, 'package.json'));
     const { features } = await build({ match: MATCH, root, outfile: path.join(root, 'dist', 'out.js') });
     assert.deepEqual(features, []);
@@ -250,5 +253,52 @@ test('the committed example config is valid and uses the neutral host', () => {
     assert.equal(readMatch(root), MATCH);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the forum include is written beside the chat files, with its own banner and the package version', async () => {
+  const root = rootWith(undefined);
+  try {
+    const { outputs } = await build({ match: MATCH, root, outfile: path.join(root, 'dist', 'tdf-chat.user.js') });
+    assert.equal(outputs.forum, path.join(root, 'dist', 'tdf-forum-sticky-header.js'));
+    const { version } = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+    const code = readFileSync(outputs.forum, 'utf8');
+    assert.equal(code.split('\n')[0], `// TDF Forum sticky header v${version} — site include build (https://github.com/bcbankhead/chat-overlay_2.0)`);
+    assert.ok(code.includes('__tdfChat2ForumLoaded'));
+    assert.ok(!code.includes('__tdfChat2Loaded'), 'the chat bootstrap is not in the forum bundle');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a userscript-manager API in the forum include fails the build and writes nothing', async () => {
+  const root = rootWith(undefined);
+  try {
+    writeFileSync(path.join(root, 'src', 'forum', 'index.js'), "GM_log('x');\n");
+    await assert.rejects(build({ match: MATCH, root }), /tdf-forum-sticky-header\.js: line \d+ uses a userscript-manager API/);
+    assert.ok(!existsSync(path.join(root, 'dist')), 'dist/ left behind');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a missing forum include fails the build and writes nothing', async () => {
+  const root = rootWith(undefined);
+  try {
+    rmSync(path.join(root, 'src', 'forum'), { recursive: true, force: true });
+    await assert.rejects(build({ match: MATCH, root }), /Could not resolve .*forum.*index\.js/);
+    assert.ok(!existsSync(path.join(root, 'dist')), 'dist/ left behind');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the real forum include's second copy is inert", async () => {
+  const out = mkdtempSync(path.join(tmpdir(), 'tdf-build-'));
+  try {
+    const { outputs } = await build({ match: MATCH, root: repo, outfile: path.join(out, 'tdf-chat.user.js') });
+    assert.deepEqual(checkSecondCopyInert(readFileSync(outputs.forum, 'utf8')), []);
+  } finally {
+    rmSync(out, { recursive: true, force: true });
   }
 });

@@ -1,0 +1,19 @@
+/* TDF-0028: the chatting-users item lays its names out in a line, and the navbar block stays
+   at the top of the window once moved out of #page-header (navbar.js). */
+#tdf-chatting-users {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25em;
+}
+
+.tdf-sticky-nav {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+:where(.tdf-sticky-nav) {
+  background-color: #fff;
+}

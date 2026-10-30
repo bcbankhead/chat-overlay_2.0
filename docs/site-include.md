@@ -17,12 +17,14 @@ cp build.local.example.json build.local.json   # then set "match"
 npm run build
 ```
 
-This writes two files:
+This writes three files:
 
 - `dist/tdf-chat.js`: the site include. `npm run deploy` uploads this one.
 - `dist/tdf-chat.user.js`: the userscript, for members who install it with Tampermonkey.
+- `dist/tdf-forum-sticky-header.js`: the forum pages' include (see
+  [Forum sticky header](#forum-sticky-header)). `npm run deploy` uploads this one too.
 
-The build exits with an error (do not upload its output) if either file would use a userscript-manager API
+The build exits with an error (do not upload its output) if any file would use a userscript-manager API
 (`GM_*`, `GM.*`, `unsafeWindow`), or if a second copy on the same page would do anything.
 
 ## Install
@@ -34,10 +36,12 @@ The build exits with an error (do not upload its output) if either file would us
    npm run deploy
    ```
 
-   `npm run deploy` runs the tests and the build, then uploads `dist/tdf-chat.js` to
-   `s3://sb76images/tdf_chat_2.0/tdf-chat.js` with `Content-Type: text/javascript` and
-   `Cache-Control: max-age=300`. If the tests or the build fail, nothing is uploaded and the
-   command exits with an error. The script uses the AWS profile `conduit`; no credentials are
+   `npm run deploy` runs the tests and the build, then uploads `dist/tdf-forum-sticky-header.js`
+   and then `dist/tdf-chat.js` to `s3://sb76images/tdf_chat_2.0/` with
+   `Content-Type: text/javascript` and `Cache-Control: max-age=300`. `tdf-chat.js` goes last
+   because its first line is the live version marker: if an upload fails, the live version is
+   unchanged and the deploy can simply be re-run. If the tests or the build fail, nothing is
+   uploaded and the command exits with an error. The script uses the AWS profile `conduit`; no credentials are
    stored in the repository.
 2. In the chat's `index.php`, add a script tag. It works anywhere on the page; inside
    `<head>` is recommended:
@@ -101,3 +105,52 @@ curl -s https://sb76images.s3.us-west-2.amazonaws.com/tdf_chat_2.0/tdf-chat.js |
 
 `curl -I https://sb76images.s3.us-west-2.amazonaws.com/tdf_chat_2.0/tdf-chat.js` shows the
 headers, including `Content-Type` and `Cache-Control`.
+
+## Forum sticky header
+
+A second site include, for the forum pages rather than the chat. It replaces the "TDF: Chatting
+users in nav + sticky navbar" userscript:
+
+- The Chat link and the "Chatting users" list (from the "Who is online" block) move into a row
+  under the breadcrumbs.
+- The navbar block moves out of the page header, so it stays pinned to the top of the window
+  while the whole page scrolls.
+
+Anything the page lacks (the Chat link, the online list, the header) is skipped; the rest still
+happens.
+
+### Build and deploy
+
+`npm run build` writes it as `dist/tdf-forum-sticky-header.js`, beside the chat files, and checks it
+the same way: the build fails, writing nothing, if it uses a userscript-manager API or a second copy
+would do anything. `npm run deploy` uploads it to
+`s3://sb76images/tdf_chat_2.0/tdf-forum-sticky-header.js`, with the same `Content-Type` and
+`Cache-Control` as `tdf-chat.js`, before `tdf-chat.js`. Both files carry the same `package.json`
+version, so the Updating steps above cover both.
+
+### Install
+
+In the forum's header template, add a script tag beside the forum's other header scripts:
+
+```html
+<script src="https://sb76images.s3.us-west-2.amazonaws.com/tdf_chat_2.0/tdf-forum-sticky-header.js"></script>
+```
+
+Inside `<head>`, its style is added at once, before the page first paints, and the moves wait until
+the page has been parsed. Placed at the end of `<body>`, it does everything immediately; the navbar
+may then be seen in its old place for a moment.
+
+### Members who also run the userscript
+
+They get one row. The include does nothing on a second load (`window.__tdfChat2ForumLoaded`), builds
+no row when the userscript's `#tm-chat-row` is already there, and leaves a navbar that is already out
+of the header where it is. If the userscript runs second, it finds nothing left to move. Members can
+uninstall the userscript once the tag is live.
+
+### Checking the live copy
+
+```sh
+curl -s https://sb76images.s3.us-west-2.amazonaws.com/tdf_chat_2.0/tdf-forum-sticky-header.js | head -1
+# // TDF Forum sticky header v<version> — site include build …
+curl -I https://sb76images.s3.us-west-2.amazonaws.com/tdf_chat_2.0/tdf-forum-sticky-header.js
+```
