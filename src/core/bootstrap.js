@@ -4,7 +4,8 @@
 // itself with its own `__tdfChat2*` flag; build.mjs's checkSecondCopyInert verifies that a
 // second copy touches nothing past those flags. The flag is set at once, but the start waits
 // for the chat markup (ready.js): the site include may run from <head>, before the body is
-// parsed. Placed there, the body is cloaked until the overlay mounts (cloak.js).
+// parsed. Placed there, the body is cloaked until the page is laid out and the core and every
+// feature have reported ready (reveal.js), then fades in (cloak.js).
 
 import { createAvatarResolver } from './avatarResolver.js';
 import { CLOAK_MS, cloak } from './cloak.js';
@@ -19,27 +20,63 @@ import { mount, unmount } from './shell.js';
 import { FADE_CLASS, createTheme } from './theme.js';
 import css from './theme.css';
 import { whenDomReady } from './ready.js';
+import { expectReady, pendingNames, whenAllReady } from './reveal.js';
 import { createView } from './view.js';
 
 if (!(/** @type {any} */ (window).__tdfChat2Loaded)) {
   /** @type {any} */ (window).__tdfChat2Loaded = true;
+  // Registered before any feature's entry runs, so the gate cannot open before the core does.
+  const coreReady = expectReady('core');
   // A tag just before </body> also runs while loading, but the chat has painted by then.
-  const lift =
-    document.readyState === 'loading' && !document.body
-      ? cloak(document, window, CLOAK_MS, () =>
-          console.warn(`TDF Chat 2.0: still starting after ${CLOAK_MS / 1000} s; showing the page.`),
-        )
-      : () => {};
+  const cloaked = document.readyState === 'loading' && !document.body;
+  // Cloaked only while loading, so window load is always still to come.
+  let loaded = false;
+  const lift = cloaked
+    ? cloak(document, window, CLOAK_MS, () => {
+        const waiting = [...pendingNames(), ...(loaded ? [] : ['window load'])];
+        console.warn(`TDF Chat 2.0: still starting after ${CLOAK_MS / 1000} s (waiting on ${waiting.join(', ')}); showing the page.`);
+      })
+    : () => {};
+  if (cloaked) revealWhenSettled();
   whenDomReady(document, () => {
-    start(lift).catch((err) => {
+    start(lift, coreReady).catch((err) => {
       lift();
+      coreReady();
       startFailed(describeError(err));
     });
   });
+
+  /**
+   * Fade the page in once every participant is ready and the engine has laid it out: its
+   * window.onload runs initAll, whose resizeDivs sizes the chat's containers. The tick after
+   * `load` lets an onload handler assigned after this listener run first.
+   */
+  function revealWhenSettled() {
+    let ready = false;
+    const settled = () => {
+      if (ready && loaded) window.setTimeout(lift, 0);
+    };
+    whenAllReady(() => {
+      ready = true;
+      settled();
+    });
+    window.addEventListener(
+      'load',
+      () => {
+        loaded = true;
+        settled();
+      },
+      { once: true },
+    );
+  }
 }
 
-/** @param {() => void} lift  removes the pre-mount cloak; called on every way out */
-async function start(lift) {
+/**
+ * @param {() => void} lift  reveals the page at once; called on every way out that leaves the
+ *   original chat showing
+ * @param {() => void} coreReady  reports the core ready to the reveal gate
+ */
+async function start(lift, coreReady) {
   const win = /** @type {any} */ (window);
   const container = document.getElementById(MAIN_DIV);
   // Pages under the @match without a chat (login, transcripts) are expected: nothing to do.
@@ -110,7 +147,7 @@ async function start(lift) {
     );
     replay(view, records);
     shown = view;
-    lift();
+    coreReady();
     hook.attach({ history, view, pending, replayed: records, storing: () => retentionDays !== 0 });
     // Expired with no inbound event; a feature that read the room before the expiry follows it.
     if (expired.length) {

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { Window } from 'happy-dom';
 import { build } from '../build.mjs';
-import { CLOAK_ID } from '../src/core/cloak.js';
+import { CLOAK_FADE_MS, CLOAK_ID, CLOAK_MS } from '../src/core/cloak.js';
 import { DB_VERSION, openDb } from '../src/core/db.js';
 import { createSettings } from '../src/core/settings.js';
 
@@ -69,10 +69,17 @@ async function page(
 /**
  * The site include placed in <head>: the script runs while the document is still loading and
  * the body has not been parsed, so document.body is null. `ready()` parses the body and fires
- * DOMContentLoaded, then the engine's window.onload, which renders `onload` messages.
+ * DOMContentLoaded, then the engine's polling, which renders `onload` messages. `load()`
+ * fires window load. happy-dom fires its own as soon as the window is created, long before a
+ * real page's images and adverts would let it; that one is held back from the script.
  */
-async function headPage(bundle, indexedDB, { body, globals = {}, onload = [] } = {}) {
-  const shell = await page(bundle, indexedDB, { body: '', globals, loading: true, noBody: true });
+async function headPage(bundle, indexedDB, { body, globals = {}, onload = [], beforeEval } = {}) {
+  let loading = true;
+  const holdLoad = (window) => {
+    window.addEventListener('load', (event) => loading && event.stopImmediatePropagation());
+    beforeEval?.(window);
+  };
+  const shell = await page(bundle, indexedDB, { body: '', globals, loading: true, noBody: true, beforeEval: holdLoad });
   const { window, document, poll } = shell;
   const ready = async () => {
     delete (/** @type {any} */ (document)).body;
@@ -85,11 +92,20 @@ async function headPage(bundle, indexedDB, { body, globals = {}, onload = [] } =
     if (onload.length) poll(...onload);
     await settle();
   };
-  return { ...shell, ready };
+  const load = async () => {
+    loading = false;
+    Object.defineProperty(document, 'readyState', { value: 'complete', configurable: true });
+    window.dispatchEvent(new window.Event('load'));
+    await settle();
+  };
+  return { ...shell, ready, load };
 }
 
-/** Whether the pre-mount cloak is on the page. */
-const cloaked = (document) => document.getElementById(CLOAK_ID) !== null;
+/**
+ * Whether the pre-mount cloak is still hiding the body. Once lifted it stays a moment longer
+ * while the body fades in, then goes.
+ */
+const cloaked = (document) => /body \{ opacity: 0 !important; pointer-events: none !important; visibility: hidden !important; \}/.test(document.getElementById(CLOAK_ID)?.textContent ?? '');
 /**
  * The text of the bootstrap's banners, which sit directly on <body> (the rail keeps a
  * role="status" box of its own). Strings, so a failed assertion never inspects a DOM node.
@@ -362,7 +378,7 @@ test('with both the userscript and the site include on a page, the interface is 
   assert.equal(stored, 1);
 });
 
-test('from <head>, nothing mounts while loading, the body is cloaked, and everything mounts at DOMContentLoaded', async () => {
+test('from <head>, nothing mounts while loading, everything mounts at DOMContentLoaded, and the page fades in after load', async () => {
   const indexedDB = new IDBFactory();
   const head = await headPage(await included(), indexedDB, { onload: [um('1', 'bob', 'at onload', '100')] });
   const { document } = head;
@@ -378,13 +394,161 @@ test('from <head>, nothing mounts while loading, the body is cloaked, and everyt
   for (const feature of ['gallery', 'options', 'tagging']) {
     assert.ok(document.getElementById(`tdf-${feature}-style`), `${feature} started`);
   }
-  assert.equal(cloaked(document), false, 'cloak lifted');
+  assert.equal(cloaked(document), true, 'still cloaked: every feature is ready, but the engine has not laid the page out');
   assert.deepEqual(banners(document), []);
   assert.deepEqual(shownIds(document), ['1'], 'the onload message is shown');
+
+  // The engine's own onload, assigned after the include ran, runs before the reveal.
+  let laidOut = false;
+  head.window.addEventListener('load', () => (laidOut = true));
+  await head.load();
+  assert.equal(laidOut, true);
+  assert.equal(cloaked(document), false, 'revealed after window load');
+  assert.ok(document.getElementById(CLOAK_ID), 'fading in');
+  await new Promise((r) => setTimeout(r, CLOAK_FADE_MS + 40));
+  assert.equal(document.getElementById(CLOAK_ID), null, 'removed after the fade');
 
   const again = await page(await included(), indexedDB);
   assert.deepEqual(shownIds(again.document), ['1'], 'and stored');
 });
+
+test('from <head>, a start that never reports ready is shown by the failsafe, which names what is pending', async () => {
+  // An open that never answers: the core and the features with their own database hang.
+  const hung = { open: () => ({}) };
+  /** @type {Array<() => void>} */
+  const failsafe = [];
+  const warnings = [];
+  const head = await headPage(await included(), hung, {
+    beforeEval: (window) => {
+      const setTimeout = window.setTimeout.bind(window);
+      window.setTimeout = (fn, ms, ...rest) => (ms === CLOAK_MS ? (failsafe.push(fn), 0) : setTimeout(fn, ms, ...rest));
+      window.console.warn = (...args) => warnings.push(args.join(' '));
+    },
+  });
+  await head.ready();
+  await head.load();
+  assert.equal(cloaked(head.document), true, 'window load alone does not reveal it');
+  assert.equal(failsafe.length, 1);
+  failsafe[0]();
+  assert.equal(cloaked(head.document), false);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /still starting after 8 s \(waiting on core, [^)]*\); showing the page\./);
+  for (const name of ['tagging', 'rail']) assert.ok(warnings[0].includes(name), `${name} named`);
+  assert.doesNotMatch(warnings[0], /window load/);
+});
+
+test('from <head>, with every feature ready but no window load, the failsafe names the load', async () => {
+  /** @type {Array<() => void>} */
+  const failsafe = [];
+  const warnings = [];
+  const head = await headPage(await included(), new IDBFactory(), {
+    beforeEval: (window) => {
+      const setTimeout = window.setTimeout.bind(window);
+      window.setTimeout = (fn, ms, ...rest) => (ms === CLOAK_MS ? (failsafe.push(fn), 0) : setTimeout(fn, ms, ...rest));
+      window.console.warn = (...args) => warnings.push(args.join(' '));
+    },
+  });
+  await head.ready();
+  assert.equal(cloaked(head.document), true);
+  failsafe[0]();
+  assert.equal(cloaked(head.document), false);
+  assert.match(warnings[0], /\(waiting on window load\)/);
+});
+
+test('from <head>, a feature that will not start does not hold the reveal', async () => {
+  // No user list, so no rail; and a composer whose start throws.
+  const head = await headPage(await included(), new IDBFactory(), {
+    body: '<div id="chatContainer" style="height:300px"></div><input type="checkbox" id="autoScrollID" checked><textarea id="optionsBar"></textarea>',
+    beforeEval: (window) => {
+      const append = window.document.head.appendChild.bind(window.document.head);
+      window.document.head.appendChild = (node) => {
+        if (node.id === 'tdf-composer-style') throw new Error('composer broke');
+        return append(node);
+      };
+    },
+  });
+  await head.ready();
+  assert.ok(head.document.getElementById('tdf-chat'), 'overlay mounted');
+  assert.equal(head.document.getElementById('tdf-rail'), null);
+  assert.equal(cloaked(head.document), true);
+  await head.load();
+  assert.equal(cloaked(head.document), false);
+});
+
+test('from <head>, a participant that reports ready after window load still reveals the page', async () => {
+  // Every database open succeeds only once released, so the core is still pending at load.
+  const real = new IDBFactory();
+  /** @type {Array<() => void>} */
+  const held = [];
+  let holding = true;
+  const indexedDB = {
+    open(...args) {
+      const req = real.open(...args);
+      const dispatch = req.dispatchEvent.bind(req);
+      req.dispatchEvent = (event) => (holding && event.type === 'success' ? (held.push(() => dispatch(event)), true) : dispatch(event));
+      return req;
+    },
+  };
+  /** @type {Array<() => void>} */
+  const failsafe = [];
+  const head = await headPage(await included(), indexedDB, {
+    beforeEval: (window) => {
+      const setTimeout = window.setTimeout.bind(window);
+      window.setTimeout = (fn, ms, ...rest) => (ms === CLOAK_MS ? (failsafe.push(fn), 0) : setTimeout(fn, ms, ...rest));
+    },
+  });
+  await head.ready();
+  await head.load();
+  assert.ok(held.length > 0, 'an open is held');
+  assert.equal(head.document.getElementById('tdf-chat'), null, 'the core is still pending');
+  assert.equal(cloaked(head.document), true, 'load alone does not reveal it');
+
+  holding = false;
+  for (const fn of held.splice(0)) fn();
+  await settle();
+  assert.ok(head.document.getElementById('tdf-chat'), 'overlay mounted');
+  assert.equal(cloaked(head.document), false, 'revealed once the last participant reported');
+  assert.equal(failsafe.length, 1, 'the failsafe was armed but never ran');
+});
+
+for (const { feature, hook } of [
+  { feature: 'tagging', hook: 'append' },
+  { feature: 'gallery', hook: 'append' },
+  { feature: 'options', hook: 'append' },
+  { feature: 'rail', hook: 'roomIcon' },
+]) {
+  test(`from <head>, a ${feature} start that throws does not hold the reveal`, async () => {
+    let thrown = false;
+    const fail = () => {
+      thrown = true;
+      throw new Error(`${feature} broke`);
+    };
+    /** @type {Array<() => void>} */
+    const failsafe = [];
+    const head = await headPage(await included(), new IDBFactory(), {
+      beforeEval: (window) => {
+        const { document } = window;
+        const setTimeout = window.setTimeout.bind(window);
+        window.setTimeout = (fn, ms, ...rest) => (ms === CLOAK_MS ? (failsafe.push(fn), 0) : setTimeout(fn, ms, ...rest));
+        window.console.error = () => {};
+        if (hook === 'append') {
+          const append = document.head.appendChild.bind(document.head);
+          document.head.appendChild = (node) => (node.id === `tdf-${feature}-style` ? fail() : append(node));
+        } else {
+          const get = document.getElementById.bind(document);
+          document.getElementById = (id) => (id === 'roomIcon' ? fail() : get(id));
+        }
+      },
+    });
+    await head.ready();
+    assert.equal(thrown, true, `${feature}'s start threw`);
+    assert.ok(head.document.getElementById('tdf-chat'), 'overlay mounted');
+    assert.equal(cloaked(head.document), true);
+    await head.load();
+    assert.equal(cloaked(head.document), false);
+    assert.equal(failsafe.length, 1, 'the failsafe was armed but never ran');
+  });
+}
 
 test('from <head>, a page with no chat container exits silently and lifts the cloak', async () => {
   const head = await headPage(await included(), new IDBFactory(), { body: '<p>login</p>' });

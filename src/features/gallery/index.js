@@ -3,6 +3,7 @@
 
 import { MAIN_DIV } from '../../core/parse.js';
 import { whenDomReady } from '../../core/ready.js';
+import { expectReady } from '../../core/reveal.js';
 import css from './gallery.css';
 import { startGallery } from './start.js';
 
@@ -11,7 +12,12 @@ const win = /** @type {any} */ (window);
 // build.mjs's second-copy check sets).
 if (!win.__tdfChat2Gallery) {
   win.__tdfChat2Gallery = true;
+  const done = expectReady('gallery');
   whenDomReady(document, () => {
-    if (document.getElementById(MAIN_DIV)) startGallery({ win: window, doc: document, css });
+    try {
+      if (document.getElementById(MAIN_DIV)) startGallery({ win: window, doc: document, css });
+    } finally {
+      done();
+    }
   });
 }

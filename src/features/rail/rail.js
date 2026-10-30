@@ -346,19 +346,33 @@ export function readRaise(doc, target) {
 /**
  * Mount the sidebar, its rooms and the list observer once the message view's #tdf-chat
  * exists, so the rail never mounts when the overlay did not start. If #tdf-chat is later
- * removed (the bootstrap undoing a failed start), the rail tears itself down.
- * @param {{ doc: Document, win: Window, css: string, shell: RailShell }} deps
+ * removed (the bootstrap undoing a failed start), the rail tears itself down. `onReady` is
+ * called once: after the first mount attempt beside #tdf-chat, whether or not it succeeds, or
+ * at once when the rail does not start (the page's load fade-in waits on it, TDF-0026).
+ * @param {{ doc: Document, win: Window, css: string, shell: RailShell, onReady?: () => void }} deps
  * @returns {boolean} false when this page has no user list, or another copy of the script
  *   already started the rail
  */
-export function startRail({ doc, win, css, shell }) {
+export function startRail({ doc, win, css, shell, onReady }) {
   const w = /** @type {any} */ (win);
+  let reported = false;
+  const ready = () => {
+    if (reported) return;
+    reported = true;
+    onReady?.();
+  };
   // Only the first copy of the script (userscript plus site include) starts the rail, so the
   // registry it reads is the one that copy's other slices register into. The flag is under
   // the __tdfChat2 prefix build.mjs's second-copy check sets.
-  if (w.__tdfChat2Rail) return false;
+  if (w.__tdfChat2Rail) {
+    ready();
+    return false;
+  }
   const userContainer = doc.getElementById('userContainer');
-  if (!userContainer) return false;
+  if (!userContainer) {
+    ready();
+    return false;
+  }
   w.__tdfChat2Rail = true;
   const raise = readRaise(doc, userContainer);
 
@@ -366,7 +380,11 @@ export function startRail({ doc, win, css, shell }) {
   let teardown = null;
 
   const mount = () => {
-    if (!doc.getElementById('tdf-chat') || doc.getElementById('tdf-rail')) return;
+    if (!doc.getElementById('tdf-chat')) return;
+    if (doc.getElementById('tdf-rail')) {
+      ready();
+      return;
+    }
     if (!doc.getElementById('tdf-rail-style')) {
       const style = doc.createElement('style');
       style.id = 'tdf-rail-style';
@@ -419,6 +437,7 @@ export function startRail({ doc, win, css, shell }) {
         console.error('Rail:', err);
       }
     }
+    ready();
   };
 
   mount();

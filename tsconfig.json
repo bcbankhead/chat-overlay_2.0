@@ -25,6 +25,7 @@
     "src/core/preview.js",
     "src/core/ready.js",
     "src/core/cloak.js",
+    "src/core/reveal.js",
     "src/features/composer/link.js",
     "src/features/composer/sharetext.js",
     "src/features/profile/textStyle.js",

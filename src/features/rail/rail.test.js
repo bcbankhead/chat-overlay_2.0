@@ -42,7 +42,7 @@ function stubShell(initial = /** @type {'light' | 'dark' | null} */ ('light')) {
   return shell;
 }
 
-function setup({ host = true, extra = '', flags = {}, shell = stubShell(), prepare = (_doc) => {} } = {}) {
+function setup({ host = true, extra = '', flags = {}, shell = stubShell(), prepare = (_doc) => {}, onReady } = {}) {
   const win = new Window();
   const doc = win.document;
   doc.body.innerHTML =
@@ -67,7 +67,7 @@ function setup({ host = true, extra = '', flags = {}, shell = stubShell(), prepa
     doc.getElementById('whisperID').value = '';
   };
   prepare(doc);
-  assert.equal(startRail({ doc, win, css: '/* rail */', shell }), true);
+  assert.equal(startRail({ doc, win, css: '/* rail */', shell, onReady }), true);
   // Removing #tdf-chat is the rail's teardown path (a failed start); tests use it to clean up.
   const teardown = async () => {
     doc.getElementById('tdf-chat')?.remove();
@@ -600,8 +600,30 @@ test('the rail mounts again when #tdf-chat comes back', async () => {
 test('a page with no user list mounts nothing', () => {
   const win = new Window();
   win.document.body.innerHTML = '<div id="tdf-chat"></div>';
-  assert.equal(startRail({ doc: win.document, win, css: '', shell: stubShell() }), false);
+  let ready = 0;
+  assert.equal(startRail({ doc: win.document, win, css: '', shell: stubShell(), onReady: () => ready++ }), false);
   assert.equal(win.document.getElementById('tdf-rail'), null);
+  assert.equal(ready, 1, 'a rail that will not start reports ready at once');
+});
+
+test('onReady fires once, after the first mount beside #tdf-chat, and not on a remount', async () => {
+  let ready = 0;
+  const t = setup({ host: false, onReady: () => ready++ });
+  await nextFrame();
+  assert.equal(ready, 0, 'not before #tdf-chat exists');
+  t.doc.body.insertAdjacentHTML('afterbegin', '<div id="tdf-chat"></div>');
+  await nextFrame();
+  assert.ok(t.doc.getElementById('tdf-rail'));
+  assert.equal(ready, 1);
+  await t.teardown();
+  t.doc.body.insertAdjacentHTML('afterbegin', '<div id="tdf-chat"></div>');
+  await nextFrame();
+  assert.ok(t.doc.getElementById('tdf-rail'));
+  assert.equal(ready, 1);
+  let second = 0;
+  assert.equal(startRail({ doc: t.doc, win: t.win, css: '', shell: stubShell(), onReady: () => second++ }), false);
+  assert.equal(second, 1, 'a second copy reports ready at once');
+  await t.teardown();
 });
 
 test('a status rewrite with the same text does not re-render the list', async () => {
@@ -661,7 +683,9 @@ test('an open panel replaced under its id re-opens; one unregistered closes', as
 });
 
 test('a user list that cannot mount is reported and leaves the engine controls showing', async () => {
+  let ready = 0;
   const t = setup({
+    onReady: () => ready++,
     extra: '<div id="roomIcon"></div>',
     prepare: (doc) => {
       doc.getElementById('userContainer').getBoundingClientRect = () => ({ top: 80, left: 900, width: 236, height: 500 });
@@ -675,6 +699,7 @@ test('a user list that cannot mount is reported and leaves the engine controls s
   });
   assert.ok(t.doc.getElementById('tdf-rail').classList.contains('tdf-rail-failed'));
   assert.deepEqual(t.errors(), ['Rail: unreadable']);
+  assert.equal(ready, 1, 'a failed mount still reports ready');
   assert.equal(t.doc.querySelector('.tdf-rail-users'), null);
   const { top, height } = t.doc.getElementById('tdf-rail').style;
   assert.deepEqual([top, height], ['80px', '500px'], 'no raise over the engine row it re-shows');
