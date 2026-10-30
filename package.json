@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
+    "deploy": "npm test && npm run build && aws s3 cp dist/tdf-chat.js s3://sb76images/tdf_chat_2.0/tdf-chat.js --profile conduit --content-type text/javascript --cache-control max-age=300 --no-cli-pager",
     "test": "node --test \"test/*.test.js\" \"src/features/*/*.test.js\"",
     "typecheck": "tsc -p tsconfig.json"
   },
