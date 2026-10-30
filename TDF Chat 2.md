@@ -43,7 +43,7 @@ Key features,
 7. Styling
     - stick with standard linear look.
     - respect other users' font choices as sent, however, reformat the font size to be consistent.
-    - entries will become elements with a hover-state that features a faint background highlight when moused over
+    - entries sit on the plain chat background with no hover highlight (TDF-0012); only whispers carry a tint
     - links will feature a contrast hover
     - we'll do a dark and light mode.
 8. Forward compatibility

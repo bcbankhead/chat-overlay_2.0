@@ -50,29 +50,3 @@ export function parseMegabytes(input) {
 export function megabytesToBytes(mb) {
   return mb * MB_BYTES;
 }
-
-/**
- * @typedef {object} TagRef
- * @property {number} id
- * @property {string} [sourceMessageId]
- * @property {string} [imageId]
- */
-
-/**
- * Ids of the tags left pointing at a removed message or image.
- * @param {TagRef[]} tags
- * @param {Iterable<string>} messageIds
- * @param {Iterable<string>} imageIds
- * @returns {number[]}
- */
-export function tagsToDelete(tags, messageIds, imageIds) {
-  const messages = new Set(messageIds);
-  const images = new Set(imageIds);
-  return tags
-    .filter(
-      (t) =>
-        (t.sourceMessageId !== undefined && messages.has(t.sourceMessageId)) ||
-        (t.imageId !== undefined && images.has(t.imageId)),
-    )
-    .map((t) => t.id);
-}

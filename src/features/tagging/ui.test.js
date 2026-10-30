@@ -154,7 +154,7 @@ test('clicking a posted image opens the picker below the pointer; a pick likes i
   const event = p.click(p.posted(), 50, 60);
   assert.equal(event.defaultPrevented, true);
   assert.equal(p.pickers.length, 1);
-  assert.deepEqual([p.pickers[0].x, p.pickers[0].y], [50, 68]);
+  assert.deepEqual([p.pickers[0].x, p.pickers[0].y, p.pickers[0].below], [50, 68, true]);
   assert.deepEqual(p.pickers[0].extraRows.map((/** @type {any} */ r) => r.label), ['Open full size']);
   p.pickers[0].onPick(':L');
   assert.deepEqual(p.hearts(), ['♥1 mine queued']);

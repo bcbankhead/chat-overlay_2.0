@@ -1,11 +1,12 @@
 // The Settings flyout (UI design 2026-10-27, Flyouts → Settings). Chat: the Auto-scroll switch
 // over the engine's #autoScrollID, and Clear chat buffer. Storage: Chat history (days),
-// Gallery size limit (MB) and Include my images (TDF-0009.13). A hint under each field says
-// what the typed value would delete; the setting is written, and the deletion runs, only when
-// the value is committed (change: Enter or leaving the field). The rail gives the flyout body
-// its scrollbar.
+// Gallery size limit (MB), Include my images (TDF-0009.13) and Store images offline. A hint
+// under each field says what the typed value would delete; the setting is written, and the
+// deletion runs, only when the value is committed (change: Enter or leaving the field). The
+// rail gives the flyout body its scrollbar.
 
 import { describeError } from '../../core/errors.js';
+import { clearView } from '../../core/events.js';
 import { MB_BYTES, parseDays, parseMegabytes } from './selectors.js';
 
 /**
@@ -14,7 +15,6 @@ import { MB_BYTES, parseDays, parseMegabytes } from './selectors.js';
  * @property {Window} win
  * @property {import('../../core/settings.js').Settings} settings
  * @property {import('./limits.js').Limits} limits
- * @property {() => Promise<number>} galleryBytes  the gallery's size on disk
  * @property {() => string | null} [loadFailure]  why the load-time limits did not run, if they failed
  */
 
@@ -29,7 +29,7 @@ const megabytes = (bytes) => `${(bytes / MB_BYTES).toFixed(1)} MB`;
  * @param {PanelDeps} deps
  * @returns {() => void}
  */
-export function renderSettings(container, { doc, win, settings, limits, galleryBytes, loadFailure = () => null }) {
+export function renderSettings(container, { doc, win, settings, limits, loadFailure = () => null }) {
   /** @type {Array<() => void>} */
   const undo = [];
   let closed = false;
@@ -76,13 +76,14 @@ export function renderSettings(container, { doc, win, settings, limits, galleryB
     scroll.disabled = true;
   }
 
-  // Clear chat buffer: the engine's clrScreen() for its hidden view, then the overlay's rows.
+  // Clear chat buffer: the engine's clrScreen() for its hidden view, then the overlay's own
+  // clear through core, so the view's index empties with its rows.
   const clear = el('button', 'tdf-opt-clear', 'Clear chat buffer');
   clear.type = 'button';
   clear.addEventListener('click', () => {
     const engineClear = /** @type {any} */ (win).clrScreen;
     if (typeof engineClear === 'function') engineClear();
-    for (const row of doc.querySelectorAll('#tdf-chat .tdf-list > .tdf-msg')) row.remove();
+    clearView();
   });
 
   root.append(
@@ -115,28 +116,40 @@ export function renderSettings(container, { doc, win, settings, limits, galleryB
   const gallery = field('Gallery size limit (MB)', 'No limit');
   gallery.input.min = '1';
 
-  // Include my images: whether capture keeps the user's own shares, from the next share.
-  const mineRow = el('label', 'tdf-opt-row');
-  const mine = el('input', 'tdf-opt-check');
-  mine.type = 'checkbox';
-  mineRow.append(el('span', '', 'Include my images'), mine);
-  const mineHint = el('div', 'tdf-opt-hint tdf-warn');
-  mineHint.setAttribute('aria-live', 'polite');
-  root.append(mineRow, mineHint);
-  /** @param {string} text */
-  const mineFailed = (text) => {
-    if (!closed) mineHint.textContent = text;
+  /**
+   * A checkbox row over a boolean setting, written on change; its hint shows only a failure.
+   * @param {'includeMyImages' | 'storeImagesOffline'} key
+   * @param {string} label
+   */
+  const check = (key, label) => {
+    const row = el('label', 'tdf-opt-row');
+    const box = el('input', 'tdf-opt-check');
+    box.type = 'checkbox';
+    row.append(el('span', '', label), box);
+    const hint = el('div', 'tdf-opt-hint tdf-warn');
+    hint.setAttribute('aria-live', 'polite');
+    root.append(row, hint);
+    /** @param {string} text */
+    const failed = (text) => {
+      if (!closed) hint.textContent = text;
+    };
+    box.addEventListener('change', () => {
+      hint.textContent = '';
+      settings.set(key, box.checked).catch((err) => failed(`Could not apply: ${describeError(err)}`));
+    });
+    settings.get(key).then(
+      (on) => {
+        if (!closed) box.checked = on;
+      },
+      (err) => failed(`Could not read settings: ${describeError(err)}`),
+    );
   };
-  mine.addEventListener('change', () => {
-    mineHint.textContent = '';
-    settings.set('includeMyImages', mine.checked).catch((err) => mineFailed(`Could not apply: ${describeError(err)}`));
-  });
-  settings.get('includeMyImages').then(
-    (on) => {
-      if (!closed) mine.checked = on;
-    },
-    (err) => mineFailed(`Could not read settings: ${describeError(err)}`),
-  );
+
+  // Include my images: whether capture keeps the user's own shares, from the next share.
+  check('includeMyImages', 'Include my images');
+  // Store images offline: whether capture also keeps each new image's full copy, not only its
+  // thumbnail, from the next share.
+  check('storeImagesOffline', 'Store images offline');
 
   container.appendChild(root);
 
@@ -193,8 +206,9 @@ export function renderSettings(container, { doc, win, settings, limits, galleryB
   const galleryText = async (input) => {
     const parsed = input === null ? { ok: /** @type {const} */ (false) } : parseMegabytes(input);
     if (!parsed.ok) return { text: 'Enter 1 MB or more, or leave empty for no limit.', warn: true };
-    const used = `${megabytes(await galleryBytes())} used`;
-    const preview = await limits.previewGallery(parsed.value);
+    const usage = await limits.previewGallery(parsed.value);
+    const used = `${megabytes(usage.used)} used`;
+    const { preview } = usage;
     if (!preview) return { text: `No limit. ${used}.` };
     const removes = preview.count
       ? ` This removes ${plural(preview.count, 'image')} (${megabytes(preview.bytes)}) now.`

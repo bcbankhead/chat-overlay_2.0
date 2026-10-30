@@ -4,7 +4,7 @@ import 'fake-indexeddb/auto';
 import { DB_VERSION, openDb } from '../src/core/db.js';
 import { createHistory } from '../src/core/history.js';
 import { PENDING_TTL_MS } from '../src/core/reconcile.js';
-import { DEFAULTS, createSettings } from '../src/core/settings.js';
+import { DEFAULTS, createSettings, onSettingChange } from '../src/core/settings.js';
 
 let n = 0;
 const fresh = () => openDb({ name: `test-${++n}` });
@@ -35,10 +35,10 @@ const msg = (over) => ({
   ...over,
 });
 
-test('opens at version 2 with every store and index', async () => {
+test('opens at version 3 with every store and index', async () => {
   const db = await fresh();
   assert.equal(db.version, DB_VERSION);
-  assert.equal(DB_VERSION, 2);
+  assert.equal(DB_VERSION, 3);
   assert.deepEqual([...db.objectStoreNames].sort(), ['images', 'messages', 'settings', 'tags']);
   const t = db.transaction(['messages', 'images', 'tags'], 'readonly');
   const messages = t.objectStore('messages');
@@ -68,9 +68,11 @@ const settled = (r) =>
     }
   });
 
-test('a version 1 database upgrades to version 2 with its records intact and a hash index', async () => {
-  const name = `test-v1-${++n}`;
-  // The version 1 schema, as TDF-0009.1 created it.
+/**
+ * The version 1 schema, as TDF-0009.1 created it.
+ * @param {string} name
+ */
+const openV1 = (name) => {
   const open = indexedDB.open(name, 1);
   open.onupgradeneeded = () => {
     const v1 = open.result;
@@ -85,9 +87,15 @@ test('a version 1 database upgrades to version 2 with its records intact and a h
     tags.createIndex('imageId', 'imageId');
     tags.createIndex('sourceMessageId', 'sourceMessageId');
   };
-  const v1 = /** @type {IDBDatabase} */ (await settled(open));
+  return /** @type {Promise<IDBDatabase>} */ (settled(open));
+};
+
+test('a version 1 database upgrades to the current version with its records intact and a hash index', async () => {
+  const name = `test-v1-${++n}`;
+  const v1 = await openV1(name);
   const w = v1.transaction(['messages', 'settings', 'images', 'tags'], 'readwrite');
   w.objectStore('messages').put(msg({ id: 'm1' }));
+  w.objectStore('messages').put(msg({ id: 'w1', toUser: '_', kind: 'whisper' }));
   w.objectStore('settings').put({ key: 'theme', value: 'dark' });
   w.objectStore('images').put({ id: 'img1', user: 'alice', receivedAt: 1, favorite: true });
   w.objectStore('tags').put({ imageId: 'img1', tag: ':h', sourceMessageId: 'm1' });
@@ -95,16 +103,120 @@ test('a version 1 database upgrades to version 2 with its records intact and a h
   v1.close();
 
   const db = await openDb({ name });
-  assert.equal(db.version, 2);
+  assert.equal(db.version, DB_VERSION);
   const t = db.transaction(['messages', 'settings', 'images', 'tags'], 'readonly');
   const images = t.objectStore('images');
   assert.deepEqual([...images.indexNames].sort(), ['hash', 'receivedAt', 'user']);
   assert.equal((await settled(t.objectStore('messages').get('m1'))).text, 'hi');
+  assert.equal((await settled(t.objectStore('messages').get('w1'))).kind, 'public');
   assert.equal((await settled(t.objectStore('settings').get('theme'))).value, 'dark');
   assert.equal((await settled(images.get('img1'))).favorite, true);
   assert.equal((await settled(t.objectStore('tags').getAll())).length, 1);
   // A record from before the upgrade has no hash, so the index does not hold it.
   assert.equal(await settled(images.index('hash').count()), 0);
+  db.close();
+});
+
+test('a version 2 database upgrades to version 3, reclassifying placeholder whispers as public', async () => {
+  const name = `test-v2-${++n}`;
+  // The version 2 schema: version 1 plus the images hash index (TDF-0009.13).
+  const open = indexedDB.open(name, 2);
+  open.onupgradeneeded = () => {
+    const v2 = open.result;
+    const messages = v2.createObjectStore('messages', { keyPath: 'id' });
+    for (const i of ['roomID', 'mTime', 'user', 'receivedAt']) messages.createIndex(i, i);
+    messages.createIndex('roomID_receivedAt', ['roomID', 'receivedAt']);
+    v2.createObjectStore('settings', { keyPath: 'key' });
+    const images = v2.createObjectStore('images', { keyPath: 'id' });
+    for (const i of ['user', 'receivedAt', 'hash']) images.createIndex(i, i);
+    const tags = v2.createObjectStore('tags', { keyPath: 'id', autoIncrement: true });
+    tags.createIndex('imageId', 'imageId');
+    tags.createIndex('sourceMessageId', 'sourceMessageId');
+  };
+  const v2 = /** @type {IDBDatabase} */ (await settled(open));
+  const w = v2.transaction('messages', 'readwrite');
+  const seed = [
+    msg({ id: 'underscore', toUser: '_', kind: 'whisper' }),
+    msg({ id: 'empty', toUser: '', kind: 'whisper' }),
+    msg({ id: 'named', toUser: 'bob', kind: 'whisper' }),
+    msg({ id: 'echo', toUser: '', kind: 'whisper', ircFlag: '1', text: ' &#187; bob: psst' }),
+    msg({ id: 'public', toUser: '', kind: 'public' }),
+    msg({ id: 'entry', toUser: '_', kind: 'entry', avatar: '1' }),
+  ];
+  for (const record of seed) w.objectStore('messages').put(record);
+  await settled(w);
+  v2.close();
+
+  const db = await openDb({ name });
+  assert.equal(db.version, 3);
+  const kinds = Object.fromEntries(
+    (await settled(db.transaction('messages').objectStore('messages').getAll())).map((r) => [r.id, r.kind]),
+  );
+  assert.deepEqual(kinds, {
+    underscore: 'public',
+    empty: 'public',
+    named: 'whisper',
+    echo: 'whisper',
+    public: 'public',
+    entry: 'entry',
+  });
+  assert.equal((await stored(db, 'underscore')).text, 'hi');
+  db.close();
+});
+
+test('an open connection closes itself when a later version opens, so the bump is not blocked', async () => {
+  const name = `test-bump-${++n}`;
+  const db = await openDb({ name });
+  const next = indexedDB.open(name, DB_VERSION + 1);
+  let blocked = false;
+  next.onblocked = () => {
+    blocked = true;
+  };
+  const bumped = /** @type {IDBDatabase} */ (await settled(next));
+  assert.equal(blocked, false);
+  assert.equal(bumped.version, DB_VERSION + 1);
+  bumped.close();
+  db.close();
+});
+
+test('onVersionChange is called once, after the connection has closed', async () => {
+  const name = `test-bump-notify-${++n}`;
+  let calls = 0;
+  let closed = false;
+  const db = await openDb({
+    name,
+    onVersionChange: () => {
+      calls += 1;
+      try {
+        db.transaction('messages');
+      } catch (err) {
+        closed = err.name === 'InvalidStateError';
+      }
+    },
+  });
+  const bumped = /** @type {IDBDatabase} */ (await settled(indexedDB.open(name, DB_VERSION + 1)));
+  assert.equal(calls, 1);
+  assert.equal(closed, true);
+  bumped.close();
+  const again = /** @type {IDBDatabase} */ (await settled(indexedDB.open(name, DB_VERSION + 2)));
+  assert.equal(calls, 1);
+  again.close();
+});
+
+test('a blocked open keeps waiting and resolves once the blocker closes', async () => {
+  const name = `test-wait-${++n}`;
+  // An older build's connection, which does not close itself on versionchange.
+  const v1 = await openV1(name);
+  let settledYet = false;
+  const opening = openDb({ name }).then((db) => {
+    settledYet = true;
+    return db;
+  });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(settledYet, false);
+  v1.close();
+  const db = await opening;
+  assert.equal(db.version, DB_VERSION);
   db.close();
 });
 
@@ -151,6 +263,9 @@ test('unconfirmed after 60 s: markUnconfirmed and expirePending', async () => {
   const now = 1_000_000;
   await h.addPending(msg({ id: 'local-old', receivedAt: now - PENDING_TTL_MS - 1 }));
   await h.addPending(msg({ id: 'local-new', receivedAt: now - 1000 }));
+  // Another room's pending record, and records already settled, are not this room's scan.
+  await h.addPending(msg({ id: 'local-room2', roomID: '2', receivedAt: now - PENDING_TTL_MS - 1 }));
+  await h.put(msg({ id: 'local-gone', confirm: 'unconfirmed', receivedAt: now - PENDING_TTL_MS - 1 }));
   const { expired, pending } = await h.expirePending('1', now);
   assert.deepEqual(expired, ['local-old']);
   // A pending record still within its wait is handed back for the new page to adopt.
@@ -160,6 +275,7 @@ test('unconfirmed after 60 s: markUnconfirmed and expirePending', async () => {
   );
   assert.equal((await stored(db, 'local-old')).confirm, 'unconfirmed');
   assert.equal((await stored(db, 'local-new')).confirm, 'pending');
+  assert.equal((await stored(db, 'local-room2')).confirm, 'pending');
   assert.equal(await h.markUnconfirmed('local-new'), true);
   assert.equal((await stored(db, 'local-new')).confirm, 'unconfirmed');
   await h.put(msg({ id: 'server' }));
@@ -187,16 +303,26 @@ test('deleteByMTime removes only the room\'s earliest-received record with that 
 
 test('settings return the contract defaults for absent keys', async () => {
   const s = createSettings(await fresh());
-  assert.equal(await s.get('historyEnabled'), true);
   assert.equal(await s.get('retentionDays'), 30);
   assert.equal(await s.get('galleryLimitMB'), null);
   assert.equal(await s.get('storeImagesOffline'), false);
   assert.equal(await s.get('includeMyImages'), false);
-  assert.equal(await s.get('likeEmoji'), ':h');
   assert.equal(await s.get('likeIntervalSeconds'), 15);
   assert.equal(await s.get('theme'), null);
   await s.set('theme', 'dark');
   assert.equal(await s.get('theme'), 'dark');
   await assert.rejects(s.set('nope', 1), /unknown setting/);
   assert.ok(Object.isFrozen(DEFAULTS));
+  assert.ok(!Object.hasOwn(DEFAULTS, 'historyEnabled') && !Object.hasOwn(DEFAULTS, 'likeEmoji'));
+});
+
+test('a committed set is announced to setting-change listeners, through any Settings', async () => {
+  const db = await fresh();
+  const seen = [];
+  const off = onSettingChange((key, value) => seen.push([key, value]));
+  await createSettings(db).set('retentionDays', 0);
+  await createSettings(db).set('theme', 'light');
+  off();
+  await createSettings(db).set('theme', 'dark');
+  assert.deepEqual(seen, [['retentionDays', 0], ['theme', 'light']]);
 });

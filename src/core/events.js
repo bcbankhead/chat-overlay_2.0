@@ -1,35 +1,73 @@
-// Inbound-message subscription (TDF-0009 Shared Contract, extension points). Feature
-// slices attach here instead of editing the engine hook.
+// Core's subscriptions (TDF-0009 Shared Contract, extension points). Feature slices attach
+// here instead of editing the engine hook or the view, and reach the view only through them.
 
-/** @typedef {(record: import('./history.js').MessageRecord) => void} InboundListener */
-
-/** @type {Set<InboundListener>} */
-const listeners = new Set();
+/** @typedef {import('./history.js').MessageRecord} MessageRecord */
 
 /**
- * Subscribe to every message the hook stores, once per stored record.
- * @param {InboundListener} listener
- * @returns {() => void} unsubscribe
+ * A pending own message became unconfirmed with no inbound event: its send failed, its wait
+ * ran out, or a new page expired it (history.expirePending). A confirmation is not emitted: a
+ * confirmed record counts as its pending one did.
+ * @typedef {{ roomID: string, ids: string[], confirm: 'unconfirmed' }} ConfirmChange
  */
-export function onInbound(listener) {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
 
 /**
- * Deliver a record to every listener. One failing listener does not starve the others;
- * every failure is rethrown together afterwards for the caller to surface.
- * @param {import('./history.js').MessageRecord} record
+ * A set of listeners. One failing listener does not starve the others; every failure is
+ * rethrown together afterwards for the caller to surface.
+ * @template T
+ * @param {string} what
  */
-export function emitInbound(record) {
-  /** @type {unknown[]} */
-  const errors = [];
-  for (const listener of listeners) {
-    try {
-      listener(record);
-    } catch (err) {
-      errors.push(err);
-    }
-  }
-  if (errors.length > 0) throw new AggregateError(errors, 'inbound listener failed');
+function channel(what) {
+  /** @type {Set<(value: T) => void>} */
+  const listeners = new Set();
+  return {
+    /**
+     * @param {(value: T) => void} listener
+     * @returns {() => void} unsubscribe
+     */
+    on(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    /** @param {T} value */
+    emit(value) {
+      /** @type {unknown[]} */
+      const errors = [];
+      for (const listener of listeners) {
+        try {
+          listener(value);
+        } catch (err) {
+          errors.push(err);
+        }
+      }
+      if (errors.length > 0) throw new AggregateError(errors, `${what} listener failed`);
+    },
+  };
 }
+
+/** @type {ReturnType<typeof channel<MessageRecord>>} */
+const inbound = channel('inbound');
+/** @type {ReturnType<typeof channel<string[]>>} */
+const deleted = channel('deleted');
+/** @type {ReturnType<typeof channel<ConfirmChange>>} */
+const confirmChanged = channel('confirm change');
+/** @type {ReturnType<typeof channel<void>>} */
+const cleared = channel('clear');
+
+/** Every message the hook records, once per record. */
+export const onInbound = inbound.on;
+export const emitInbound = inbound.emit;
+
+/**
+ * Stored messages were deleted, from any room: by a Storage limit or an admin delete. The view
+ * drops their rows; tagging re-derives without them.
+ */
+export const onDeleted = deleted.on;
+export const emitDeleted = deleted.emit;
+
+/** A record's confirm state changed (see ConfirmChange). */
+export const onConfirmChange = confirmChanged.on;
+export const emitConfirmChange = confirmChanged.emit;
+
+/** Clear chat buffer: the view empties; stored history is kept. */
+export const onClearView = cleared.on;
+export const clearView = () => cleared.emit(undefined);

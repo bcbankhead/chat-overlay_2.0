@@ -100,6 +100,24 @@ export function parseBody(body) {
 }
 
 /**
+ * toUser values that name no recipient. The server sends `_` on public main-room messages
+ * (TDF-0012); the engine itself never reads toUser to mark a whisper.
+ * @type {ReadonlySet<string>}
+ */
+export const NO_RECIPIENT = new Set(['', '_']);
+
+/**
+ * Whether a message is a whisper: a real toUser in the main room, or the whisper text prefix.
+ * @param {{ targetDiv: string, toUser: string, body: { text: string, ircFlag: string } }} msg
+ * @returns {boolean}
+ */
+export function isWhisper({ targetDiv, toUser, body }) {
+  // The local echo of an own whisper carries no toUser (message.js.php:297).
+  if (body.ircFlag === '1' && body.text.startsWith(WHISPER_PREFIX)) return true;
+  return targetDiv === MAIN_DIV && !NO_RECIPIENT.has(toUser);
+}
+
+/**
  * Derive a message's kind (Locked: kind derived from toUser, avatar flag and body).
  * @param {{ targetDiv: string, toUser: string, body: MessageBody }} msg
  * @param {{ publicEntry: string, publicExit: string }} lang the engine's lang strings
@@ -112,10 +130,7 @@ export function classify(msg, lang) {
     if (lang.publicExit && body.text.includes(lang.publicExit)) return 'exit';
     return 'entry';
   }
-  if (msg.targetDiv === MAIN_DIV && msg.toUser !== '') return 'whisper';
-  // The local echo of an own whisper carries no toUser (message.js.php:297).
-  if (body.ircFlag === '1' && body.text.startsWith(WHISPER_PREFIX)) return 'whisper';
-  return 'public';
+  return isWhisper(msg) ? 'whisper' : 'public';
 }
 
 /**

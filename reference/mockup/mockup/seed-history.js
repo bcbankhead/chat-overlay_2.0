@@ -1,6 +1,6 @@
 // Seeds the overlay's local history (IndexedDB `tdf-chat-2`) from the messages the saved
 // page carries in the engine's #chatContainer, so the overlay replays them on start.
-// Runs before the overlay loads. The schema below copies src/core/db.js at version 2;
+// Runs before the overlay loads. The schema below copies src/core/db.js at version 3;
 // if that changes, this must too. Re-running is harmless: records are keyed and put.
 window.__seedHistory = function () {
   var container = document.getElementById('chatContainer');
@@ -52,11 +52,12 @@ window.__seedHistory = function () {
   records = records.concat(fictionalUsers(records, roomID, base));
 
   return new Promise(function (resolve, reject) {
-    var req = indexedDB.open('tdf-chat-2', 2);
+    var req = indexedDB.open('tdf-chat-2', 3);
     req.onupgradeneeded = function (event) {
-      if (event.oldVersion >= 2) return;
-      if (event.oldVersion === 1) {
-        req.transaction.objectStore('images').createIndex('hash', 'hash');
+      if (event.oldVersion >= 1) {
+        var tx = req.transaction;
+        if (event.oldVersion < 2) tx.objectStore('images').createIndex('hash', 'hash');
+        if (event.oldVersion < 3) reclassifyWhispers(tx.objectStore('messages'));
         return;
       }
       var db = req.result;
@@ -86,6 +87,30 @@ window.__seedHistory = function () {
     };
   });
 };
+
+// Copies of WHISPER_PREFIX and isWhisper in src/core/parse.js; test/seed-history.test.js
+// fails when they drift.
+var WHISPER_PREFIX = ' &#187; ';
+
+// Version 3 of src/core/db.js: a stored `whisper` whose toUser is '' or the '_' placeholder
+// is rewritten `public`, unless it is an own-whisper echo (ircFlag '1' and the prefix).
+function isStaleWhisper(r) {
+  var echo = r.ircFlag === '1' && String(r.text || '').indexOf(WHISPER_PREFIX) === 0;
+  return r.kind === 'whisper' && (r.toUser === '' || r.toUser === '_') && !echo;
+}
+
+function reclassifyWhispers(messages) {
+  var cursorReq = messages.openCursor();
+  cursorReq.onsuccess = function () {
+    var cursor = cursorReq.result;
+    if (!cursor) return;
+    var r = cursor.value;
+    if (isStaleWhisper(r)) {
+      cursor.update(Object.assign({}, r, { kind: 'public' }));
+    }
+    cursor.continue();
+  };
+}
 
 // A third, made-up user for colour variety: Saia, in pink, joins the saved conversation.
 // She is added to the engine's user list too, so the sidebar and avatars pick her up.

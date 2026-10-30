@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { Window } from 'happy-dom';
 import { build } from '../build.mjs';
-import { openDb } from '../src/core/db.js';
+import { DB_VERSION, openDb } from '../src/core/db.js';
 import { createSettings } from '../src/core/settings.js';
 
 const repo = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -184,6 +184,35 @@ test('a message the engine renders during startup is shown after the replay and 
   assert.deepEqual(shownIds(third.document), ['1', '2']);
 });
 
+test('with Chat history at 0 days messages are shown but never stored, and nothing replays', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('retentionDays', 0);
+  const count = () =>
+    new Promise((resolve) => {
+      const req = db.transaction('messages').objectStore('messages').count();
+      req.onsuccess = () => resolve(req.result);
+    });
+
+  const first = await page(bundle, indexedDB);
+  first.poll(um('1', 'bob', 'hello', '100'));
+  await settle();
+  assert.deepEqual(shownIds(first.document), ['1']);
+  assert.equal(await count(), 0);
+
+  // A line stored before the 0 was set is not replayed.
+  const t = db.transaction('messages', 'readwrite');
+  t.objectStore('messages').put({
+    id: 'legacy', roomID: '1', mTime: '99', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '',
+    size: '', family: '', text: 'old', ircFlag: '0', lineBreakFlag: '0', receivedAt: Date.now(),
+  });
+  await new Promise((resolve) => (t.oncomplete = resolve));
+  db.close();
+  const second = await page(bundle, indexedDB);
+  assert.deepEqual(shownIds(second.document), []);
+});
+
 test('a stored record that will not render is skipped with a notice; the rest replay', async () => {
   const indexedDB = new IDBFactory();
   const db = await openDb({ indexedDB });
@@ -200,6 +229,26 @@ test('a stored record that will not render is skipped with a notice; the rest re
   assert.deepEqual(shownIds(document), ['good']);
   assert.match(document.querySelector('#tdf-chat .tdf-notice').textContent, /1 stored message could not be shown/);
   assert.equal(document.getElementById('chatContainer').style.visibility, 'hidden');
+});
+
+test('a later version opened in another tab shows one notice to reload', async () => {
+  const indexedDB = new IDBFactory();
+  const { document, poll } = await page(await bundled(), indexedDB);
+  const req = indexedDB.open('tdf-chat-2', DB_VERSION + 1);
+  let blocked = false;
+  req.onblocked = () => {
+    blocked = true;
+  };
+  await new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result.close());
+    req.onerror = () => reject(req.error);
+  });
+  assert.equal(blocked, false);
+  poll(um('1', 'bob', 'after', '100'), um('2', 'carol', 'again', '101'));
+  await settle();
+  const notices = [...document.querySelectorAll('#tdf-chat .tdf-notice')].map((el) => el.textContent);
+  assert.equal(notices.filter((t) => /updated in another tab; reload this tab/.test(t)).length, 1);
+  assert.deepEqual(shownIds(document), ['1', '2']);
 });
 
 test('a failure after the view mounts restores the original chat, as the banner says', async () => {

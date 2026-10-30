@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { DAY_MS, MB_BYTES, historyCutoff, megabytesToBytes, parseDays, parseMegabytes, tagsToDelete } from './selectors.js';
+import { DAY_MS, MB_BYTES, historyCutoff, megabytesToBytes, parseDays, parseMegabytes } from './selectors.js';
 
 test('historyCutoff: N days back from now, 0 every line, legacy null no limit', () => {
   const now = 10 * DAY_MS;
@@ -27,18 +27,4 @@ test('parseMegabytes: empty is no limit, whole numbers from 1, the rest refused'
 test('megabytesToBytes uses binary megabytes', () => {
   assert.equal(megabytesToBytes(1), MB_BYTES);
   assert.equal(megabytesToBytes(3), 3 * 1_048_576);
-});
-
-test('tagsToDelete selects tags of removed messages and images only', () => {
-  const tags = [
-    { id: 1, sourceMessageId: 'm1' },
-    { id: 2, sourceMessageId: 'm2' },
-    { id: 3, imageId: 'i1' },
-    { id: 4, imageId: 'i2', sourceMessageId: 'm3' },
-    { id: 5 },
-  ];
-  assert.deepEqual(tagsToDelete(tags, ['m1'], []), [1]);
-  assert.deepEqual(tagsToDelete(tags, [], ['i1', 'i2']), [3, 4]);
-  assert.deepEqual(tagsToDelete(tags, ['m3', 'm2'], ['i1']), [2, 3, 4]);
-  assert.deepEqual(tagsToDelete(tags, [], []), []);
 });

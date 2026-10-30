@@ -29,7 +29,7 @@ const SHOW_TEXT = 4; // NodeFilter.SHOW_TEXT
  *     onLike: (fn: (imageId: string, sender: string) => void) => () => void,
  *   },
  *   queue: import('./queue.js').ReactionQueue,
- *   openSmileyPicker: (options: { x: number, y: number, extraRows?: { label: string, run: () => void }[], onPick: (code: string) => void }) => () => void,
+ *   openSmileyPicker: (options: { x: number, y: number, below?: boolean, extraRows?: { label: string, run: () => void }[], onPick: (code: string) => void }) => () => void,
  *   burst?: (doc: Document, win: any, anchor: Element) => unknown,
  * }} deps
  * @returns {() => void} uninstall
@@ -209,6 +209,7 @@ export function installReactionUi({ doc, win, store, queue, openSmileyPicker, bu
     openSmileyPicker({
       x: event.clientX,
       y: event.clientY + 8,
+      below: true,
       extraRows: [{ label: 'Open full size', run: () => win.open(href, '_blank', 'noopener') }],
       onPick: (code) => like(shareId, code),
     });

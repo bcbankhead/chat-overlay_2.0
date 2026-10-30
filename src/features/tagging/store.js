@@ -1,8 +1,10 @@
-// The `tags` store, kept as a derivation of the room's stored messages: every change
-// re-derives the room's tags and replaces its rows, so purging history and re-deriving cannot
-// disagree. Messages that arrive before the first rebuild finishes are held, then merged.
-// A like from someone else that arrives live is announced (onLike), so the view can animate it;
-// nothing replayed by a rebuild, or held before the first one, is.
+// The `tags` store, kept as a derivation of the room's stored messages, and its only writer:
+// every change re-derives the room's tags and replaces its rows, so purging history and
+// re-deriving cannot disagree. Core's announcements (a message in, messages deleted, a pending
+// one unconfirmed) keep the snapshot in step; those that arrive while a rebuild reads are
+// held, then applied over the read in order. A like from someone else that arrives live is
+// announced (onLike), so the view can animate it; nothing replayed by a rebuild, or held
+// during one, is.
 
 import { STORES, done, request } from '../../core/db.js';
 import { countLikes, deriveTags } from './infer.js';
@@ -47,7 +49,7 @@ export function createTagStore({ db, history, roomID, me, codes }) {
   let messages = [];
   /** @type {Tag[]} */
   let tags = [];
-  /** @type {MessageRecord[] | null} inbound held until the first rebuild; null once loaded */
+  /** @type {Array<() => void> | null} snapshot changes held during a rebuild's read; null otherwise */
   let early = [];
   /** @type {Promise<void>} writes, in order */
   let writes = Promise.resolve();
@@ -65,6 +67,47 @@ export function createTagStore({ db, history, roomID, me, codes }) {
     const i = messages.findIndex((m) => m.id === record.id);
     if (i >= 0) messages[i] = record;
     else messages.push(record);
+  };
+
+  /** @param {Iterable<string>} ids */
+  const drop = (ids) => {
+    const gone = new Set(ids);
+    messages = messages.filter((m) => !gone.has(m.id));
+  };
+
+  /** @param {Iterable<string>} ids */
+  const unconfirm = (ids) => {
+    const marked = new Set(ids);
+    messages = messages.map((m) => (marked.has(m.id) ? { ...m, confirm: /** @type {const} */ ('unconfirmed') } : m));
+  };
+
+  /**
+   * Re-derive from the snapshot; rewrite and re-render only when the tags changed, unless
+   * `prune` asks for a rewrite that also clears other rooms' orphaned rows.
+   * @param {boolean} prune
+   */
+  const rederive = (prune) => {
+    const next = deriveTags(messages, me, codes);
+    const same = sameTags(next, tags);
+    // Most messages are neither images nor reactions: no rewrite, no re-render for those.
+    if (same && !prune) return Promise.resolve();
+    tags = next;
+    if (!same) changed();
+    return persist(tags, prune);
+  };
+
+  /**
+   * Apply a change to the snapshot now, or hold it while a rebuild reads.
+   * @param {() => void} change
+   * @param {boolean} prune
+   */
+  const apply = (change, prune) => {
+    if (early) {
+      early.push(change);
+      return Promise.resolve();
+    }
+    change();
+    return rederive(prune);
   };
 
   /**
@@ -93,16 +136,15 @@ export function createTagStore({ db, history, roomID, me, codes }) {
 
   return {
     /**
-     * Re-derive the room from every stored message. Runs at startup, and after a reaction
-     * fails, since its echo is then marked unconfirmed with no inbound event.
+     * Re-derive the room from every stored message. Runs at startup.
      * @returns {Promise<void>}
      */
     async rebuildRoom() {
-      // Inbound during the read is held, or the read's older snapshot would drop it.
+      // Changes during the read are held, or the read's older snapshot would undo them.
       early ??= [];
       const stored = await history.recent(roomID, Infinity);
       messages = stored;
-      for (const record of early ?? []) upsert(record);
+      for (const change of early ?? []) change();
       early = null;
       tags = deriveTags(messages, me, codes);
       changed();
@@ -116,26 +158,40 @@ export function createTagStore({ db, history, roomID, me, codes }) {
      */
     applyInbound(record) {
       if (record.roomID !== roomID) return Promise.resolve();
-      if (early) {
-        early.push(record);
-        return Promise.resolve();
-      }
-      upsert(record);
-      const next = deriveTags(messages, me, codes);
-      // Most messages are neither images nor reactions: no rewrite, no re-render for those.
-      if (sameTags(next, tags)) return Promise.resolve();
+      // A held message is replayed by the rebuild, which announces nothing.
+      if (early) return apply(() => upsert(record), false);
       const liked = new Set(tags.map((t) => likeKey(t.imageId, t.sender)));
-      tags = next;
-      changed();
+      const written = apply(() => upsert(record), false);
       /** @type {Set<string>} */
       const announced = new Set();
-      for (const t of next) {
+      for (const t of tags) {
         const key = likeKey(t.imageId, t.sender);
         if (t.sender === me || t.sourceMessageId !== record.id || liked.has(key) || announced.has(key)) continue;
         announced.add(key);
         for (const fn of likeListeners) fn(t.imageId, t.sender);
       }
-      return persist(tags, false);
+      return written;
+    },
+
+    /**
+     * Stored messages were deleted, from any room (core's onDeleted): a Storage limit or an
+     * admin delete. Rewrites with `prune`, so other rooms' rows left by them go too.
+     * @param {string[]} ids
+     * @returns {Promise<void>}
+     */
+    applyDeleted(ids) {
+      if (!ids.length) return Promise.resolve();
+      return apply(() => drop(ids), true);
+    },
+
+    /**
+     * Pending messages became unconfirmed (core's onConfirmChange): they count for nothing.
+     * @param {import('../../core/events.js').ConfirmChange} change
+     * @returns {Promise<void>}
+     */
+    applyConfirmChange({ roomID: room, ids }) {
+      if (room !== roomID) return Promise.resolve();
+      return apply(() => unconfirm(ids), false);
     },
 
     /**

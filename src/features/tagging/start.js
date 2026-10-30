@@ -1,10 +1,12 @@
 // Image reactions' wiring, apart from index.js's double-load guard so a test can drive it.
-// The inbound subscription starts at once, so no message is missed while the database
-// opens; the store holds what arrives until its first rebuild.
+// The subscriptions to core's announcements start at once, so none is missed while the
+// database opens; the store holds what arrives until its first rebuild. Core announces a
+// pending message going unconfirmed (a failed reaction's echo, bootstrap's expiry) and stored
+// messages deleted, so the store never re-derives from a stale snapshot.
 
 import { openDb } from '../../core/db.js';
 import { describeError } from '../../core/errors.js';
-import { onInbound } from '../../core/events.js';
+import { onConfirmChange, onDeleted, onInbound } from '../../core/events.js';
 import { createHistory } from '../../core/history.js';
 import { createSettings, DEFAULTS } from '../../core/settings.js';
 import { engineSend, resetRepeat } from './engineSend.js';
@@ -110,8 +112,16 @@ export function startTagging({ win, doc, css, openSmileyPicker, indexedDB = win.
   let interval = DEFAULTS.likeIntervalSeconds;
   /** @type {ReturnType<typeof createTagStore> | null} */
   let store = null;
-  /** @type {import('../../core/history.js').MessageRecord[]} */
+  /** @type {Array<(s: ReturnType<typeof createTagStore>) => Promise<void>>} announcements before the store */
   const early = [];
+  /**
+   * Hand an announcement to the store, or hold it until the store exists.
+   * @param {(s: ReturnType<typeof createTagStore>) => Promise<void>} fn
+   */
+  const toStore = (fn) => {
+    if (store) fn(store).catch(fail);
+    else early.push(fn);
+  };
 
   // A token hidden in the provisional fallback colour may show; said once, not on every send.
   let fellBack = false;
@@ -131,16 +141,14 @@ export function startTagging({ win, doc, css, openSmileyPicker, indexedDB = win.
     intervalSeconds: () => interval,
     resetRepeat: (text) => resetRepeat(win, text),
     tokenColor: () => nativeChatBackground(doc, win, onFallback),
-    // A failed send's echo is marked unconfirmed with no inbound event; re-derive so its
-    // heart stops counting it.
-    onAttemptFailed: () => store?.rebuildRoom().catch(fail),
   });
 
   onInbound((record) => {
     if (record.user === me && record.roomID === roomID) queue.noteOwnMessage();
-    if (store) store.applyInbound(record).catch(fail);
-    else early.push(record);
+    toStore((s) => s.applyInbound(record));
   });
+  onDeleted((ids) => toStore((s) => s.applyDeleted(ids)));
+  onConfirmChange((change) => toStore((s) => s.applyConfirmChange(change)));
 
   if (!doc.getElementById('tdf-tagging-style')) {
     const style = doc.createElement('style');
@@ -154,7 +162,7 @@ export function startTagging({ win, doc, css, openSmileyPicker, indexedDB = win.
     const created = createTagStore({ db, history: createHistory(db), roomID, me, codes });
     // The store holds inbound until its first rebuild completes.
     store = created;
-    for (const record of early.splice(0)) created.applyInbound(record);
+    for (const fn of early.splice(0)) fn(created).catch(fail);
     await created.rebuildRoom();
     installReactionUi({ doc, win, store: created, queue, openSmileyPicker });
   });

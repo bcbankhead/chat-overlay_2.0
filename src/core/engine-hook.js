@@ -2,10 +2,11 @@
 // server records (which carry the server id, field [0]) and `createMessageDiv` to learn
 // whether the engine actually rendered each message, so the engine's own filters (blocked
 // users, duplicates, commands, PM rules) still decide what is shown and stored. Wraps
-// `sendData` to confirm each own message by its sendData.php response.
+// `sendData` to confirm each own message by its sendData.php response. With Chat history at 0
+// days nothing is written to history; messages are still shown and announced.
 
 import { describeError } from './errors.js';
-import { emitInbound } from './events.js';
+import { emitConfirmChange, emitDeleted, emitInbound } from './events.js';
 import { nextReceivedAt } from './history.js';
 import {
   MAIN_DIV,
@@ -68,8 +69,10 @@ export function engineAvailable(win) {
  *   view: import('./view.js').View,
  *   pending?: MessageRecord[],
  *   replayed?: MessageRecord[],
+ *   storing?: () => boolean,
  * }) => void} attach start storing and showing: adopt the room's stored pending own
- *   messages, then flush, in order, what the engine rendered since install
+ *   messages, then flush, in order, what the engine rendered since install. `storing`, read
+ *   per message, is false while Chat history keeps 0 days
  * @property {() => void} abandon stop observing; the wrappers pass straight through
  */
 
@@ -117,17 +120,32 @@ export function installEngineHook({ win, roomID }) {
   let history;
   /** @type {import('./view.js').View} */
   let view;
+  /** @type {() => boolean} */
+  let storing = () => true;
 
   /** @param {Promise<unknown>} p */
   const report = (p) => p.catch((err) => view.notice(`Chat history not saved: ${describeError(err)}`));
 
-  /** @param {MessageRecord} record */
-  const emit = (record) => {
+  /** @param {() => void} fn a core event's emit */
+  const announce = (fn) => {
     try {
-      emitInbound(record);
+      fn();
     } catch (err) {
       view.notice(`A chat feature failed: ${describeError(err)}`);
     }
+  };
+
+  /** @param {MessageRecord} record */
+  const emit = (record) => announce(() => emitInbound(record));
+
+  /**
+   * Mark a pending own message unconfirmed, stored and shown, and tell features.
+   * @param {MessageRecord} record
+   */
+  const unconfirm = (record) => {
+    report(history.markUnconfirmed(record.id));
+    view.markUnconfirmed(record.id);
+    announce(() => emitConfirmChange({ roomID, ids: [record.id], confirm: 'unconfirmed' }));
   };
 
   /**
@@ -166,8 +184,7 @@ export function installEngineHook({ win, roomID }) {
         guard('Message status not updated', () => {
           if (!pendings.includes(record)) return;
           pendings = pendings.filter((p) => p !== record);
-          report(history.markUnconfirmed(record.id));
-          view.markUnconfirmed(record.id);
+          unconfirm(record);
         }),
       Math.max(0, delay),
     );
@@ -183,13 +200,12 @@ export function installEngineHook({ win, roomID }) {
     pendings = pendings.filter((p) => p !== record);
     if (state === 'sent') {
       const { confirm: _drop, ...confirmed } = record;
-      report(history.confirmPending(record.id, confirmed));
+      if (storing()) report(history.confirmPending(record.id, confirmed));
       view.confirm(record.id, confirmed);
       const now = Date.now();
       sentOwn = [...sentOwn.filter((r) => !isExpired(r, now)), confirmed];
     } else {
-      report(history.markUnconfirmed(record.id));
-      view.markUnconfirmed(record.id);
+      unconfirm(record);
     }
   };
 
@@ -292,7 +308,12 @@ export function installEngineHook({ win, roomID }) {
 
     const target = isDelete(safeDecodeURI(String(call.message ?? '')));
     if (target !== null) {
-      report(history.deleteByMTime(roomID, target));
+      // Features learn which stored record went once the delete commits.
+      report(
+        history.deleteByMTime(roomID, target).then((ids) => {
+          if (ids.length) announce(() => emitDeleted(ids));
+        }),
+      );
       view.removeByMTime(target);
       return;
     }
@@ -320,12 +341,12 @@ export function installEngineHook({ win, roomID }) {
         pendings = pendings.filter((p) => p !== pending);
         sentOwn = sentOwn.filter((p) => p !== pending);
         const confirmed = { ...record, receivedAt: pending.receivedAt };
-        report(history.confirmPending(pending.id, confirmed));
+        if (storing()) report(history.confirmPending(pending.id, confirmed));
         view.confirm(pending.id, confirmed);
         return;
       }
       if (!rendered || replayedIds.has(record.id)) return;
-      report(history.put(record));
+      if (storing()) report(history.put(record));
       view.append(record);
       emit(record);
       return;
@@ -351,7 +372,7 @@ export function installEngineHook({ win, roomID }) {
         confirm: 'pending',
       };
       pendings.push(record);
-      report(history.addPending(record));
+      if (storing()) report(history.addPending(record));
       view.append(record);
       emit(record);
       expireLater(record, PENDING_TTL_MS + 1);
@@ -380,6 +401,7 @@ export function installEngineHook({ win, roomID }) {
     attach(deps) {
       if (abandoned || !buffered) return;
       ({ history, view } = deps);
+      if (deps.storing) storing = deps.storing;
       replayedIds = new Set((deps.replayed ?? []).map((r) => r.id));
       // Pending own messages left by the previous page: a server copy still confirms them,
       // and each timer runs out the wait it had left.
