@@ -1,9 +1,7 @@
 // Image reactions entry (auto-discovered by build.mjs). The wiring is start.js's; this file
-// holds the double-load guard and the chat-page check. The picker is TDF-0009.10's
-// openSmileyPicker (TDF-0009 Shared Contract).
+// holds the double-load guard and the chat-page check.
 
 import { MAIN_DIV } from '../../core/parse.js';
-import { openSmileyPicker } from '../composer/index.js';
 import { startTagging } from './start.js';
 import css from './tagging.css';
 
@@ -12,5 +10,5 @@ const win = /** @type {any} */ (window);
 // build.mjs's second-copy check sets).
 if (!win.__tdfChat2Tagging) {
   win.__tdfChat2Tagging = true;
-  if (document.getElementById(MAIN_DIV)) startTagging({ win: window, doc: document, css, openSmileyPicker });
+  if (document.getElementById(MAIN_DIV)) startTagging({ win: window, doc: document, css });
 }

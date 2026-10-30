@@ -12,8 +12,6 @@ import { buildLabelledLink, isSingleHttpUrl } from './link.js';
 import { installSmileyButton } from './smilies.js';
 import { installWhisper } from './whisper.js';
 
-export { openSmileyPicker } from './smilies.js';
-
 const BAR = 'optionsBar';
 
 const win = /** @type {any} */ (window);

@@ -21,10 +21,14 @@ import { installReactionUi } from './ui.js';
  */
 export const FALLBACK_TOKEN_BG = '#ffffff';
 
+/** The view's stylesheet (view.js), whose theme.css overrides `.body`'s background. */
+const THEME_STYLE = 'tdf-chat-style';
+
 /**
  * The native chat's background as `#rrggbb`, read now: `#chatContainer`'s computed
- * background, else its nearest opaque ancestor's short of `.body`, whose colour this script's
- * theme overrides (theme.css); else the fallback, told to `onFallback` with why.
+ * background, else its nearest opaque ancestor's, `.body`'s included until the view's
+ * theme.css overrides it (then the walk stops short of `.body`); else the fallback, told to
+ * `onFallback` with why.
  * @param {Document} doc
  * @param {any} win
  * @param {(reason: string) => void} [onFallback]
@@ -32,15 +36,18 @@ export const FALLBACK_TOKEN_BG = '#ffffff';
  */
 export function nativeChatBackground(doc, win, onFallback) {
   const chat = doc.getElementById('chatContainer');
+  const themed = doc.getElementById(THEME_STYLE) !== null;
   for (let el = chat; el && el !== doc.documentElement; el = el.parentElement) {
-    if (el.classList.contains('body')) break;
+    if (themed && el.classList.contains('body')) break;
     const hex = toHexColor(win.getComputedStyle(el).backgroundColor);
     if (hex) return hex;
   }
   onFallback?.(
-    chat
-      ? 'the chat background is transparent up to .body'
-      : 'the native chat (#chatContainer) is missing',
+    !chat
+      ? 'the native chat (#chatContainer) is missing'
+      : themed
+        ? 'the chat background is transparent up to .body'
+        : 'the chat background is transparent',
   );
   return FALLBACK_TOKEN_BG;
 }
@@ -95,11 +102,10 @@ export function reporter(doc, win) {
  *   win: any,
  *   doc: Document,
  *   css: string,
- *   openSmileyPicker: Parameters<typeof installReactionUi>[0]['openSmileyPicker'],
  *   indexedDB?: IDBFactory,
  * }} deps
  */
-export function startTagging({ win, doc, css, openSmileyPicker, indexedDB = win.indexedDB }) {
+export function startTagging({ win, doc, css, indexedDB = win.indexedDB }) {
   const fail = reporter(doc, win);
   const roomID = String(win.roomID ?? '');
   const me = String(win.userName ?? '');
@@ -132,6 +138,13 @@ export function startTagging({ win, doc, css, openSmileyPicker, indexedDB = win.
     fail(`likes hide their token in ${FALLBACK_TOKEN_BG}, which may show: ${reason}`);
   };
 
+  // Read now, before bootstrap mounts the view and its theme.css overrides `.body`'s colour.
+  /** @type {string | null} */
+  let startReason = null;
+  const startBg = nativeChatBackground(doc, win, (reason) => {
+    startReason = reason;
+  });
+
   const queue = createReactionQueue({
     now: () => Date.now(),
     setTimer: (fn, ms) => win.setTimeout(fn, ms),
@@ -140,7 +153,7 @@ export function startTagging({ win, doc, css, openSmileyPicker, indexedDB = win.
     request: () => win.sendReq,
     intervalSeconds: () => interval,
     resetRepeat: (text) => resetRepeat(win, text),
-    tokenColor: () => nativeChatBackground(doc, win, onFallback),
+    tokenColor: () => (startReason === null ? startBg : nativeChatBackground(doc, win, onFallback)),
   });
 
   onInbound((record) => {
@@ -164,7 +177,7 @@ export function startTagging({ win, doc, css, openSmileyPicker, indexedDB = win.
     store = created;
     for (const fn of early.splice(0)) fn(created).catch(fail);
     await created.rebuildRoom();
-    installReactionUi({ doc, win, store: created, queue, openSmileyPicker });
+    installReactionUi({ doc, win, store: created, queue, codes });
   });
   ready.catch(fail);
   return ready;

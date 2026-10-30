@@ -27,15 +27,11 @@ test('start wires inbound messages to the heart, and a pick and a right-click to
     sent.push(doc.getElementById(input).value);
     return undefined;
   };
-  /** @type {any[]} */
-  const pickers = [];
-
   const ready = startTagging({
     win,
     doc,
     css: '/* tagging */',
     indexedDB: new IDBFactory(),
-    openSmileyPicker: (options) => (pickers.push(options), () => {}),
   });
   assert.equal(doc.getElementById('tdf-tagging-style')?.textContent, '/* tagging */');
 
@@ -51,11 +47,10 @@ test('start wires inbound messages to the heart, and a pick and a right-click to
   await settle();
   assert.deepEqual([...doc.querySelectorAll('.tdf-rx-heart')].map((c) => c.textContent), ['♥1']);
 
-  doc.querySelector('img.tdf-posted').dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true }));
-  pickers[0].onPick(':L');
+  doc.querySelector('img.tdf-posted').dispatchEvent(new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
   await settle();
   // happy-dom computes no background for the chat, so the fallback colour hides the token.
-  assert.deepEqual(sent, [`:L [[span style=color:${FALLBACK_TOKEN_BG}]]^111111[[/span]]`]);
+  assert.deepEqual(sent, [`:h [[span style=color:${FALLBACK_TOKEN_BG}]]^111111[[/span]]`]);
 });
 
 /** A chat page whose engine timers are held: zero-delay ones run, the rest wait to be run. */
@@ -98,17 +93,14 @@ test('an own message spaces the next reaction; an echo core marks unconfirmed st
   await history.put(record('1', 'alice', `[[img src="plugins/share/view.php?id=${A}"]]`, 1));
   await history.put(record('2', 'alice', `[[img src="plugins/share/view.php?id=${B}"]]`, 2));
   await history.addPending(record('local-1', 'me', ':h ^222222', 3, { mTime: '' }));
-  /** @type {any[]} */
-  const pickers = [];
-  await startTagging({ win, doc, css: '', indexedDB, openSmileyPicker: (o) => (pickers.push(o), () => {}) });
+  await startTagging({ win, doc, css: '', indexedDB });
   await settle();
   assert.deepEqual(hearts(), ['♥1']);
 
   // Your own message just now: the reaction waits the whole interval after it.
   emitInbound(record('local-2', 'me', 'hello', 4, { mTime: '' }));
   win.addMessage = () => false;
-  doc.querySelector('img.tdf-posted').dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true }));
-  pickers[0].onPick(':L');
+  doc.querySelector('img.tdf-posted').dispatchEvent(new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
   assert.equal(held.length, 1);
   assert.ok(held[0].ms > 14_000 && held[0].ms <= 15_000, String(held[0].ms));
 
@@ -132,7 +124,7 @@ test('a failure to start is shown in the message list', async () => {
   const logged = console.error;
   console.error = () => {};
   try {
-    await assert.rejects(startTagging({ win, doc, css: '', indexedDB, openSmileyPicker: () => () => {} }));
+    await assert.rejects(startTagging({ win, doc, css: '', indexedDB }));
   } finally {
     console.error = logged;
   }
@@ -174,17 +166,19 @@ test('non-string or empty entries in mySmilies are not reaction codes', async ()
   await history.put(record('2', 'bob', '', 2));
   await history.put(record('3', 'carol', `[[img src="plugins/share/view.php?id=${A}"]]`, 3));
   await history.put(record('4', 'dave', ':h', 4));
-  await startTagging({ win, doc, css: '', indexedDB, openSmileyPicker: () => () => {} });
+  await startTagging({ win, doc, css: '', indexedDB });
   await settle();
   assert.deepEqual(hearts(), ['♥1']);
 });
 
-test('the token colour is the native chat background: #chatContainer, else an opaque ancestor short of .body', () => {
+test('the token colour is the native chat background: #chatContainer, else an opaque ancestor, .body only unthemed', () => {
   const win = /** @type {any} */ (new Window({ url: 'https://dollforum.com/forum/chat/index.php' }));
   const doc = win.document;
   doc.body.innerHTML = '<div class="body" style="background-color: #fbfbff"><div id="wrap"><div id="chatContainer"></div></div></div>';
   const chat = doc.getElementById('chatContainer');
   const wrap = doc.getElementById('wrap');
+  assert.equal(nativeChatBackground(doc, win), '#fbfbff', '.body, before the theme overrides it');
+  doc.head.insertAdjacentHTML('beforeend', '<style id="tdf-chat-style">.body { background-color: #dadae6 !important; }</style>');
   assert.equal(nativeChatBackground(doc, win), FALLBACK_TOKEN_BG, 'transparent up to the themed .body');
   wrap.style.backgroundColor = 'rgb(238, 238, 238)';
   assert.equal(nativeChatBackground(doc, win), '#eeeeee');
@@ -199,7 +193,7 @@ test('a right-click likes through the engine with the hidden token', async () =>
   /** @type {string[]} */
   const sent = [];
   win.addMessage = (/** @type {string} */ input) => (sent.push(doc.getElementById(input).value), undefined);
-  await startTagging({ win, doc, css: '', indexedDB: new IDBFactory(), openSmileyPicker: () => () => {} });
+  await startTagging({ win, doc, css: '', indexedDB: new IDBFactory() });
   await settle();
   const event = new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true });
   doc.querySelector('img.tdf-posted').dispatchEvent(event);
@@ -216,11 +210,14 @@ test('the fallback token colour gives its reason', () => {
   const onFallback = (/** @type {string} */ r) => reasons.push(r);
   doc.body.innerHTML = '<div class="body"><div id="chatContainer"></div></div>';
   assert.equal(nativeChatBackground(doc, win, onFallback), FALLBACK_TOKEN_BG);
+  doc.head.insertAdjacentHTML('beforeend', '<style id="tdf-chat-style"></style>');
+  assert.equal(nativeChatBackground(doc, win, onFallback), FALLBACK_TOKEN_BG);
   doc.getElementById('chatContainer').style.backgroundColor = '#abc';
   assert.equal(nativeChatBackground(doc, win, onFallback), '#aabbcc');
   doc.body.innerHTML = '';
   assert.equal(nativeChatBackground(doc, win, onFallback), FALLBACK_TOKEN_BG);
   assert.deepEqual(reasons, [
+    'the chat background is transparent',
     'the chat background is transparent up to .body',
     'the native chat (#chatContainer) is missing',
   ]);
@@ -229,8 +226,9 @@ test('the fallback token colour gives its reason', () => {
 /**
  * Right-clicks two images, so two likes take their token colour.
  * @param {(doc: Document) => void} arrange
+ * @param {(doc: Document) => void} [started]  run once tagging has started
  */
-async function likeTwice(arrange) {
+async function likeTwice(arrange, started = () => {}) {
   const { win, doc } = chatPage();
   const B = '100000000222222';
   doc.querySelector('.tdf-list').insertAdjacentHTML(
@@ -238,13 +236,17 @@ async function likeTwice(arrange) {
     `<div class="tdf-msg tdf-kind-public" data-id="2"><span class="tdf-body"><a href="plugins/share/view.php?id=${B}"><img class="tdf-posted" src="plugins/share/view.php?id=${B}"></a></span></div>`,
   );
   arrange(doc);
-  win.addMessage = () => undefined;
+  /** @type {string[]} */
+  const sent = [];
+  win.addMessage = (/** @type {string} */ input) => (sent.push(doc.getElementById(input).value), undefined);
   const logged = console.error;
   /** @type {unknown[]} */
   const logs = [];
   console.error = (/** @type {unknown} */ m) => logs.push(m);
   try {
-    await startTagging({ win, doc, css: '', indexedDB: new IDBFactory(), openSmileyPicker: () => () => {} });
+    const ready = startTagging({ win, doc, css: '', indexedDB: new IDBFactory() });
+    started(doc);
+    await ready;
     await settle();
     for (const img of doc.querySelectorAll('img.tdf-posted')) {
       img.dispatchEvent(new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
@@ -253,7 +255,7 @@ async function likeTwice(arrange) {
   } finally {
     console.error = logged;
   }
-  return { logs, notices: [...doc.querySelectorAll('.tdf-notice')].map((n) => n.textContent) };
+  return { logs, sent, notices: [...doc.querySelectorAll('.tdf-notice')].map((n) => n.textContent) };
 }
 
 test('a like hidden in the fallback colour is reported once, with its reason', async () => {
@@ -271,13 +273,54 @@ test('a readable chat background reports nothing', async () => {
   assert.deepEqual(notices, []);
 });
 
+test("the token colour is .body's native background, read before the view's theme overrides it", async () => {
+  const { logs, notices, sent } = await likeTwice((doc) => {
+    doc.body.insertAdjacentHTML('beforeend', '<div class="body" style="background-color: #fbfbff"><div id="chatContainer"></div></div>');
+  }, (doc) => {
+    doc.head.insertAdjacentHTML('beforeend', '<style id="tdf-chat-style">.body { background-color: #dadae6 !important; }</style>');
+  });
+  assert.deepEqual(sent, [':h [[span style=color:#fbfbff]]^111111[[/span]]']);
+  assert.deepEqual(logs, []);
+  assert.deepEqual(notices, []);
+});
+
+test('a chat background unreadable at start is read again when a like sends', async () => {
+  const { logs, sent } = await likeTwice(() => {}, (doc) => {
+    doc.body.insertAdjacentHTML('beforeend', '<div id="chatContainer" style="background-color: #eeeeee"></div>');
+  });
+  assert.deepEqual(sent, [':h [[span style=color:#eeeeee]]^111111[[/span]]']);
+  assert.deepEqual(logs, []);
+});
+
+test('a like, made or arriving live, floats hearts over the page', async () => {
+  const { win, doc } = chatPage();
+  win.matchMedia = () => ({ matches: false });
+  win.innerWidth = 1024;
+  win.innerHeight = 768;
+  const rect = { left: 100, top: 200, right: 140, bottom: 220, width: 40, height: 20, x: 100, y: 200 };
+  win.Element.prototype.getBoundingClientRect = () => ({ ...rect, toJSON: () => rect });
+  win.addMessage = () => undefined;
+  const indexedDB = new IDBFactory();
+  const history = createHistory(await openDb({ indexedDB }));
+  await history.put(record('1', 'alice', `[[img src="plugins/share/view.php?id=${A}"]]`, 1));
+  await startTagging({ win, doc, css: '', indexedDB });
+  await settle();
+  const floating = () => doc.querySelectorAll('body > .tdf-hearts-float').length;
+  doc.querySelector('img.tdf-posted').dispatchEvent(new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  assert.ok(floating() > 0, 'a right-click floats hearts');
+  for (const heart of doc.querySelectorAll('.tdf-hearts-float')) heart.remove();
+  emitInbound(record('5', 'bob', ':h ^111111', 5, { receivedAt: Date.now() }));
+  await settle();
+  assert.ok(floating() > 0, 'a live like floats hearts');
+});
+
 test('a pending echo core expires while the first rebuild reads stops counting', async () => {
   const { win, doc, hearts } = chatPage();
   const indexedDB = new IDBFactory();
   const history = createHistory(await openDb({ indexedDB }));
   await history.put(record('1', 'alice', `[[img src="plugins/share/view.php?id=${A}"]]`, 1));
   await history.addPending(record('local-1', 'me', ':h ^111111', 2, { mTime: '' }));
-  const started = startTagging({ win, doc, css: '', indexedDB, openSmileyPicker: () => () => {} });
+  const started = startTagging({ win, doc, css: '', indexedDB });
   // As bootstrap does: expirePending commits, then the change is announced, whichever of the
   // two the tagging read sees first.
   await history.markUnconfirmed('local-1');
@@ -298,7 +341,7 @@ test('a Storage limit prune is not undone by the next reaction change', async ()
   await history.put(record('1', 'alice', `[[img src="plugins/share/view.php?id=${A}"]]`, 1, { receivedAt: now - 4 * day }));
   await history.put(record('2', 'bob', ':h', 2, { receivedAt: now - 3 * day }));
   await history.put(record('3', 'dave', `[[img src="plugins/share/view.php?id=${A}"]]`, 3, { receivedAt: now - 1000 }));
-  await startTagging({ win, doc, css: '', indexedDB, openSmileyPicker: () => () => {} });
+  await startTagging({ win, doc, css: '', indexedDB });
   await settle();
   assert.deepEqual(hearts(), ['♥1']);
 

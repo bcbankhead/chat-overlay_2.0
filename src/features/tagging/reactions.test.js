@@ -83,7 +83,7 @@ test('toHexColor normalises computed colours, and is null for transparent or unk
   assert.equal(toHexColor('#ABC'), '#aabbcc');
   assert.equal(toHexColor('#a1b2c3'), '#a1b2c3');
   assert.equal(toHexColor('#a1b2c3ff'), '#a1b2c3');
-  for (const css of ['rgba(0, 0, 0, 0)', 'transparent', '#00000000', 'red', '', 'rgb(1,2)']) {
+  for (const css of ['rgba(0, 0, 0, 0)', 'transparent', '#00000000', '#0000', 'red', '', 'rgb(1,2)']) {
     assert.equal(toHexColor(css), null, css);
   }
 });

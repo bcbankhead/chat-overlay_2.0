@@ -43,6 +43,41 @@ test('each heart is removed when its animation ends, or by the backstop', () => 
   assert.equal(p.floating(), 0, 'no stray nodes');
 });
 
+/** @param {number} left @param {number} top @param {number} width @param {number} height */
+const box = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top });
+
+test('an anchor with no size (a hidden view) gets no hearts', () => {
+  const p = page();
+  p.anchor.getBoundingClientRect = () => box(0, 0, 0, 0);
+  assert.deepEqual(burst(p.doc, p.win, p.anchor), []);
+  assert.equal(p.floating(), 0);
+  assert.equal(p.timers.length, 0);
+});
+
+test('an anchor outside the window gets no hearts', () => {
+  const p = page();
+  p.win.innerWidth = 800;
+  p.win.innerHeight = 600;
+  for (const rect of [box(100, 700, 40, 20), box(100, -50, 40, 20), box(900, 200, 40, 20), box(-60, 200, 40, 20)]) {
+    p.anchor.getBoundingClientRect = () => rect;
+    assert.deepEqual(burst(p.doc, p.win, p.anchor), [], JSON.stringify(rect));
+  }
+  assert.equal(p.floating(), 0);
+});
+
+test('an anchor scrolled out of its chat list gets no hearts; one inside it does', () => {
+  const p = page();
+  p.doc.body.innerHTML = '<div class="tdf-list"><button class="anchor"></button></div>';
+  const list = p.doc.querySelector('.tdf-list');
+  const anchor = p.doc.querySelector('.anchor');
+  list.getBoundingClientRect = () => box(0, 300, 400, 200);
+  anchor.getBoundingClientRect = () => box(100, 200, 40, 20);
+  assert.deepEqual(burst(p.doc, p.win, anchor), []);
+  assert.equal(p.floating(), 0);
+  anchor.getBoundingClientRect = () => box(100, 350, 40, 20);
+  assert.ok(burst(p.doc, p.win, anchor).length > 0);
+});
+
 test('with reduced motion asked for, nothing plays and no node is added', () => {
   const p = page({ reduce: true });
   assert.deepEqual(burst(p.doc, p.win, p.anchor), []);

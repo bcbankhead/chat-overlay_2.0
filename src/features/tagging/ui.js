@@ -1,6 +1,6 @@
 // Image likes in the message view (UI design 2026-10-27, Message view → Image reactions;
-// TDF-0011). Right-clicking a posted image likes it at once; clicking it opens the smiley
-// picker, and a pick likes it with that smiley. Likes are permanent. A heart with the count of
+// TDF-0011). Right-clicking a posted image likes it at once; clicking it opens the image full
+// size in a new tab. Likes are permanent. A heart with the count of
 // distinct senders sits under the image, its title naming each sender's smiley(s), and hearts
 // float up from it when a like is made or arrives live. The view has no decoration extension
 // point, so this attaches to its DOM (B5): capture-phase listeners and a MutationObserver,
@@ -29,12 +29,12 @@ const SHOW_TEXT = 4; // NodeFilter.SHOW_TEXT
  *     onLike: (fn: (imageId: string, sender: string) => void) => () => void,
  *   },
  *   queue: import('./queue.js').ReactionQueue,
- *   openSmileyPicker: (options: { x: number, y: number, below?: boolean, extraRows?: { label: string, run: () => void }[], onPick: (code: string) => void }) => () => void,
+ *   codes: readonly string[],
  *   burst?: (doc: Document, win: any, anchor: Element) => unknown,
  * }} deps
  * @returns {() => void} uninstall
  */
-export function installReactionUi({ doc, win, store, queue, openSmileyPicker, burst = floatHearts }) {
+export function installReactionUi({ doc, win, store, queue, codes, burst = floatHearts }) {
   /** @param {string} shareId */
   const heartsOf = (shareId) =>
     [...doc.querySelectorAll(`#tdf-chat .${HEART}`)].filter((h) => /** @type {HTMLElement} */ (h).dataset.share === shareId);
@@ -116,7 +116,6 @@ export function installReactionUi({ doc, win, store, queue, openSmileyPicker, bu
    * @param {number} smileys  expanded smileys before the token
    */
   const isLikeHead = (text, smileys) => {
-    const codes = Array.isArray(win.mySmilies) ? win.mySmilies : [];
     const code = text.startsWith('-') ? text.slice(1) : text;
     return code === '' ? smileys === 1 : smileys === 0 && codes.includes(code);
   };
@@ -206,13 +205,7 @@ export function installReactionUi({ doc, win, store, queue, openSmileyPicker, bu
     if (shareId === null) return;
     event.preventDefault();
     const href = target.closest('a')?.href ?? /** @type {HTMLImageElement} */ (target).src;
-    openSmileyPicker({
-      x: event.clientX,
-      y: event.clientY + 8,
-      below: true,
-      extraRows: [{ label: 'Open full size', run: () => win.open(href, '_blank', 'noopener') }],
-      onPick: (code) => like(shareId, code),
-    });
+    win.open(href, '_blank', 'noopener');
   };
   doc.addEventListener('click', onClick, true);
 

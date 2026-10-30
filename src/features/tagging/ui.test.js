@@ -28,11 +28,10 @@ const row = ({ kind = 'public', href = `plugins/share/view.php?id=${A}`, id = '1
 const textRow = (body, { kind = 'public', id = '5' } = {}) =>
   `<div class="tdf-msg tdf-kind-${kind}" data-id="${id}"><span class="tdf-line"><span class="tdf-body">${body}</span></span></div>`;
 
-/** @param {{ likes?: import('./infer.js').LikeCount, accept?: boolean, request?: import('./queue.js').SendRequest | null }} [opts] */
-function page({ likes = NONE, accept = true, request = null } = {}) {
+/** @param {{ likes?: import('./infer.js').LikeCount, accept?: boolean, request?: import('./queue.js').SendRequest | null, codes?: string[] }} [opts] */
+function page({ likes = NONE, accept = true, request = null, codes = [...CODES] } = {}) {
   const win = /** @type {any} */ (new Window({ url: 'https://dollforum.com/forum/chat/index.php' }));
   const doc = win.document;
-  win.mySmilies = [...CODES];
   win.mySmiliesImg = CODES.map((c, i) => `<img src='smilies/${i}.gif' alt='${c}'>`);
   doc.body.innerHTML = `<div id="tdf-chat"><div class="tdf-list">${row()}</div></div>`;
   /** @type {unknown[]} */
@@ -71,8 +70,6 @@ function page({ likes = NONE, accept = true, request = null } = {}) {
     intervalSeconds: () => 15,
     resetRepeat: () => {},
   });
-  /** @type {any[]} */
-  const pickers = [];
   /** @type {Element[]} */
   const bursts = [];
   const uninstall = installReactionUi({
@@ -80,10 +77,7 @@ function page({ likes = NONE, accept = true, request = null } = {}) {
     win,
     store,
     queue,
-    openSmileyPicker: (options) => {
-      pickers.push(options);
-      return () => {};
-    },
+    codes,
     burst: (_doc, _win, anchor) => bursts.push(anchor),
   });
   /** @param {Element} el @param {string} [type] */
@@ -106,14 +100,14 @@ function page({ likes = NONE, accept = true, request = null } = {}) {
       timers.shift()?.();
     }
   };
-  return { win, doc, store, queue, pickers, opened, sent, timers, bursts, run, click, rightClick, posted, hearts, uninstall };
+  return { win, doc, store, queue, opened, sent, timers, bursts, run, click, rightClick, posted, hearts, uninstall };
 }
 
 test('right-clicking a posted image likes it at once: no context menu, an outlined heart of 1, hearts float', () => {
   const p = page();
   const event = p.rightClick(p.posted());
   assert.equal(event.defaultPrevented, true);
-  assert.equal(p.pickers.length, 0, 'no picker');
+  assert.deepEqual(p.opened, [], 'nothing opened');
   assert.deepEqual(p.hearts(), ['♥1 mine queued']);
   const heart = p.doc.querySelector('.tdf-rx-heart');
   assert.equal(heart.closest('.tdf-msg')?.getAttribute('data-id'), '1', 'the heart sits under the image, inside its message');
@@ -149,27 +143,29 @@ test('right-click on an image without a share id, in a whisper, or outside the o
   assert.deepEqual(p.sent, []);
 });
 
-test('clicking a posted image opens the picker below the pointer; a pick likes it with that smiley', () => {
+test('clicking a posted image opens it full size in a new tab and likes nothing', () => {
   const p = page();
-  const event = p.click(p.posted(), 50, 60);
+  const event = p.click(p.posted());
   assert.equal(event.defaultPrevented, true);
-  assert.equal(p.pickers.length, 1);
-  assert.deepEqual([p.pickers[0].x, p.pickers[0].y, p.pickers[0].below], [50, 68, true]);
-  assert.deepEqual(p.pickers[0].extraRows.map((/** @type {any} */ r) => r.label), ['Open full size']);
-  p.pickers[0].onPick(':L');
-  assert.deepEqual(p.hearts(), ['♥1 mine queued']);
-  assert.equal(p.bursts.length, 1);
-  assert.match(p.doc.querySelector('.tdf-rx-heart').title, /queued \(#1\)/);
-  p.timers.shift()?.();
-  assert.deepEqual(p.sent, [':L ^111111']);
+  assert.deepEqual(p.opened, [[`https://dollforum.com/forum/chat/plugins/share/view.php?id=${A}`, '_blank', 'noopener']]);
+  p.run();
+  assert.deepEqual(p.sent, []);
+  assert.deepEqual(p.bursts, []);
+  assert.deepEqual(p.hearts(), []);
 });
 
-test('picking again on an image you already reacted to sends nothing: no retraction', () => {
+test('a right-click queues the like, its heart titled with the queue position', () => {
+  const p = page();
+  p.rightClick(p.posted());
+  assert.match(p.doc.querySelector('.tdf-rx-heart').title, /queued \(#1\)/);
+  p.timers.shift()?.();
+  assert.deepEqual(p.sent, [':h ^111111']);
+});
+
+test('right-clicking an image you already liked sends nothing: no retraction', () => {
   const p = page({ likes: { count: 2, mine: true, senders: [{ sender: 'bob', codes: [':h'] }, { sender: 'me', codes: [':h'] }] } });
-  p.click(p.posted());
-  p.pickers[0].onPick(':h');
-  p.click(p.posted());
-  p.pickers[1].onPick(':L');
+  p.rightClick(p.posted());
+  p.rightClick(p.posted());
   p.click(p.doc.querySelector('.tdf-rx-heart'));
   p.run();
   assert.deepEqual(p.sent, []);
@@ -244,20 +240,14 @@ test('a sending heart is dimmed and titled sending', () => {
   assert.equal(p.doc.querySelector('.tdf-rx-heart').title, 'Your like: sending');
 });
 
-test('"Open full size" opens the image in a new tab', () => {
-  const p = page();
-  p.click(p.posted());
-  p.pickers[0].extraRows[0].run();
-  assert.deepEqual(p.opened, [[`https://dollforum.com/forum/chat/plugins/share/view.php?id=${A}`, '_blank', 'noopener']]);
-});
-
 test('an image without a share id, or in a whisper, keeps its plain link', () => {
   const p = page();
   p.doc.querySelector('.tdf-list').innerHTML = row({ href: null }) + row({ kind: 'whisper', id: '2' });
   for (const img of p.doc.querySelectorAll('img.tdf-posted')) {
     assert.equal(p.click(img).defaultPrevented, false);
   }
-  assert.equal(p.pickers.length, 0);
+  // happy-dom follows a plain link through window.open(href, '_self'); only a new tab is ours.
+  assert.deepEqual(p.opened.filter((/** @type {unknown[]} */ o) => o[1] === '_blank'), []);
 });
 
 test('a message the view adds later gets its heart; a store change refreshes it', async () => {
@@ -286,6 +276,7 @@ test('a like message shows no ^suffix token, in whichever form it arrived', asyn
     `<b>${smiley} <span style="color: #ffffff">^111111</span> </b>`,
     `${smiley} ^111111`.replace(smiley, ':h'),
     `-${smiley} ^111111`,
+    '-:h ^111111',
   ];
   forms.forEach((body, i) => list.insertAdjacentHTML('beforeend', textRow(body, { id: String(10 + i) })));
   await settle();
@@ -294,6 +285,10 @@ test('a like message shows no ^suffix token, in whichever form it arrived', asyn
     assert.equal(body.querySelector('span'), null, 'an emptied wrapper goes with it');
   }
   assert.equal(list.querySelectorAll('.tdf-body img').length, 4, 'the smileys stay');
+  assert.deepEqual(
+    [...list.querySelectorAll('.tdf-body')].slice(3).map((b) => (b.textContent ?? '').trim()),
+    [':h', '-', '-:h'],
+  );
 });
 
 test('a token in anything other than a like stays', async () => {
@@ -314,6 +309,30 @@ test('a token in anything other than a like stays', async () => {
   assert.deepEqual(
     [...list.querySelectorAll('.tdf-body')].map((b) => (b.textContent ?? '').trim()),
     ['see ^111111', '^111111', 'x ^111111', '^111111', '^111111', ':h :h ^111111'],
+  );
+});
+
+test('a token with a smiley after it stays', async () => {
+  const p = page();
+  const list = p.doc.querySelector('.tdf-list');
+  list.innerHTML = '';
+  await settle();
+  list.insertAdjacentHTML('beforeend', textRow("^111111 <img src='smilies/9.gif' alt=':h'>", { id: '26' }));
+  await settle();
+  assert.equal((list.querySelector('.tdf-body')?.textContent ?? '').trim(), '^111111');
+});
+
+test('the token is stripped only after a code given to the install, not one in mySmilies alone', async () => {
+  const p = page({ codes: [':h'] });
+  p.win.mySmilies = [':h', ':d'];
+  const list = p.doc.querySelector('.tdf-list');
+  list.innerHTML = '';
+  await settle();
+  list.insertAdjacentHTML('beforeend', textRow(':h ^111111', { id: '27' }) + textRow(':d ^111111', { id: '28' }));
+  await settle();
+  assert.deepEqual(
+    [...list.querySelectorAll('.tdf-body')].map((b) => (b.textContent ?? '').trim()),
+    [':h', ':d ^111111'],
   );
 });
 
