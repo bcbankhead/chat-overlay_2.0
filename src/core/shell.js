@@ -11,6 +11,8 @@ export const THUMB_CLASS = 'tdf-thumb';
 const HIDE_AFTER_MS = 900;
 const MIN_THUMB = 24;
 const INSET = 3;
+// A wheel turned in lines (deltaMode 1, as Firefox sends) is scrolled this many px per line.
+const LINE_PX = 16;
 
 /** @type {import('./theme.js').Theme | null} */
 let theme = null;
@@ -90,7 +92,8 @@ export function currentTheme() {
 
 /**
  * Give a scroll area a floating scrollbar: native bar hidden, a thin draggable thumb drawn
- * over the content while scrolling or hovering.
+ * over its right edge while scrolling or hovering. The thumb is the area's next sibling, not
+ * its child: inside the scrolled content it would count toward scrollHeight (TDF-0017).
  * @param {HTMLElement} el
  * @returns {() => void} detach
  */
@@ -117,7 +120,26 @@ function floatScrollbar(el) {
   const thumb = doc.createElement('div');
   thumb.className = THUMB_CLASS;
   el.classList.add(SCROLL_CLASS);
-  el.appendChild(thumb);
+  el.after(thumb);
+  // The thumb is positioned against the parent, which must be its containing block.
+  const parent = /** @type {HTMLElement} */ (el.parentElement);
+  const view = doc.defaultView;
+  const positioned = parent.style.position;
+  // Decided on the first placement while connected, not at attach: a detached parent
+  // computes no position, and positioning it then would override the stylesheet's.
+  let decided = false;
+  let positionedHere = false;
+
+  function position() {
+    if (decided || !parent.isConnected) return;
+    decided = true;
+    // An unknown position (no layout to compute it) is treated as static.
+    const computed = view ? view.getComputedStyle(parent).position : '';
+    if (computed === 'static' || computed === '') {
+      parent.style.position = 'relative';
+      positionedHere = true;
+    }
+  }
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let timer;
   let hovered = false;
@@ -136,6 +158,7 @@ function floatScrollbar(el) {
   }
 
   function place() {
+    position();
     const geometry = measure();
     if (!geometry) {
       thumb.style.display = 'none';
@@ -143,8 +166,9 @@ function floatScrollbar(el) {
     }
     thumb.style.display = '';
     thumb.style.height = `${geometry.height}px`;
-    // The thumb lives inside the scrolled content, so it is offset by scrollTop.
-    thumb.style.transform = `translateY(${el.scrollTop + geometry.offset}px)`;
+    // Both offsets are from the parent's padding edge, as the thumb's own position is.
+    thumb.style.top = `${el.offsetTop + geometry.offset}px`;
+    thumb.style.left = `${el.offsetLeft + el.offsetWidth}px`;
     return true;
   }
 
@@ -199,10 +223,26 @@ function floatScrollbar(el) {
     doc.addEventListener('mouseup', up);
   };
 
+  /** @param {WheelEvent} event */
+  const onWheel = (event) => {
+    // Outside the area, the thumb would otherwise swallow a wheel turned over it.
+    event.preventDefault();
+    // deltaMode 1 is lines, 2 is pages; 0 is already pixels.
+    const unit = event.deltaMode === 1 ? LINE_PX : event.deltaMode === 2 ? el.clientHeight : 1;
+    el.scrollTop += event.deltaY * unit;
+  };
+
   el.addEventListener('scroll', show);
   el.addEventListener('mouseenter', onEnter);
   el.addEventListener('mouseleave', onLeave);
+  thumb.addEventListener('mouseenter', onEnter);
+  thumb.addEventListener('mouseleave', onLeave);
   thumb.addEventListener('mousedown', onDown);
+  thumb.addEventListener('wheel', onWheel);
+  // The area can resize without scrolling: a composer growing, a section opening. Only
+  // resizes are tracked; a move alone is picked up on the next scroll or hover.
+  const resized = typeof view?.ResizeObserver === 'function' ? new view.ResizeObserver(() => place()) : null;
+  resized?.observe(el);
 
   return () => {
     clearTimeout(timer);
@@ -210,8 +250,13 @@ function floatScrollbar(el) {
     el.removeEventListener('scroll', show);
     el.removeEventListener('mouseenter', onEnter);
     el.removeEventListener('mouseleave', onLeave);
+    thumb.removeEventListener('mouseenter', onEnter);
+    thumb.removeEventListener('mouseleave', onLeave);
     thumb.removeEventListener('mousedown', onDown);
+    thumb.removeEventListener('wheel', onWheel);
+    resized?.disconnect();
     thumb.remove();
+    if (positionedHere) parent.style.position = positioned;
     el.classList.remove(SCROLL_CLASS);
   };
 }

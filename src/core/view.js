@@ -8,7 +8,7 @@ import { renderAvatar } from './avatar.js';
 import { adapt, THEME_BG } from './ink.js';
 import { safeDecodeURIComponent } from './parse.js';
 import { sanitize } from './sanitize.js';
-import { atBottom } from './scroll.js';
+import { atBottom, slideTop } from './scroll.js';
 import { fixedSmilieSrc } from './smiliefix.js';
 import { attachScrollbar } from './shell.js';
 
@@ -22,6 +22,9 @@ const NOTICE_KINDS = new Set(['entry', 'exit', 'system']);
 
 /** Images larger than this on either side are posted images; smaller ones are smilies. */
 const POSTED_MIN_PX = 48;
+
+/** How long a new row takes to slide into view at the bottom. */
+const SLIDE_MS = 150;
 
 /**
  * Tag a posted image once its size is known, so it takes the pointer and the hover fade.
@@ -117,14 +120,81 @@ export function createView({ doc, win, container, css, avatars = null }) {
     pinnedTop = list.scrollTop;
     pinned = true;
   };
+  const toBottom = () => {
+    list.scrollTop = list.scrollHeight;
+    settle();
+  };
+
+  // A running slide to the bottom: its distance when it started, and its first frame's time.
+  /** @type {{ gap0: number, start: number | null, frame: number } | null} */
+  let slide = null;
+  const reducedMotion = () =>
+    Boolean(win.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+  const maxTop = () => list.scrollHeight - list.clientHeight;
+  const stopSlide = () => {
+    if (slide) win.cancelAnimationFrame(slide.frame);
+    slide = null;
+  };
+
+  /** @param {number} now */
+  function step(now) {
+    if (!slide) return;
+    if (slide.start === null) slide.start = now;
+    // The bottom is read every frame, so a trim, resize or append mid-slide still lands there.
+    const remaining = slideTop(slide.gap0, now - slide.start, SLIDE_MS);
+    if (remaining > 0) {
+      list.scrollTop = maxTop() - remaining;
+      slide.frame = win.requestAnimationFrame(step);
+    } else {
+      slide = null;
+      toBottom();
+    }
+  }
+
+  // Bring a pinned view to its new bottom: slid, or at once where motion is reduced.
+  function follow() {
+    const gap0 = maxTop() - list.scrollTop;
+    stopSlide();
+    if (gap0 <= 1 || reducedMotion() || typeof win.requestAnimationFrame !== 'function') {
+      toBottom();
+      return;
+    }
+    slide = { gap0, start: null, frame: win.requestAnimationFrame(step) };
+  }
+
+  // The user taking hold of the list mid-slide stops it where it is. The view stays pinned
+  // from there: a wheel or drag that then scrolls up unpins it, while a click that scrolls
+  // nothing leaves the next row to follow. Caught on root in the capture phase, so a gesture
+  // on the scrollbar thumb, the list's sibling that stops its own events, still counts.
+  const cancelSlide = () => {
+    if (!slide) return;
+    stopSlide();
+    pinnedTop = list.scrollTop;
+  };
+  for (const type of ['wheel', 'pointerdown', 'keydown']) {
+    root.addEventListener(type, cancelSlide, { capture: true, passive: true });
+  }
+
   list.addEventListener(
     'scroll',
     () => {
       if (atBottom(list)) settle();
-      else if (list.scrollTop < pinnedTop - 1) pinned = false;
+      // Mid-slide the view is below the bottom it last rested at, and a trim lowers scrollTop
+      // under it; neither is the user moving away.
+      else if (!slide && list.scrollTop < pinnedTop - 1) pinned = false;
     },
     { passive: true },
   );
+
+  // Any change in the list's or a row's size while pinned returns the view to the bottom: the
+  // composer resizing the list, a late preview, a row regrouped. A running slide absorbs it.
+  const resized =
+    typeof win.ResizeObserver === 'function'
+      ? new win.ResizeObserver(() => {
+          if (!slide && pinned && autoOn()) toBottom();
+        })
+      : null;
+  resized?.observe(list);
 
   // Posted images are told from smilies by size, known only once loaded. `load` does not
   // bubble, so it is caught in the capture phase. A loaded image grows the list, so a pinned
@@ -135,10 +205,8 @@ export function createView({ doc, win, container, css, avatars = null }) {
       const target = /** @type {Element} */ (event.target);
       if (target.tagName !== 'IMG') return;
       if (target.closest?.('.tdf-body')) tagPosted(/** @type {HTMLImageElement} */ (target));
-      if (pinned && autoOn()) {
-        list.scrollTop = list.scrollHeight;
-        settle();
-      }
+      // The resize re-pin usually gets there first; this stays as the fallback (TDF-0009.14).
+      if (!slide && pinned && autoOn()) toBottom();
     },
     true,
   );
@@ -227,14 +295,24 @@ export function createView({ doc, win, container, css, avatars = null }) {
     return el;
   }
 
-  function autoscroll() {
+  /**
+   * After rows are added: a pinned view follows them down, slid unless `instant`. A user
+   * scrolled up stays where they are.
+   * @param {boolean} [instant]
+   */
+  function autoscroll(instant = false) {
     // With the switch off a row grows the list without a scroll event, so read where it rests.
     if (!autoOn()) {
       pinned = atBottom(list);
       return;
     }
-    list.scrollTop = list.scrollHeight;
-    settle();
+    if (!pinned) return;
+    if (instant) {
+      stopSlide();
+      toBottom();
+    } else {
+      follow();
+    }
   }
 
   /** @type {Set<string>} */
@@ -252,6 +330,7 @@ export function createView({ doc, win, container, css, avatars = null }) {
     el.setAttribute('role', 'status');
     el.textContent = text;
     list.appendChild(el);
+    resized?.observe(el);
     trim();
     autoscroll();
   }
@@ -289,11 +368,12 @@ export function createView({ doc, win, container, css, avatars = null }) {
   function remove(el) {
     const next = el.nextElementSibling;
     unindex(el);
+    resized?.unobserve(el);
     el.remove();
     regroup(next);
   }
 
-  // Live, and counting entries only: the floating scrollbar's thumb is in the list too.
+  // Live: the rows currently shown.
   const shown = list.getElementsByClassName('tdf-msg');
 
   // The list keeps no more than a replay shows; the oldest entries go first.
@@ -307,6 +387,7 @@ export function createView({ doc, win, container, css, avatars = null }) {
   function add(record) {
     const el = render(record);
     index(el);
+    resized?.observe(el);
     return el;
   }
 
@@ -334,12 +415,13 @@ export function createView({ doc, win, container, css, avatars = null }) {
       const frag = doc.createDocumentFragment();
       for (const el of els) {
         index(el);
+        resized?.observe(el);
         frag.appendChild(el);
       }
       list.appendChild(frag);
       for (const el of els) regroup(el);
       trim();
-      autoscroll();
+      autoscroll(true);
     },
 
     /**
@@ -350,6 +432,7 @@ export function createView({ doc, win, container, css, avatars = null }) {
     confirm(pendingId, record) {
       for (const el of entries('id', pendingId)) {
         unindex(el);
+        resized?.unobserve(el);
         const replacement = add(record);
         el.replaceWith(replacement);
         regroup(replacement);
@@ -385,11 +468,15 @@ export function createView({ doc, win, container, css, avatars = null }) {
       for (const id of ids) for (const el of entries('id', id)) remove(el);
     },
 
-    /** Empty the list: every entry and notice goes; the scrollbar's thumb stays. */
+    /** Empty the list: every entry and notice goes. */
     clear() {
-      for (const el of [...shown]) /** @type {HTMLElement} */ (el).remove();
+      for (const el of [...shown]) {
+        resized?.unobserve(el);
+        el.remove();
+      }
       byKey.id.clear();
       byKey.mtime.clear();
+      stopSlide();
       settle();
     },
 

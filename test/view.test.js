@@ -4,8 +4,69 @@ import { Window } from 'happy-dom';
 import { DEFAULT_REPLAY_LIMIT } from '../src/core/history.js';
 import { createView } from '../src/core/view.js';
 
-async function setup({ autoScroll = true, globals = {} } = {}) {
+/**
+ * Animation frames run only when the test asks: `tick(ms)` advances the clock and runs the
+ * frames due, `finish()` runs until none are left.
+ */
+function stubFrames(win) {
+  let now = 1000;
+  let next = 1;
+  const queued = new Map();
+  win.requestAnimationFrame = (fn) => {
+    queued.set(next, fn);
+    return next++;
+  };
+  win.cancelAnimationFrame = (id) => queued.delete(id);
+  const tick = (ms = 16) => {
+    now += ms;
+    const due = [...queued.values()];
+    queued.clear();
+    for (const fn of due) fn(now);
+  };
+  return {
+    tick,
+    finish() {
+      for (let i = 0; queued.size && i < 1000; i++) tick();
+    },
+    get pending() {
+      return queued.size;
+    },
+  };
+}
+
+/** A ResizeObserver whose callback the test fires; it records what is observed. */
+function stubResize(win) {
+  const observers = [];
+  win.ResizeObserver = class {
+    constructor(fn) {
+      this.fn = fn;
+      this.targets = new Set();
+      observers.push(this);
+    }
+    observe(t) {
+      this.targets.add(t);
+    }
+    unobserve(t) {
+      this.targets.delete(t);
+    }
+    disconnect() {
+      this.targets.clear();
+    }
+  };
+  return {
+    /** The observer watching `el`, called as the browser would after a size change. */
+    resize(el) {
+      for (const o of observers) if (o.targets.has(el)) o.fn([{ target: el }]);
+    },
+    watches: (el) => observers.some((o) => o.targets.has(el)),
+  };
+}
+
+async function setup({ autoScroll = true, reducedMotion = false, globals = {} } = {}) {
   const win = new Window({ url: 'https://example.test/chat/' });
+  const frames = stubFrames(win);
+  const resizes = stubResize(win);
+  win.matchMedia = (query) => ({ matches: reducedMotion && query.includes('prefers-reduced-motion: reduce') });
   Object.assign(win, globals);
   const doc = win.document;
   doc.body.innerHTML = `<div id="chatContainer"></div><input type="checkbox" id="autoScrollID" ${autoScroll ? 'checked' : ''}>`;
@@ -15,7 +76,7 @@ async function setup({ autoScroll = true, globals = {} } = {}) {
   const container = doc.getElementById('chatContainer');
   const view = createView({ doc, win, container, css: '#tdf-chat{}' });
   const root = doc.getElementById('tdf-chat');
-  return { win, doc, view, root, container, whispered };
+  return { win, doc, view, root, container, whispered, frames, resizes };
 }
 
 const rec = (over) => ({
@@ -394,6 +455,7 @@ test('autoscroll follows the engine checkbox', async () => {
   Object.defineProperty(list2, 'scrollHeight', { value: 500 });
   Object.defineProperty(list2, 'scrollTop', { set: (v) => (set = v), get: () => set ?? 0 });
   on.view.append(rec({}));
+  on.frames.finish();
   assert.equal(set, 500);
 });
 
@@ -409,10 +471,11 @@ const imgRec = (over) => rec({ text: '<img src="https://example.test/p.jpg">', .
 const loadImg = (win, img) => img.dispatchEvent(new win.Event('load'));
 
 test('a pinned view follows an image that loads after its row is added', async () => {
-  const { win, view, root } = await setup();
+  const { win, view, root, frames } = await setup();
   const list = root.querySelector('.tdf-list');
   const geo = stubScroll(list);
   view.append(imgRec({}));
+  frames.finish();
   assert.equal(geo.top, 500);
   geo.height = 750;
   loadImg(win, root.querySelector('.tdf-body img'));
@@ -420,10 +483,11 @@ test('a pinned view follows an image that loads after its row is added', async (
 });
 
 test('a pinned view follows any list image, avatars included, but no other load', async () => {
-  const { win, view, root } = await setup();
+  const { win, view, root, frames } = await setup();
   const list = root.querySelector('.tdf-list');
   const geo = stubScroll(list);
   view.append(rec({}));
+  frames.finish();
   geo.height = 600;
   root.querySelector('.tdf-msg').dispatchEvent(new win.Event('load'));
   assert.equal(geo.top, 500);
@@ -433,7 +497,7 @@ test('a pinned view follows any list image, avatars included, but no other load'
 });
 
 test('a replay with images ends at the bottom once they load', async () => {
-  const { win, view, root } = await setup();
+  const { win, view, root, frames } = await setup();
   const list = root.querySelector('.tdf-list');
   const geo = stubScroll(list);
   view.replay([imgRec({ id: '1' }), imgRec({ id: '2', mTime: '101' })]);
@@ -446,10 +510,11 @@ test('a replay with images ends at the bottom once they load', async () => {
 });
 
 test('a late image load does not pull down a user scrolled up', async () => {
-  const { win, view, root } = await setup();
+  const { win, view, root, frames } = await setup();
   const list = root.querySelector('.tdf-list');
   const geo = stubScroll(list);
   view.append(imgRec({}));
+  frames.finish();
   geo.top = 100;
   list.dispatchEvent(new win.Event('scroll'));
   geo.height = 750;
@@ -458,10 +523,11 @@ test('a late image load does not pull down a user scrolled up', async () => {
 });
 
 test('a user who scrolls back to the bottom is followed again', async () => {
-  const { win, view, root } = await setup();
+  const { win, view, root, frames } = await setup();
   const list = root.querySelector('.tdf-list');
   const geo = stubScroll(list);
   view.append(imgRec({}));
+  frames.finish();
   geo.top = 100;
   list.dispatchEvent(new win.Event('scroll'));
   geo.top = geo.height - 200;
@@ -472,10 +538,11 @@ test('a user who scrolls back to the bottom is followed again', async () => {
 });
 
 test('a scroll event arriving after the list grew does not unpin', async () => {
-  const { win, view, root } = await setup();
+  const { win, view, root, frames } = await setup();
   const list = root.querySelector('.tdf-list');
   const geo = stubScroll(list);
   view.append(imgRec({}));
+  frames.finish();
   geo.height = 750;
   list.dispatchEvent(new win.Event('scroll'));
   loadImg(win, root.querySelector('.tdf-body img'));
@@ -483,10 +550,11 @@ test('a scroll event arriving after the list grew does not unpin', async () => {
 });
 
 test('rows added with Auto-scroll off leave the view unpinned when it is turned back on', async () => {
-  const { win, doc, view, root } = await setup();
+  const { win, doc, view, root, frames } = await setup();
   const list = root.querySelector('.tdf-list');
   const geo = stubScroll(list);
   view.append(imgRec({}));
+  frames.finish();
   const auto = doc.getElementById('autoScrollID');
   auto.checked = false;
   geo.height = 800;
@@ -498,14 +566,245 @@ test('rows added with Auto-scroll off leave the view unpinned when it is turned 
 });
 
 test('with Auto-scroll off an image load never moves the view', async () => {
-  const { win, doc, view, root } = await setup();
+  const { win, doc, view, root, frames } = await setup();
   const list = root.querySelector('.tdf-list');
   const geo = stubScroll(list);
   view.append(imgRec({}));
+  frames.finish();
   doc.getElementById('autoScrollID').checked = false;
   geo.height = 750;
   loadImg(win, root.querySelector('.tdf-body img'));
   assert.equal(geo.top, 500);
+});
+
+// A view resting at the bottom of 500 px, 200 visible, before the row under test arrives.
+async function pinnedAt300(opts) {
+  const t = await setup(opts);
+  const list = t.root.querySelector('.tdf-list');
+  const geo = stubScroll(list);
+  t.view.replay([rec({ id: 'r0' })]);
+  assert.equal(geo.top, 500, 'a replay lands at once');
+  geo.top = 300;
+  list.dispatchEvent(new t.win.Event('scroll'));
+  return { ...t, list, geo };
+}
+
+test('a new row slides in over about 150ms while pinned', async () => {
+  const { view, frames, geo } = await pinnedAt300();
+  geo.height = 560;
+  view.append(rec({ id: 'n', mTime: '101' }));
+  assert.equal(geo.top, 300, 'nothing moves before the first frame');
+  frames.tick(0);
+  assert.equal(geo.top, 300, 'the first frame starts the slide where the view rests');
+  frames.tick(75);
+  assert.ok(geo.top > 300 && geo.top < 360, `part way at 75ms, got ${geo.top}`);
+  frames.tick(75);
+  assert.equal(geo.top, 560, 'at the bottom by 150ms');
+  assert.equal(frames.pending, 0);
+});
+
+test('with prefers-reduced-motion a new row appears at once', async () => {
+  const { view, frames, geo } = await pinnedAt300({ reducedMotion: true });
+  geo.height = 560;
+  view.append(rec({ id: 'n', mTime: '101' }));
+  assert.equal(geo.top, 560);
+  assert.equal(frames.pending, 0);
+});
+
+test('a notice slides in like a row', async () => {
+  const { view, frames, geo } = await pinnedAt300();
+  geo.height = 540;
+  view.notice('trouble');
+  assert.equal(geo.top, 300);
+  frames.finish();
+  assert.equal(geo.top, 540);
+});
+
+test('a slide reads the bottom live: an append or resize mid-slide still lands there', async () => {
+  const { view, frames, geo, list, resizes } = await pinnedAt300();
+  geo.height = 560;
+  view.append(rec({ id: 'n', mTime: '101' }));
+  frames.tick(0);
+  frames.tick(50);
+  geo.height = 620;
+  view.append(rec({ id: 'm', mTime: '102' }));
+  frames.tick(0);
+  geo.height = 680;
+  resizes.resize(list);
+  frames.finish();
+  assert.equal(geo.top, 680);
+});
+
+test('a trim mid-slide lowering scrollTop does not unpin the view', async () => {
+  const { win, view, frames, geo, list } = await pinnedAt300();
+  geo.height = 560;
+  view.append(rec({ id: 'n', mTime: '101' }));
+  frames.tick(0);
+  frames.tick(30);
+  // Scroll anchoring after the oldest row is trimmed.
+  geo.top -= 52;
+  list.dispatchEvent(new win.Event('scroll'));
+  frames.finish();
+  assert.equal(geo.top, 560);
+  geo.height = 600;
+  view.append(rec({ id: 'm', mTime: '102' }));
+  frames.finish();
+  assert.equal(geo.top, 600, 'still pinned for the next row');
+});
+
+for (const type of ['wheel', 'pointerdown', 'keydown']) {
+  test(`a ${type} on the list mid-slide stops it where the user is`, async () => {
+    const { win, view, frames, geo, list } = await pinnedAt300();
+    geo.height = 560;
+    view.append(rec({ id: 'n', mTime: '101' }));
+    frames.tick(0);
+    frames.tick(30);
+    const at = geo.top;
+    list.dispatchEvent(new win.Event(type));
+    assert.equal(frames.pending, 0, 'the slide is cancelled');
+    frames.finish();
+    assert.equal(geo.top, at);
+    // The gesture then scrolls the user up.
+    geo.top = at - 50;
+    list.dispatchEvent(new win.Event('scroll'));
+    geo.height = 600;
+    view.append(rec({ id: 'm', mTime: '102' }));
+    frames.finish();
+    assert.equal(geo.top, at - 50, 'scrolled up, later rows leave the view alone');
+  });
+
+  test(`a ${type} on the scrollbar thumb, the list's sibling, stops a slide`, async () => {
+    const { win, doc, view, frames, geo, root } = await pinnedAt300();
+    const thumb = doc.createElement('div');
+    root.appendChild(thumb);
+    // As the real thumb does, it keeps its events to itself.
+    thumb.addEventListener(type, (event) => event.stopPropagation());
+    geo.height = 560;
+    view.append(rec({ id: 'n', mTime: '101' }));
+    frames.tick(0);
+    frames.tick(30);
+    const at = geo.top;
+    thumb.dispatchEvent(new win.Event(type));
+    assert.equal(frames.pending, 0, 'the slide is cancelled');
+    assert.equal(geo.top, at);
+  });
+}
+
+test('a click mid-slide that scrolls nothing leaves the view pinned for the next row', async () => {
+  const { win, view, frames, geo, list } = await pinnedAt300();
+  geo.height = 560;
+  view.append(rec({ id: 'n', mTime: '101' }));
+  frames.tick(0);
+  frames.tick(30);
+  list.dispatchEvent(new win.Event('pointerdown'));
+  assert.equal(frames.pending, 0, 'the slide is cancelled');
+  geo.height = 600;
+  view.append(rec({ id: 'm', mTime: '102' }));
+  frames.finish();
+  assert.equal(geo.top, 600);
+});
+
+test('a wheel or pointerdown with no slide running leaves a pinned view following', async () => {
+  const { win, view, frames, geo, list } = await pinnedAt300();
+  list.dispatchEvent(new win.Event('wheel'));
+  list.dispatchEvent(new win.Event('pointerdown'));
+  geo.height = 560;
+  view.append(rec({ id: 'n', mTime: '101' }));
+  frames.finish();
+  assert.equal(geo.top, 560);
+});
+
+test('without requestAnimationFrame a new row appears at once', async () => {
+  const { view, frames, geo } = await pinnedAt300({ globals: { requestAnimationFrame: undefined } });
+  geo.height = 560;
+  view.append(rec({ id: 'n', mTime: '101' }));
+  assert.equal(geo.top, 560);
+  assert.equal(frames.pending, 0);
+});
+
+test('without ResizeObserver the view still follows, removes and clears', async () => {
+  const { view, frames, geo, root } = await pinnedAt300({ globals: { ResizeObserver: undefined } });
+  geo.height = 560;
+  view.append(rec({ id: 'n', mTime: '101' }));
+  view.notice('trouble');
+  frames.finish();
+  assert.equal(geo.top, 560);
+  view.confirm('n', rec({ id: 'q', mTime: '102' }));
+  view.removeById(['q']);
+  view.removeByMTime('100');
+  view.clear();
+  assert.equal(msgs(root).length, 0);
+});
+
+test('a row that grows the list by a pixel or less schedules no slide', async () => {
+  for (const height of [500, 501]) {
+    const { view, frames, geo } = await pinnedAt300();
+    geo.height = height;
+    view.append(rec({ id: 'n', mTime: '101' }));
+    assert.equal(frames.pending, 0, `grown to ${height}`);
+    assert.equal(geo.top, height);
+  }
+});
+
+test('a scrolled-up user is never moved by new rows, resizes or image loads', async () => {
+  const { win, view, frames, geo, list, resizes, root } = await pinnedAt300();
+  geo.top = 100;
+  list.dispatchEvent(new win.Event('scroll'));
+  geo.height = 560;
+  view.append(imgRec({ id: 'n', mTime: '101' }));
+  view.notice('trouble');
+  frames.finish();
+  assert.equal(geo.top, 100);
+  geo.height = 700;
+  resizes.resize(list);
+  resizes.resize(root.querySelector('[data-id="n"]'));
+  loadImg(win, root.querySelector('.tdf-body img'));
+  assert.equal(geo.top, 100);
+});
+
+test('while pinned, a list or row resize returns the view to the bottom at once', async () => {
+  const { view, frames, geo, list, resizes, root } = await pinnedAt300();
+  geo.height = 560;
+  view.append(rec({ id: 'n', mTime: '101' }));
+  frames.finish();
+  // The composer grew: the list is shorter, so its bottom is further down.
+  geo.height = 616;
+  resizes.resize(list);
+  assert.equal(geo.top, 616);
+  // A row grew: a late link preview.
+  geo.height = 700;
+  resizes.resize(root.querySelector('[data-id="n"]'));
+  assert.equal(geo.top, 700);
+});
+
+test('with Auto-scroll off nothing moves the view: rows, notices or resizes', async () => {
+  const { doc, view, frames, geo, list, resizes } = await pinnedAt300();
+  doc.getElementById('autoScrollID').checked = false;
+  geo.height = 560;
+  view.append(rec({ id: 'n', mTime: '101' }));
+  view.notice('trouble');
+  resizes.resize(list);
+  frames.finish();
+  assert.equal(geo.top, 300);
+});
+
+test('rows are watched for resizing while shown, and no longer once gone', async () => {
+  const { view, resizes, root } = await setup();
+  const list = root.querySelector('.tdf-list');
+  assert.ok(resizes.watches(list));
+  view.replay([rec({ id: 'a', mTime: '1' }), rec({ id: 'b', mTime: '2' })]);
+  view.append(rec({ id: 'p', mTime: '', confirm: 'pending' }));
+  view.notice('trouble');
+  const [a, b, p] = ['a', 'b', 'p'].map((id) => root.querySelector(`[data-id="${id}"]`));
+  const note = root.querySelector('.tdf-notice');
+  for (const el of [a, b, p, note]) assert.ok(resizes.watches(el));
+  view.removeById(['a']);
+  assert.equal(resizes.watches(a), false);
+  view.confirm('p', rec({ id: 'q', mTime: '3' }));
+  assert.equal(resizes.watches(p), false);
+  assert.ok(resizes.watches(root.querySelector('[data-id="q"]')));
+  view.clear();
+  for (const el of [b, note]) assert.equal(resizes.watches(el), false);
 });
 
 test('clicking a sender name whispers them', async () => {

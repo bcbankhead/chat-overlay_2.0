@@ -116,9 +116,9 @@
 }
 
 /* Floating scrollbars (shell.js attachScrollbar): the native bar is hidden and a thin thumb
-   is drawn over the content. */
+   is drawn over the area's right edge. The thumb is the area's sibling, placed by shell.js
+   against their parent, so it never adds to the area's scrollHeight. */
 .tdf-scroll {
-  position: relative;
   scrollbar-width: none;
 }
 
@@ -129,8 +129,10 @@
 .tdf-thumb {
   position: absolute;
   top: 0;
-  right: 3px;
+  left: 0;
   z-index: 2;
+  /* Anchored at the area's right edge; growing on hover widens it inward. */
+  transform: translateX(calc(-100% - 3px));
   width: 6px;
   border-radius: 999px;
   background: rgba(128, 128, 128, 0.55);
@@ -246,6 +248,8 @@
 /* Grouped rows: avatar, name and time once per run, the rest indented beneath. */
 #tdf-chat .tdf-head,
 #tdf-chat .tdf-cont {
+  --tdf-avatar-top: 4px;
+  --tdf-avatar-size: 48px;
   position: relative;
   padding-left: 70px;
   padding-right: 12px;
@@ -256,10 +260,22 @@
   padding-top: 2px;
 }
 
-/* A one-message group is shorter than its avatar; keep the avatar inside its own row. */
-#tdf-chat .tdf-head:not(:has(+ .tdf-cont)) {
-  min-height: 52px;
-  box-sizing: border-box;
+/* A one-message group is shorter than its avatar, which overflows the head row. A zero-width
+   float as tall as the avatar (less the head's 2px top padding) overflows with it, and a
+   following non-continuation row clears it, landing the usual 10px gap below the avatar. A
+   float adds nothing to the head's height, so a head never depends on a later neighbour
+   (TDF-0017); a head already taller than its avatar leaves the float behind and keeps its
+   normal gap. */
+#tdf-chat .tdf-head::before {
+  content: "";
+  float: left;
+  width: 0;
+  height: calc(var(--tdf-avatar-top) + var(--tdf-avatar-size) - 2px);
+  margin-bottom: 10px;
+}
+
+#tdf-chat .tdf-head + .tdf-msg:not(.tdf-cont) {
+  clear: left;
 }
 
 #tdf-chat .tdf-cont {
@@ -271,9 +287,9 @@
 #tdf-chat .tdf-avatar {
   position: absolute;
   left: 12px;
-  top: 4px;
-  width: 48px;
-  height: 48px;
+  top: var(--tdf-avatar-top);
+  width: var(--tdf-avatar-size);
+  height: var(--tdf-avatar-size);
   border-radius: 8px;
   overflow: hidden;
   font-size: 18px;

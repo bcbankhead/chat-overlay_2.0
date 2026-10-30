@@ -31,18 +31,32 @@ function fakeTheme(initial = 'light') {
   };
 }
 
-/** A scroll area with fixed geometry: 100 px visible of 400. */
+/**
+ * A scroll area with fixed geometry, 100 px visible of 400, inside a static parent: it sits
+ * 20 px down and 10 px in, and is 200 px wide.
+ */
 function scrollArea({ total = 400 } = {}) {
   const win = new Window();
   const doc = win.document;
+  const parent = doc.createElement('div');
   const el = doc.createElement('div');
-  doc.body.appendChild(el);
+  parent.appendChild(el);
+  doc.body.appendChild(parent);
   let top = 0;
   Object.defineProperty(el, 'clientHeight', { value: 100 });
   Object.defineProperty(el, 'scrollHeight', { value: total });
   Object.defineProperty(el, 'scrollTop', { get: () => top, set: (v) => (top = v) });
-  return { win, doc, el };
+  Object.defineProperty(el, 'offsetTop', { value: 20 });
+  Object.defineProperty(el, 'offsetLeft', { value: 10 });
+  Object.defineProperty(el, 'offsetWidth', { value: 200 });
+  return { win, doc, el, parent };
 }
+
+/** The area's thumb: its next sibling, never inside the scrolled content. */
+const thumbOf = (el) => {
+  const next = el.nextElementSibling;
+  return next?.classList.contains('tdf-thumb') ? next : null;
+};
 
 test('before mount: the theme is unknown, and toggles and listeners wait for mount', async () => {
   const shell = await freshShell();
@@ -105,9 +119,9 @@ test('attachScrollbar before mount is queued; its detach cancels it', async () =
   detachB();
   shell.mount(fakeTheme());
   assert.equal(a.el.classList.contains('tdf-scroll'), true);
-  assert.ok(a.el.querySelector('.tdf-thumb'));
+  assert.ok(thumbOf(a.el));
   assert.equal(b.el.classList.contains('tdf-scroll'), false);
-  assert.equal(b.el.querySelector('.tdf-thumb'), null);
+  assert.equal(thumbOf(b.el), null);
 });
 
 test('the thumb shows on scroll and fades about a second later; detach removes it', async () => {
@@ -115,19 +129,21 @@ test('the thumb shows on scroll and fades about a second later; detach removes i
   shell.mount(fakeTheme());
   const { win, el } = scrollArea();
   const detach = shell.attachScrollbar(el);
-  const thumb = el.querySelector('.tdf-thumb');
+  const thumb = thumbOf(el);
   assert.equal(thumb.classList.contains('visible'), false);
   el.scrollTop = 300;
   el.dispatchEvent(new win.Event('scroll'));
   assert.equal(thumb.classList.contains('visible'), true);
   assert.equal(thumb.style.height, '24px');
-  // At the end: 300 scrolled + inset 3 + (track 94 - 24).
-  assert.equal(thumb.style.transform, 'translateY(373px)');
+  // At the end: the area's top 20 + inset 3 + (track 94 - 24); never offset by scrollTop.
+  assert.equal(thumb.style.top, '93px');
+  assert.equal(thumb.style.left, '210px', "at the area's right edge");
+  assert.equal(thumb.style.transform, '');
   await wait(1000);
   assert.equal(thumb.classList.contains('visible'), false);
   detach();
   assert.equal(el.classList.contains('tdf-scroll'), false);
-  assert.equal(el.querySelector('.tdf-thumb'), null);
+  assert.equal(thumb.isConnected, false);
   el.dispatchEvent(new win.Event('scroll'));
   assert.equal(thumb.classList.contains('visible'), false);
 });
@@ -137,7 +153,7 @@ test('the thumb stays while hovered, fades after the pointer leaves', async () =
   shell.mount(fakeTheme());
   const { win, el } = scrollArea();
   shell.attachScrollbar(el);
-  const thumb = el.querySelector('.tdf-thumb');
+  const thumb = thumbOf(el);
   el.dispatchEvent(new win.Event('mouseenter'));
   await wait(1000);
   assert.equal(thumb.classList.contains('visible'), true);
@@ -151,15 +167,15 @@ test('no thumb when nothing overflows', async () => {
   shell.mount(fakeTheme());
   const { win, el } = scrollArea({ total: 100 });
   shell.attachScrollbar(el);
-  const thumb = el.querySelector('.tdf-thumb');
+  const thumb = thumbOf(el);
   el.dispatchEvent(new win.Event('mouseenter'));
   assert.equal(thumb.style.display, 'none');
   assert.equal(thumb.classList.contains('visible'), false);
 });
 
-/** The thumb's offset within the visible area, from its translateY minus scrollTop. */
+/** The thumb's offset within the visible area, from its top less the area's. */
 function thumbOffset(el, thumb) {
-  return Number(/translateY\(([-\d.]+)px\)/.exec(thumb.style.transform)[1]) - el.scrollTop;
+  return Number(/([-\d.]+)px/.exec(thumb.style.top)[1]) - el.offsetTop;
 }
 
 test('dragging the thumb scrolls so the thumb stays under the pointer', async () => {
@@ -167,7 +183,7 @@ test('dragging the thumb scrolls so the thumb stays under the pointer', async ()
   shell.mount(fakeTheme());
   const { win, doc, el } = scrollArea();
   shell.attachScrollbar(el);
-  const thumb = el.querySelector('.tdf-thumb');
+  const thumb = thumbOf(el);
   thumb.dispatchEvent(new win.MouseEvent('mousedown', { clientY: 10, bubbles: true, cancelable: true }));
   assert.equal(thumb.classList.contains('dragging'), true);
   doc.dispatchEvent(new win.MouseEvent('mousemove', { clientY: 30 }));
@@ -185,7 +201,7 @@ test('on a long list, where the thumb is clamped to its minimum, it tracks the p
   shell.mount(fakeTheme());
   const { win, doc, el } = scrollArea({ total: 100000 });
   shell.attachScrollbar(el);
-  const thumb = el.querySelector('.tdf-thumb');
+  const thumb = thumbOf(el);
   el.dispatchEvent(new win.Event('scroll'));
   const before = thumbOffset(el, thumb);
   thumb.dispatchEvent(new win.MouseEvent('mousedown', { clientY: 10, bubbles: true, cancelable: true }));
@@ -212,7 +228,8 @@ test('the message list gets a floating scrollbar, and trimming keeps its thumb',
   view.replay(Array.from({ length: DEFAULT_REPLAY_LIMIT + 5 }, (_, i) => rec(i)));
   assert.equal(list.querySelectorAll('.tdf-msg').length, DEFAULT_REPLAY_LIMIT);
   assert.equal(list.querySelector('.tdf-msg').dataset.id, '5');
-  assert.ok(list.querySelector('.tdf-thumb'), 'the thumb was not trimmed');
+  assert.ok(thumbOf(list), 'the thumb was not trimmed');
+  assert.equal(list.querySelector('.tdf-thumb'), null, 'the thumb is outside the scrolled list');
 });
 
 test('a queued toggle whose save fails rejects with the cause', async () => {
@@ -239,12 +256,117 @@ test('detaching mid-drag ends the drag', async () => {
   shell.mount(fakeTheme());
   const { win, doc, el } = scrollArea();
   const detach = shell.attachScrollbar(el);
-  const thumb = el.querySelector('.tdf-thumb');
+  const thumb = thumbOf(el);
   thumb.dispatchEvent(new win.MouseEvent('mousedown', { clientY: 10, bubbles: true, cancelable: true }));
   detach();
   doc.dispatchEvent(new win.MouseEvent('mousemove', { clientY: 30 }));
   assert.equal(el.scrollTop, 0);
   assert.equal(thumb.classList.contains('dragging'), false);
+});
+
+test("the thumb is the area's sibling; a static parent is positioned, and restored on detach", async () => {
+  const shell = await freshShell();
+  shell.mount(fakeTheme());
+  const { win, el, parent } = scrollArea();
+  const detach = shell.attachScrollbar(el);
+  assert.equal(el.querySelector('.tdf-thumb'), null, 'nothing inside the scrolled content');
+  assert.ok(thumbOf(el));
+  assert.equal(parent.style.position, '', 'decided on first placement, not at attach');
+  el.dispatchEvent(new win.Event('scroll'));
+  assert.equal(parent.style.position, 'relative');
+  detach();
+  assert.equal(parent.style.position, '');
+  assert.equal(parent.querySelector('.tdf-thumb'), null);
+});
+
+test('an already positioned parent is left as it is', async () => {
+  const shell = await freshShell();
+  shell.mount(fakeTheme());
+  const { el, parent } = scrollArea();
+  parent.style.position = 'absolute';
+  const detach = shell.attachScrollbar(el);
+  assert.equal(parent.style.position, 'absolute');
+  detach();
+  assert.equal(parent.style.position, 'absolute');
+});
+
+test('a parent attached while detached keeps the position its stylesheet gives it once inserted', async () => {
+  const shell = await freshShell();
+  shell.mount(fakeTheme());
+  const { win, doc, el, parent } = scrollArea();
+  parent.remove();
+  parent.id = 'p';
+  const style = doc.createElement('style');
+  style.textContent = '#p { position: absolute; }';
+  doc.head.appendChild(style);
+  const detach = shell.attachScrollbar(el);
+  el.dispatchEvent(new win.Event('scroll'));
+  assert.equal(parent.style.position, '', 'not decided while detached');
+  doc.body.appendChild(parent);
+  el.dispatchEvent(new win.Event('scroll'));
+  assert.equal(win.getComputedStyle(parent).position, 'absolute');
+  assert.equal(parent.style.position, '');
+  detach();
+  assert.equal(parent.style.position, '');
+});
+
+test('hovering the thumb keeps it shown; a wheel over it scrolls the area', async () => {
+  const shell = await freshShell();
+  shell.mount(fakeTheme());
+  const { win, el } = scrollArea();
+  shell.attachScrollbar(el);
+  const thumb = thumbOf(el);
+  el.dispatchEvent(new win.Event('mouseenter'));
+  el.dispatchEvent(new win.Event('mouseleave'));
+  thumb.dispatchEvent(new win.Event('mouseenter'));
+  await wait(1000);
+  assert.equal(thumb.classList.contains('visible'), true);
+  thumb.dispatchEvent(new win.WheelEvent('wheel', { deltaY: 40, cancelable: true }));
+  assert.equal(el.scrollTop, 40);
+});
+
+test('a wheel over the thumb in lines or pages scrolls by pixels', async () => {
+  const shell = await freshShell();
+  shell.mount(fakeTheme());
+  const { win, el } = scrollArea();
+  shell.attachScrollbar(el);
+  const thumb = thumbOf(el);
+  thumb.dispatchEvent(new win.WheelEvent('wheel', { deltaY: 3, deltaMode: 1, cancelable: true }));
+  assert.equal(el.scrollTop, 48, '3 lines of 16 px');
+  thumb.dispatchEvent(new win.WheelEvent('wheel', { deltaY: 1, deltaMode: 2, cancelable: true }));
+  assert.equal(el.scrollTop, 148, 'one page is the visible height');
+});
+
+test('the thumb is re-placed when the area resizes without scrolling', async () => {
+  const shell = await freshShell();
+  shell.mount(fakeTheme());
+  const { win, el } = scrollArea();
+  const observers = [];
+  win.ResizeObserver = class {
+    constructor(fn) {
+      this.fn = fn;
+      this.targets = new Set();
+      observers.push(this);
+    }
+    observe(t) {
+      this.targets.add(t);
+    }
+    unobserve(t) {
+      this.targets.delete(t);
+    }
+    disconnect() {
+      this.targets.clear();
+    }
+  };
+  const detach = shell.attachScrollbar(el);
+  const thumb = thumbOf(el);
+  const [observer] = observers;
+  assert.ok(observer.targets.has(el));
+  el.scrollTop = 300;
+  observer.fn([]);
+  assert.equal(thumb.style.top, '93px');
+  detach();
+  assert.equal(observer.targets.size, 0, 'detach disconnects it');
 });
 
 test('theme.css styles the class names shell.js sets', async () => {
