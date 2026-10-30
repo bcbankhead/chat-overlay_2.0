@@ -220,7 +220,7 @@ test('a sender-supplied avatar name is encoded into one path segment', async () 
   assert.equal(root.querySelector('.tdf-avatar img').getAttribute('src'), 'avatars/40/..%2Fx.php%3Fa%3D1%23b');
 });
 
-test('online.gif and share.gif senders get the tile, then their forum picture; a picked avatar is unchanged', async () => {
+test('online.gif and share.gif senders get the tile, then their forum picture; a picked avatar shows, then is replaced by it', async () => {
   const win = new Window({ url: 'https://example.test/chat/' });
   const doc = win.document;
   doc.body.innerHTML = '<div id="chatContainer"></div>';
@@ -242,14 +242,16 @@ test('online.gif and share.gif senders get the tile, then their forum picture; a
   assert.equal(dot.querySelector('.tdf-avatar .tdf-tile').textContent, 'BN');
   assert.equal(share.querySelector('.tdf-avatar .tdf-tile').textContent, 'DV');
   assert.equal(dot.querySelector('.tdf-avatar img'), null);
+  assert.equal(picked.querySelector('.tdf-avatar img').getAttribute('src'), 'avatars/40/sm.jpg');
   await new Promise((r) => setTimeout(r, 0));
-  assert.deepEqual(asked, ['BatteriesNotIncluded', 'Dick Vicious']);
+  assert.deepEqual(asked, ['BatteriesNotIncluded', 'Dick Vicious', 'Siliconeman']);
   for (const img of made.filter((i) => i.getAttribute('src')?.startsWith('https://example.test/f/'))) {
     img.dispatchEvent(new win.Event('load'));
   }
   assert.equal(dot.querySelector('.tdf-avatar img').getAttribute('src'), 'https://example.test/f/BatteriesNotIncluded.jpg');
   assert.equal(share.querySelector('.tdf-avatar img').getAttribute('src'), 'https://example.test/f/Dick%20Vicious.jpg');
-  assert.equal(picked.querySelector('.tdf-avatar img').getAttribute('src'), 'avatars/40/sm.jpg');
+  assert.equal(picked.querySelectorAll('.tdf-avatar img').length, 1);
+  assert.equal(picked.querySelector('.tdf-avatar img').getAttribute('src'), 'https://example.test/f/Siliconeman.jpg');
 });
 
 test('a pending message is timed by receipt and regrouped when confirmed', async () => {

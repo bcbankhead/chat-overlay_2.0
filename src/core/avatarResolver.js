@@ -1,8 +1,10 @@
-// Forum profile pictures for users with no chat avatar (TDF-0013). One lookup per user: the
-// answer, a picture or none, is kept in IndexedDB's `avatars` store for a day, so a user is
-// fetched at most once a day however many messages they send. A failed lookup is kept for
-// this page load only, so the next load tries again. A caller that knows the forum user id
-// passes it (the rail, the flyout); otherwise the profile is looked up by name.
+// Forum profile pictures (TDF-0013), looked up for every user shown, a picked chat avatar or
+// not, since the forum picture is preferred wherever one exists (TDF-0021). The fetch volume is
+// bounded: one lookup per name per day (`AVATAR_TTL_MS`), the answer, a picture or none, kept in
+// IndexedDB's `avatars` store however many messages the user sends, and at most
+// `MAX_CONCURRENT` (2) profile fetches in flight. A failed lookup is kept for this page load
+// only, so the next load tries again. A caller that knows the forum user id passes it (the
+// rail, the flyout); otherwise the profile is looked up by name.
 
 import { STORES, done, request } from './db.js';
 import { parseProfileAvatar, profileUrlFor } from './forumAvatar.js';
@@ -142,9 +144,10 @@ export function createAvatarResolver({
       let answer = known.get(name);
       if (!answer) {
         // Expected and harmless: a profile that will not load or parse (offline, signed out,
-        // no such user) leaves the initials tile showing, which is the designed fallback
-        // (TDF-0013). It answers null for the rest of this page load and is never stored.
-        // Anything else is a fault, reported, and still leaves the tile.
+        // no such user) leaves whatever is already showing: the picked chat avatar, or the
+        // initials tile when there is none (TDF-0013). It answers null for the rest of this
+        // page load and is never stored. Anything else is a fault, reported, and still leaves
+        // what is showing.
         answer = lookup(name, userID)
           .catch((err) => {
             if (!(err instanceof AvatarLookupFailed)) report(err);

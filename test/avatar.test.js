@@ -36,13 +36,92 @@ test('every avatar carries the initials tile under it, coloured by slot', () => 
   assert.equal(tile().getAttribute('aria-hidden'), 'true');
 });
 
-test('a picked avatar shows at once and is never looked up', async () => {
+test('a picked avatar shows at once and the forum picture is looked up', async () => {
   const resolver = stubResolver('https://f/x.jpg');
-  const { img } = render({ resolver });
+  const { img, box } = render({ userID: '42', resolver });
   assert.equal(img().getAttribute('src'), 'avatars/40/bob.jpg');
   assert.equal(img().getAttribute('loading'), 'lazy');
   await settle();
-  assert.equal(resolver.calls.length, 0);
+  assert.deepEqual(resolver.calls, [['bobSmith', '42']]);
+  assert.equal(box.querySelectorAll('img').length, 1, 'the forum picture is not added before it loads');
+});
+
+/**
+ * Render with img creation recorded, so a picture not yet in the box can be fired.
+ * @param {object} [over]
+ * @param {{ loaded?: number[] }} [opts] indexes of created imgs to report as already loaded
+ */
+function renderTracked(over = {}, { loaded = [] } = {}) {
+  const win = new Window({ url: 'https://example.test/chat/' });
+  const doc = win.document;
+  /** @type {HTMLImageElement[]} */
+  const made = [];
+  const create = doc.createElement.bind(doc);
+  doc.createElement = (tag) => {
+    const el = create(tag);
+    if (tag === 'img') {
+      if (loaded.includes(made.length)) {
+        Object.defineProperty(el, 'complete', { value: true });
+        Object.defineProperty(el, 'naturalWidth', { value: 120 });
+      }
+      made.push(/** @type {any} */ (el));
+    }
+    return el;
+  };
+  const box = renderAvatar(/** @type {any} */ (doc), { name: 'bobSmith', file: 'bob.jpg', src: 'avatars/40/bob.jpg', className: 'tdf-avatar', ...over });
+  doc.body.appendChild(box);
+  const fire = (img, type) => img.dispatchEvent(new win.Event(type));
+  const srcs = () => [...box.querySelectorAll('img')].map((i) => i.getAttribute('src'));
+  return { box, made, fire, srcs };
+}
+
+test('the forum picture replaces a picked avatar once it has loaded', async () => {
+  const { made, fire, srcs, box } = renderTracked({ resolver: stubResolver('https://f/bob.jpg') });
+  await settle();
+  assert.equal(made.length, 2);
+  assert.deepEqual(srcs(), ['avatars/40/bob.jpg']);
+  fire(made[1], 'load');
+  assert.deepEqual(srcs(), ['https://f/bob.jpg']);
+  assert.ok(box.querySelector('.tdf-tile'));
+});
+
+test('a forum picture that has already loaded replaces a picked avatar at once', async () => {
+  const { made, srcs, box } = renderTracked({ resolver: stubResolver('https://f/bob.jpg') }, { loaded: [1] });
+  assert.equal(made[0].complete && made[0].naturalWidth > 0, false, 'only the forum picture reports loaded');
+  await settle();
+  assert.equal(made.length, 2);
+  assert.deepEqual(srcs(), ['https://f/bob.jpg']);
+  assert.ok(box.querySelector('.tdf-tile'));
+});
+
+test('no forum picture, or one that fails, keeps the picked avatar', async () => {
+  const none = renderTracked({ resolver: stubResolver(null) });
+  const failed = renderTracked({ resolver: stubResolver('https://f/bob.jpg') });
+  await settle();
+  assert.deepEqual(none.srcs(), ['avatars/40/bob.jpg']);
+  failed.fire(failed.made[1], 'error');
+  assert.deepEqual(failed.srcs(), ['avatars/40/bob.jpg']);
+});
+
+test('a broken picked avatar with a lookup in flight asks the resolver exactly once', async () => {
+  const resolver = stubResolver('https://f/bob.jpg');
+  const { made, fire, srcs } = renderTracked({ resolver });
+  assert.equal(resolver.calls.length, 1, 'looked up before the picked avatar fails');
+  fire(made[0], 'error');
+  assert.deepEqual(srcs(), []);
+  await settle();
+  assert.equal(resolver.calls.length, 1);
+  fire(made[1], 'load');
+  assert.deepEqual(srcs(), ['https://f/bob.jpg']);
+});
+
+test('a forum picture already found this page load layers over a picked avatar at once', () => {
+  const known = { calls: 0, peek: () => 'https://f/bob.jpg', resolve: () => (known.calls++, Promise.resolve('https://f/bob.jpg')) };
+  const { made, fire, srcs } = renderTracked({ resolver: known });
+  assert.deepEqual(srcs(), ['avatars/40/bob.jpg', 'https://f/bob.jpg'], 'forum picture above the chat avatar');
+  assert.equal(known.calls, 0);
+  fire(made[1], 'load');
+  assert.deepEqual(srcs(), ['https://f/bob.jpg']);
 });
 
 for (const file of ['online.gif', 'share.gif', '']) {

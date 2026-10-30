@@ -824,8 +824,7 @@ test('a user with online.gif shows the initials tile, then the forum picture fou
   assert.equal(alice().querySelector('.tdf-tile').textContent, 'AL');
   assert.equal(alice().querySelector('img'), null);
   await nextFrame();
-  // Only Alice is asked for on sight; the others' picked files load (or, in this window with
-  // no URL, fail and are then asked for too).
+  // Every user's forum picture is asked for on sight, picked chat avatar or not; Alice's is checked here.
   assert.deepEqual(asked.find(([name]) => name === 'Alice'), ['Alice', '912']);
   for (const img of made.filter((i) => i.getAttribute('src') === 'https://f/alice.jpg')) img.dispatchEvent(new t.win.Event('load'));
   assert.equal(alice().querySelector('img').getAttribute('src'), 'https://f/alice.jpg');
