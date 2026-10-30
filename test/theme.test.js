@@ -146,3 +146,20 @@ test('TDF-0012: public rows have no hover tint, and whispers keep their backgrou
   assert.doesNotMatch(css, /\.tdf-msg:hover/);
   assert.match(css, /#tdf-chat \.tdf-kind-whisper \{[^}]*\bbackground(-color)?\s*:/);
 });
+
+test('TDF-0020: whisperable names turn the whisper blue and hint after the time', () => {
+  const css = readFileSync(new URL('../src/core/theme.css', import.meta.url), 'utf8');
+  for (const name of ['light', 'dark']) {
+    assert.match(css, new RegExp(`:root\\[data-tdf-theme="${name}"\\] \\{[^}]*--tdf-whisper-fg:`));
+  }
+  assert.doesNotMatch(css, /\.tdf-user \{[^}]*cursor/);
+  assert.match(css, /\.tdf-whisperable \{[^}]*cursor: pointer/);
+  assert.match(css, /\.tdf-whisperable:is\(:hover, :focus-visible\) \{[^}]*color: var\(--tdf-whisper-fg\)/);
+  assert.match(
+    css,
+    /\.tdf-whisperable:is\(:hover, :focus-visible\) \+ \.tdf-time::after \{[^}]*content: " \(whisper\)"/,
+  );
+  const composer = readFileSync(new URL('../src/features/composer/composer.css', import.meta.url), 'utf8');
+  assert.doesNotMatch(composer, /#2f81f7/i);
+  assert.match(composer, /var\(--tdf-whisper-fg\)/);
+});

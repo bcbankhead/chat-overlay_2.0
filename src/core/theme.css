@@ -26,6 +26,7 @@
   --tdf-border: #d1d9e0;
   --tdf-hover-bg: rgba(31, 35, 40, 0.05);
   --tdf-whisper-bg: rgba(130, 80, 223, 0.08);
+  --tdf-whisper-fg: #0969da;
   --tdf-link: #0969da;
   --tdf-link-hover: #ffffff;
   --tdf-link-hover-bg: #0969da;
@@ -47,6 +48,7 @@
   --tdf-border: #30363d;
   --tdf-hover-bg: rgba(230, 237, 243, 0.06);
   --tdf-whisper-bg: rgba(163, 113, 247, 0.14);
+  --tdf-whisper-fg: #2f81f7;
   --tdf-link: #58a6ff;
   --tdf-link-hover: #0d1117;
   --tdf-link-hover-bg: #58a6ff;
@@ -174,7 +176,27 @@
 
 #tdf-chat .tdf-user {
   font-weight: 600;
+}
+
+/* Another user's name whispers them: blue on hover or focus, and a hint after the time,
+   which follows the name on head rows. Continuation rows hide both, so show no hint. */
+#tdf-chat .tdf-whisperable {
   cursor: pointer;
+  border-radius: 3px;
+}
+
+#tdf-chat .tdf-whisperable:is(:hover, :focus-visible) {
+  color: var(--tdf-whisper-fg);
+}
+
+#tdf-chat .tdf-whisperable:focus-visible {
+  outline: 2px solid var(--tdf-whisper-fg);
+  outline-offset: 1px;
+}
+
+#tdf-chat .tdf-whisperable:is(:hover, :focus-visible) + .tdf-time::after {
+  content: " (whisper)";
+  color: var(--tdf-whisper-fg);
 }
 
 #tdf-chat .tdf-user.tdf-sep::after {

@@ -97,12 +97,21 @@ export function createView({ doc, win, container, css, avatars = null }) {
   if (typeof win.ResizeObserver === 'function') new win.ResizeObserver(track).observe(container);
   win.addEventListener('resize', track);
 
-  // Clicking a sender name whispers them, as the engine's own name span does.
-  list.addEventListener('click', (event) => {
+  // Clicking another user's name, or Enter or Space on it, whispers them, as the engine's own
+  // name span does. Own names and notice names are not whisperable (render), so never whisper.
+  /** @param {Event} event */
+  const whisperFrom = (event) => {
     const target = /** @type {Element} */ (event.target);
-    const name = target.closest?.('.tdf-user');
+    const name = target.closest?.('.tdf-whisperable');
     const whisper = /** @type {any} */ (win).whisperUser;
-    if (name && typeof whisper === 'function') whisper(name.getAttribute('data-user') ?? '');
+    if (!name || typeof whisper !== 'function') return false;
+    whisper(name.getAttribute('data-user') ?? '');
+    return true;
+  };
+  list.addEventListener('click', whisperFrom);
+  list.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (whisperFrom(event) && event.key === ' ') event.preventDefault();
   });
 
   // The engine's Auto-scroll checkbox; absent means on.
@@ -336,6 +345,15 @@ export function createView({ doc, win, container, css, avatars = null }) {
       name.className = record.ircFlag === '1' ? 'tdf-user' : 'tdf-user tdf-sep';
       name.dataset.user = record.user;
       name.textContent = safeDecodeURIComponent(record.user);
+      // Another user's chat name is a button that whispers them; one's own is plain text.
+      if (chat && record.user !== String(/** @type {any} */ (win).userName ?? '')) {
+        const label = `Whisper ${name.textContent}`;
+        name.classList.add('tdf-whisperable');
+        name.setAttribute('role', 'button');
+        name.tabIndex = 0;
+        name.title = label;
+        name.setAttribute('aria-label', label);
+      }
       line.appendChild(name);
     }
     if (chat) {

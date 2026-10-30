@@ -146,8 +146,8 @@
 
 /* Whisper: a blue border, and a chip on the box's top border at the right. */
 :root[data-tdf-theme] #optionsBar.tdf-whisper {
-  border-color: #2f81f7 !important;
-  box-shadow: 0 0 0 1px #2f81f7;
+  border-color: var(--tdf-whisper-fg) !important;
+  box-shadow: 0 0 0 1px var(--tdf-whisper-fg);
 }
 
 :root[data-tdf-theme] .tdf-whisper-chip {
@@ -158,7 +158,7 @@
   gap: 6px;
   padding: 2px 4px 2px 10px;
   border-radius: 999px;
-  background: #2f81f7;
+  background: var(--tdf-whisper-fg);
   color: #ffffff;
   font: 600 12px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
@@ -199,7 +199,7 @@
 }
 
 :root[data-tdf-theme] #optionsBar.tdf-attach-over {
-  outline: 2px dashed #2f81f7;
+  outline: 2px dashed var(--tdf-whisper-fg);
   outline-offset: -4px;
 }
 

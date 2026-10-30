@@ -809,11 +809,70 @@ test('rows are watched for resizing while shown, and no longer once gone', async
 });
 
 test('clicking a sender name whispers them', async () => {
-  const { view, root, whispered } = await setup();
+  const { view, root, whispered } = await setup({ globals: { userName: 'me' } });
   view.append(rec({ user: 'bob%20b' }));
   root.querySelector('.tdf-user').click();
   assert.deepEqual(whispered, ['bob%20b']);
   assert.equal(root.querySelector('.tdf-user').textContent, 'bob b');
+});
+
+test("another user's chat name is a whisper button labelled with their name", async () => {
+  const { view, root } = await setup({ globals: { userName: 'me' } });
+  view.append(rec({ id: 'a', user: 'bob%20b' }));
+  view.append(rec({ id: 'w', user: 'carol', kind: 'whisper', toUser: 'me' }));
+  for (const id of ['a', 'w']) {
+    const name = root.querySelector(`[data-id="${id}"] .tdf-user`);
+    assert.ok(name.classList.contains('tdf-whisperable'));
+    assert.equal(name.getAttribute('role'), 'button');
+    assert.equal(name.getAttribute('tabindex'), '0');
+  }
+  const bob = root.querySelector('[data-id="a"] .tdf-user');
+  assert.equal(bob.getAttribute('title'), 'Whisper bob b');
+  assert.equal(bob.getAttribute('aria-label'), 'Whisper bob b');
+  // The time follows the name, which the hint rule in theme.css relies on.
+  assert.ok(bob.nextElementSibling.classList.contains('tdf-time'));
+});
+
+test('own names and notice names carry no whisper affordance and do not whisper', async () => {
+  const { view, root, whispered } = await setup({ globals: { userName: 'me%20too' } });
+  view.append(rec({ id: 'own', user: 'me%20too' }));
+  view.append(rec({ id: 'sys', user: 'bob', kind: 'system', text: 'notice' }));
+  for (const id of ['own', 'sys']) {
+    const name = root.querySelector(`[data-id="${id}"] .tdf-user`);
+    assert.ok(name, id);
+    assert.equal(name.classList.contains('tdf-whisperable'), false);
+    for (const attr of ['role', 'tabindex', 'title', 'aria-label']) assert.equal(name.getAttribute(attr), null);
+    name.click();
+  }
+  assert.deepEqual(whispered, []);
+});
+
+test('with no viewer name set, every chat name is a whisper button', async () => {
+  const { win, view, root, whispered } = await setup();
+  assert.equal(win.userName, undefined);
+  view.append(rec({ user: 'bob' }));
+  const name = root.querySelector('.tdf-user');
+  assert.ok(name.classList.contains('tdf-whisperable'));
+  assert.equal(name.getAttribute('role'), 'button');
+  name.click();
+  assert.deepEqual(whispered, ['bob']);
+});
+
+test("Enter and Space on another user's name whisper them; Space does not scroll", async () => {
+  const { win, view, root, whispered } = await setup({ globals: { userName: 'me' } });
+  view.append(rec({ id: 'a', user: 'bob' }));
+  view.append(rec({ id: 'own', user: 'me' }));
+  const key = (el, k) => {
+    const event = new win.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true });
+    el.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  const bob = root.querySelector('[data-id="a"] .tdf-user');
+  assert.equal(key(bob, 'Enter'), false);
+  assert.equal(key(bob, ' '), true);
+  assert.equal(key(bob, 'a'), false);
+  assert.equal(key(root.querySelector('[data-id="own"] .tdf-user'), ' '), false);
+  assert.deepEqual(whispered, ['bob', 'bob']);
 });
 
 test('the overlay has no theme button of its own', async () => {
