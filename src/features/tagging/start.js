@@ -9,8 +9,39 @@ import { createHistory } from '../../core/history.js';
 import { createSettings, DEFAULTS } from '../../core/settings.js';
 import { engineSend, resetRepeat } from './engineSend.js';
 import { createReactionQueue } from './queue.js';
+import { toHexColor } from './reactions.js';
 import { createTagStore } from './store.js';
 import { installReactionUi } from './ui.js';
+
+/**
+ * The colour a like's token is hidden in when the native chat's own background cannot be
+ * read: the forum's default chat background (TDF-0011). Provisional until measured live.
+ */
+export const FALLBACK_TOKEN_BG = '#ffffff';
+
+/**
+ * The native chat's background as `#rrggbb`, read now: `#chatContainer`'s computed
+ * background, else its nearest opaque ancestor's short of `.body`, whose colour this script's
+ * theme overrides (theme.css); else the fallback, told to `onFallback` with why.
+ * @param {Document} doc
+ * @param {any} win
+ * @param {(reason: string) => void} [onFallback]
+ * @returns {string}
+ */
+export function nativeChatBackground(doc, win, onFallback) {
+  const chat = doc.getElementById('chatContainer');
+  for (let el = chat; el && el !== doc.documentElement; el = el.parentElement) {
+    if (el.classList.contains('body')) break;
+    const hex = toHexColor(win.getComputedStyle(el).backgroundColor);
+    if (hex) return hex;
+  }
+  onFallback?.(
+    chat
+      ? 'the chat background is transparent up to .body'
+      : 'the native chat (#chatContainer) is missing',
+  );
+  return FALLBACK_TOKEN_BG;
+}
 
 /**
  * Failures, shown in the message list once per distinct text as the view shows its own
@@ -82,6 +113,15 @@ export function startTagging({ win, doc, css, openSmileyPicker, indexedDB = win.
   /** @type {import('../../core/history.js').MessageRecord[]} */
   const early = [];
 
+  // A token hidden in the provisional fallback colour may show; said once, not on every send.
+  let fellBack = false;
+  /** @param {string} reason */
+  const onFallback = (reason) => {
+    if (fellBack) return;
+    fellBack = true;
+    fail(`likes hide their token in ${FALLBACK_TOKEN_BG}, which may show: ${reason}`);
+  };
+
   const queue = createReactionQueue({
     now: () => Date.now(),
     setTimer: (fn, ms) => win.setTimeout(fn, ms),
@@ -90,8 +130,9 @@ export function startTagging({ win, doc, css, openSmileyPicker, indexedDB = win.
     request: () => win.sendReq,
     intervalSeconds: () => interval,
     resetRepeat: (text) => resetRepeat(win, text),
+    tokenColor: () => nativeChatBackground(doc, win, onFallback),
     // A failed send's echo is marked unconfirmed with no inbound event; re-derive so its
-    // chip stops counting it.
+    // heart stops counting it.
     onAttemptFailed: () => store?.rebuildRoom().catch(fail),
   });
 

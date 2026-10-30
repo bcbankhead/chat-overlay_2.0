@@ -4,6 +4,7 @@
 // The engine drops a send while its shared request is busy, so a send waits for it to idle.
 // The server never echoes own messages, so delivery is judged by the reaction's own request
 // (B4): 2xx is sent; anything else, or no answer in time, re-queues once, then fails.
+// A like is permanent: the queue has no way to send a retraction (TDF-0011).
 
 import { PENDING_TTL_MS } from '../../core/reconcile.js';
 import { reactionText } from './reactions.js';
@@ -33,6 +34,7 @@ const MAX_ATTEMPTS = 2;
  * @property {() => SendRequest | null | undefined} request  the engine's current `sendReq`
  * @property {() => number} intervalSeconds
  * @property {(text: string) => void} resetRepeat      let the engine's repeat filter pass `text`
+ * @property {() => string | null} [tokenColor]       `#rrggbb` the image token is hidden in; null sends it plain
  * @property {() => void} [onAttemptFailed]            after any send that did not go through
  */
 
@@ -42,7 +44,6 @@ const MAX_ATTEMPTS = 2;
  * @typedef {object} Entry
  * @property {string} shareId
  * @property {string} code
- * @property {boolean} retract
  * @property {string} text
  * @property {EntryState} state
  * @property {number} attempts
@@ -53,7 +54,6 @@ const MAX_ATTEMPTS = 2;
  * @typedef {object} EntryView
  * @property {string} shareId
  * @property {string} code
- * @property {boolean} retract
  * @property {EntryState} state
  * @property {number} position  1-based place among queued entries; 0 when not queued
  * @property {string} reason    why the last attempt failed; '' while none has
@@ -78,11 +78,8 @@ export function createReactionQueue(deps) {
     for (const fn of listeners) fn();
   };
 
-  /**
-   * @param {string} shareId
-   * @param {string} code
-   */
-  const find = (shareId, code) => entries.find((e) => e.shareId === shareId && e.code === code);
+  /** @param {string} shareId */
+  const find = (shareId) => entries.find((e) => e.shareId === shareId);
 
   const dueAt = () => Math.max(lastSentAt, lastOwnAt) + deps.intervalSeconds() * 1000;
 
@@ -160,27 +157,30 @@ export function createReactionQueue(deps) {
 
   return {
     /**
-     * Choose a smiley on an image: queue the reaction, or take it back. A reaction still
-     * queued is cancelled and nothing is sent; one already sent (`mine`) queues a
-     * retraction (B3). A failed entry is retried. One entry per (image, code).
+     * Like an image with a smiley. Nothing is queued when you already reacted to it with any
+     * smiley, or a like for it is queued or sending; a failed one is retried with the smiley
+     * picked now. One entry per image.
      * @param {string} shareId
      * @param {string} code
-     * @param {boolean} mine  the store already holds your reaction with this code
+     * @param {boolean} alreadyMine  the store already holds a reaction of yours on the image
+     * @returns {boolean} whether a like was queued
      */
-    toggle(shareId, code, mine) {
-      const entry = find(shareId, code);
-      if (entry?.state === 'sending') return;
-      if (entry?.state === 'queued') entries = entries.filter((e) => e !== entry);
-      else if (entry?.state === 'failed') {
+    like(shareId, code, alreadyMine) {
+      if (alreadyMine) return false;
+      const entry = find(shareId);
+      if (entry?.state === 'queued' || entry?.state === 'sending') return false;
+      const text = reactionText(code, shareId, deps.tokenColor?.() ?? null);
+      if (entry) {
+        entry.code = code;
+        entry.text = text;
         entry.state = 'queued';
         entry.attempts = 0;
         // Moved to the back, as a new choice would be.
         entries = [...entries.filter((e) => e !== entry), entry];
-      } else {
-        entries.push({ shareId, code, retract: mine, text: reactionText(code, shareId, mine), state: 'queued', attempts: 0, reason: '' });
-      }
+      } else entries.push({ shareId, code, text, state: 'queued', attempts: 0, reason: '' });
       changed();
       schedule();
+      return true;
     },
 
     /**
@@ -203,7 +203,6 @@ export function createReactionQueue(deps) {
         .map((e) => ({
           shareId: e.shareId,
           code: e.code,
-          retract: e.retract,
           state: e.state,
           position: e.state === 'queued' ? queued.indexOf(e) + 1 : 0,
           reason: e.reason,

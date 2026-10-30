@@ -1,12 +1,21 @@
 // The `tags` store, kept as a derivation of the room's stored messages: every change
 // re-derives the room's tags and replaces its rows, so purging history and re-deriving cannot
 // disagree. Messages that arrive before the first rebuild finishes are held, then merged.
+// A like from someone else that arrives live is announced (onLike), so the view can animate it;
+// nothing replayed by a rebuild, or held before the first one, is.
 
 import { STORES, done, request } from '../../core/db.js';
-import { countReactions, deriveTags } from './infer.js';
+import { countLikes, deriveTags } from './infer.js';
 
 /** @typedef {import('../../core/history.js').MessageRecord} MessageRecord */
 /** @typedef {import('./infer.js').Tag} Tag */
+
+/**
+ * @param {string} imageId
+ * @param {string} sender
+ */
+const likeKey = (imageId, sender) => `${imageId}
+${sender}`;
 
 /**
  * @param {Tag[]} a
@@ -44,6 +53,8 @@ export function createTagStore({ db, history, roomID, me, codes }) {
   let writes = Promise.resolve();
   /** @type {Set<() => void>} */
   const listeners = new Set();
+  /** @type {Set<(imageId: string, sender: string) => void>} */
+  const likeListeners = new Set();
 
   const changed = () => {
     for (const fn of listeners) fn();
@@ -113,17 +124,37 @@ export function createTagStore({ db, history, roomID, me, codes }) {
       const next = deriveTags(messages, me, codes);
       // Most messages are neither images nor reactions: no rewrite, no re-render for those.
       if (sameTags(next, tags)) return Promise.resolve();
+      const liked = new Set(tags.map((t) => likeKey(t.imageId, t.sender)));
       tags = next;
       changed();
+      /** @type {Set<string>} */
+      const announced = new Set();
+      for (const t of next) {
+        const key = likeKey(t.imageId, t.sender);
+        if (t.sender === me || t.sourceMessageId !== record.id || liked.has(key) || announced.has(key)) continue;
+        announced.add(key);
+        for (const fn of likeListeners) fn(t.imageId, t.sender);
+      }
       return persist(tags, false);
     },
 
     /**
-     * One row per smilie code on the image.
+     * The image's likes: distinct senders across every smilie.
      * @param {string} imageId
      */
-    reactionsFor(imageId) {
-      return countReactions(tags, imageId);
+    likesFor(imageId) {
+      return countLikes(tags, imageId);
+    },
+
+    /**
+     * Someone else's first reaction to an image arrived live (never from a rebuild, for a
+     * message held before the first one, or for your own).
+     * @param {(imageId: string, sender: string) => void} fn
+     * @returns {() => void} unsubscribe
+     */
+    onLike(fn) {
+      likeListeners.add(fn);
+      return () => likeListeners.delete(fn);
     },
 
     /**
