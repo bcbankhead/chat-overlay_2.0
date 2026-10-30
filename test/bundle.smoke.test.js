@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { Window } from 'happy-dom';
 import { build } from '../build.mjs';
-import { openDb } from '../src/core/db.js';
+import { DB_VERSION, openDb } from '../src/core/db.js';
 import { createSettings } from '../src/core/settings.js';
 
 const repo = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -200,6 +200,26 @@ test('a stored record that will not render is skipped with a notice; the rest re
   assert.deepEqual(shownIds(document), ['good']);
   assert.match(document.querySelector('#tdf-chat .tdf-notice').textContent, /1 stored message could not be shown/);
   assert.equal(document.getElementById('chatContainer').style.visibility, 'hidden');
+});
+
+test('a later version opened in another tab shows one notice to reload', async () => {
+  const indexedDB = new IDBFactory();
+  const { document, poll } = await page(await bundled(), indexedDB);
+  const req = indexedDB.open('tdf-chat-2', DB_VERSION + 1);
+  let blocked = false;
+  req.onblocked = () => {
+    blocked = true;
+  };
+  await new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result.close());
+    req.onerror = () => reject(req.error);
+  });
+  assert.equal(blocked, false);
+  poll(um('1', 'bob', 'after', '100'), um('2', 'carol', 'again', '101'));
+  await settle();
+  const notices = [...document.querySelectorAll('#tdf-chat .tdf-notice')].map((el) => el.textContent);
+  assert.equal(notices.filter((t) => /updated in another tab; reload this tab/.test(t)).length, 1);
+  assert.deepEqual(shownIds(document), ['1', '2']);
 });
 
 test('a failure after the view mounts restores the original chat, as the banner says', async () => {

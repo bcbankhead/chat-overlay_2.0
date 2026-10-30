@@ -58,11 +58,13 @@ function reclassifyWhispers(messages) {
 }
 
 /**
- * Open (creating on first use) the database.
- * @param {{ indexedDB?: IDBFactory, name?: string }} [options]
+ * Open (creating on first use) the database. The connection closes itself when a later
+ * version opens elsewhere, so that open is not blocked; `onVersionChange` is then called
+ * once, after the close, as every later use of the connection fails.
+ * @param {{ indexedDB?: IDBFactory, name?: string, onVersionChange?: () => void }} [options]
  * @returns {Promise<IDBDatabase>}
  */
-export function openDb({ indexedDB = globalThis.indexedDB, name = DB_NAME } = {}) {
+export function openDb({ indexedDB = globalThis.indexedDB, name = DB_NAME, onVersionChange } = {}) {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(name, DB_VERSION);
     req.onupgradeneeded = (event) => {
@@ -85,7 +87,10 @@ export function openDb({ indexedDB = globalThis.indexedDB, name = DB_NAME } = {}
         db.close();
         return;
       }
-      db.onversionchange = () => db.close();
+      db.onversionchange = () => {
+        db.close();
+        onVersionChange?.();
+      };
       resolve(db);
     };
     req.onerror = () => reject(req.error);

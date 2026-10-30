@@ -172,6 +172,68 @@ test('an open connection closes itself when a later version opens, so the bump i
   db.close();
 });
 
+test('onVersionChange is called once, after the connection has closed', async () => {
+  const name = `test-bump-notify-${++n}`;
+  let calls = 0;
+  let closed = false;
+  const db = await openDb({
+    name,
+    onVersionChange: () => {
+      calls += 1;
+      try {
+        db.transaction('messages');
+      } catch (err) {
+        closed = err.name === 'InvalidStateError';
+      }
+    },
+  });
+  const bumped = /** @type {IDBDatabase} */ (await settled(indexedDB.open(name, DB_VERSION + 1)));
+  assert.equal(calls, 1);
+  assert.equal(closed, true);
+  bumped.close();
+  const again = /** @type {IDBDatabase} */ (await settled(indexedDB.open(name, DB_VERSION + 2)));
+  assert.equal(calls, 1);
+  again.close();
+});
+
+test('an open blocked by another connection rejects, and its late connection closes itself', async () => {
+  const name = `test-blocked-${++n}`;
+  // A version 2 connection with no versionchange handler, so it holds the upgrade.
+  const open = indexedDB.open(name, 2);
+  open.onupgradeneeded = () => {
+    const v2 = open.result;
+    const messages = v2.createObjectStore('messages', { keyPath: 'id' });
+    for (const i of ['roomID', 'mTime', 'user', 'receivedAt']) messages.createIndex(i, i);
+    messages.createIndex('roomID_receivedAt', ['roomID', 'receivedAt']);
+    v2.createObjectStore('settings', { keyPath: 'key' });
+    const images = v2.createObjectStore('images', { keyPath: 'id' });
+    for (const i of ['user', 'receivedAt', 'hash']) images.createIndex(i, i);
+    const tags = v2.createObjectStore('tags', { keyPath: 'id', autoIncrement: true });
+    tags.createIndex('imageId', 'imageId');
+    tags.createIndex('sourceMessageId', 'sourceMessageId');
+  };
+  const holder = /** @type {IDBDatabase} */ (await settled(open));
+  await assert.rejects(openDb({ name }), /blocked by another open connection/);
+
+  // Released, the rejected open upgrades and succeeds with no one to hand its connection to.
+  holder.close();
+  const next = indexedDB.open(name, DB_VERSION + 1);
+  let blocked = false;
+  let from = 0;
+  next.onblocked = () => {
+    blocked = true;
+  };
+  next.onupgradeneeded = (event) => {
+    from = event.oldVersion;
+  };
+  const bumped = /** @type {IDBDatabase} */ (await settled(next));
+  // The late open did run (the bump starts from its version), and did not hold the bump.
+  assert.equal(from, DB_VERSION);
+  assert.equal(blocked, false);
+  assert.equal(bumped.version, DB_VERSION + 1);
+  bumped.close();
+});
+
 test('put upserts on the server id', async () => {
   const h = createHistory(await fresh());
   await h.put(msg({ text: 'first' }));

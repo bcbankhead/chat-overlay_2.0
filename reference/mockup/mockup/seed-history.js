@@ -88,16 +88,24 @@ window.__seedHistory = function () {
   });
 };
 
+// Copies of WHISPER_PREFIX and isWhisper in src/core/parse.js; test/seed-history.test.js
+// fails when they drift.
+var WHISPER_PREFIX = ' &#187; ';
+
 // Version 3 of src/core/db.js: a stored `whisper` whose toUser is '' or the '_' placeholder
 // is rewritten `public`, unless it is an own-whisper echo (ircFlag '1' and the prefix).
+function isStaleWhisper(r) {
+  var echo = r.ircFlag === '1' && String(r.text || '').indexOf(WHISPER_PREFIX) === 0;
+  return r.kind === 'whisper' && (r.toUser === '' || r.toUser === '_') && !echo;
+}
+
 function reclassifyWhispers(messages) {
   var cursorReq = messages.openCursor();
   cursorReq.onsuccess = function () {
     var cursor = cursorReq.result;
     if (!cursor) return;
     var r = cursor.value;
-    var echo = r.ircFlag === '1' && String(r.text || '').indexOf(' &#187; ') === 0;
-    if (r.kind === 'whisper' && (r.toUser === '' || r.toUser === '_') && !echo) {
+    if (isStaleWhisper(r)) {
       cursor.update(Object.assign({}, r, { kind: 'public' }));
     }
     cursor.continue();
