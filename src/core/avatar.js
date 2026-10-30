@@ -1,9 +1,13 @@
 // One avatar, wherever a user is shown (TDF-0013): an initials tile, with the picture over
-// it once there is one. A picked chat avatar shows at once, as the engine's does. A user who
-// never picked one (the engine's `online.gif`), has none, or whose picture fails, gets their
-// forum profile picture instead, as does an image-share post (the plugin's globe). That
-// picture is added once it has loaded, or at once when this page load already found it; until
-// it shows, and whenever it fails too, the tile shows. Never an empty square.
+// it once there is one. The forum profile picture is preferred wherever one exists (TDF-0021):
+// the engine's chat avatar files are small thumbnails (32x24, 55x40) shown upscaled, while the
+// forum's are 120px. A picked chat avatar still shows at once, as the engine's does, and the
+// forum picture replaces it once that has loaded; with no forum picture, or one that fails,
+// the chat avatar stays. A user who never picked one (the engine's `online.gif`), has none, or
+// whose chat avatar fails, gets the forum picture alone, as does an image-share post (the
+// plugin's globe). A forum picture is added once it has loaded, or at once when this page load
+// already found it; until a picture shows, and whenever every one fails, the tile shows. Never
+// an empty square.
 
 import { initials, tileSlot } from './initials.js';
 
@@ -44,6 +48,12 @@ export function renderAvatar(doc, { name, userID = '', file, src, className, res
   tile.setAttribute('aria-hidden', 'true');
   box.appendChild(tile);
 
+  /**
+   * The picked chat avatar while it shows: removed once the forum picture has loaded.
+   * @type {HTMLImageElement | null}
+   */
+  let chat = null;
+
   const forum = () => {
     if (!resolver) return;
     const known = resolver.peek?.(name);
@@ -65,28 +75,47 @@ export function renderAvatar(doc, { name, userID = '', file, src, className, res
     const img = picture();
     img.addEventListener('error', () => img.remove(), { once: true });
     img.src = url;
+    // Layered over the chat avatar, which goes only once this has loaded, so a forum picture
+    // that fails leaves the chat avatar in place.
+    const replace = () => {
+      chat?.remove();
+      chat = null;
+    };
+    if (img.complete && img.naturalWidth) {
+      box.appendChild(img);
+      replace();
+      return;
+    }
     // Otherwise added on load, so a picture that never arrives never covers the tile.
-    if (now || (img.complete && img.naturalWidth)) box.appendChild(img);
-    else img.addEventListener('load', () => box.appendChild(img), { once: true });
+    if (now) box.appendChild(img);
+    img.addEventListener(
+      'load',
+      () => {
+        if (!now) box.appendChild(img);
+        replace();
+      },
+      { once: true },
+    );
   }
 
   if (isPicked(file)) {
     const img = picture();
     img.setAttribute('loading', 'lazy');
-    // Expected and harmless: a deleted or broken avatar file loses only the picture.
+    // Expected and harmless: a deleted or broken avatar file loses only the picture. The
+    // forum lookup is already under way, so it is not asked again.
     img.addEventListener(
       'error',
       () => {
         img.remove();
-        forum();
+        if (chat === img) chat = null;
       },
       { once: true },
     );
     img.src = src;
     box.appendChild(img);
-  } else {
-    forum();
+    chat = img;
   }
+  forum();
   return box;
 
   function picture() {

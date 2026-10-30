@@ -69,7 +69,7 @@ function regroup(el) {
  *   container: HTMLElement,
  *   css: string,
  *   avatars?: import('./avatarResolver.js').AvatarResolver | null,
- * }} deps `avatars` looks up forum pictures for senders with no chat avatar
+ * }} deps `avatars` looks up forum pictures for every sender, preferred over the chat avatar
  */
 export function createView({ doc, win, container, css, avatars = null }) {
   const style = doc.createElement('style');
