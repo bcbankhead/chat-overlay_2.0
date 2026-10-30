@@ -1,13 +1,14 @@
 // The Settings flyout (UI design 2026-10-27, Flyouts → Settings). Chat: the Auto-scroll switch
-// over the engine's #autoScrollID, and Clear chat buffer. Storage: Chat history (days),
-// Gallery size limit (MB), Include my images (TDF-0009.13) and Store images offline. A hint
-// under each field says what the typed value would delete; the setting is written, and the
-// deletion runs, only when the value is committed (change: Enter or leaving the field). The
-// rail gives the flyout body its scrollbar.
+// over the engine's #autoScrollID, and Clear chat buffer. Storage: Chat history (days), Clear
+// history now and Delete messages by user (TDF-0010), Gallery size limit (MB), Include my images
+// (TDF-0009.13) and Store images offline. A hint under each field says what the typed value
+// would delete; the setting is written, and the deletion runs, only when the value is committed
+// (change: Enter or leaving the field). The two deletions ask first, inline. The rail gives the
+// flyout body its scrollbar.
 
 import { describeError } from '../../core/errors.js';
 import { clearView } from '../../core/events.js';
-import { MB_BYTES, parseDays, parseMegabytes } from './selectors.js';
+import { MB_BYTES, parseDays, parseMegabytes, senderLabel } from './selectors.js';
 
 /**
  * @typedef {object} PanelDeps
@@ -113,6 +114,173 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   };
 
   const history = field('Chat history (days)', '');
+
+  /**
+   * A button that asks before it deletes: the first click counts what would go and shows that
+   * with Confirm and Cancel; Confirm deletes once and the hint reports it. Cancel, or closing
+   * the flyout, deletes nothing.
+   * @param {string} label
+   * @param {{
+   *   count: () => Promise<number>,
+   *   none: () => string,
+   *   question: (n: number) => string,
+   *   run: () => Promise<string[]>,
+   *   after?: () => void,
+   *   lock?: (on: boolean) => void,
+   * }} step
+   */
+  const confirmStep = (label, { count, none, question, run, after = () => {}, lock = () => {} }) => {
+    const button = el('button', 'tdf-opt-clear', label);
+    button.type = 'button';
+    const ask = el('div', 'tdf-opt-confirm');
+    ask.hidden = true;
+    const text = el('span', '');
+    const yes = el('button', 'tdf-opt-confirm-yes', 'Confirm');
+    yes.type = 'button';
+    const no = el('button', '', 'Cancel');
+    no.type = 'button';
+    ask.append(text, yes, no);
+    const hint = el('div', 'tdf-opt-hint tdf-opt-action-hint');
+    hint.setAttribute('aria-live', 'polite');
+
+    const reset = () => {
+      ask.hidden = true;
+      button.hidden = false;
+      button.disabled = false;
+      yes.disabled = false;
+      no.disabled = false;
+      lock(false);
+    };
+    /** @param {string} message @param {boolean} [warn] */
+    const report = (message, warn = false) => {
+      hint.textContent = message;
+      hint.classList.toggle('tdf-warn', warn);
+    };
+
+    button.addEventListener('click', async () => {
+      report('');
+      button.disabled = true;
+      lock(true);
+      let n;
+      try {
+        n = await count();
+      } catch (err) {
+        if (closed) return;
+        reset();
+        report(`Could not check: ${describeError(err)}`, true);
+        return;
+      }
+      if (closed) return;
+      if (n === 0) {
+        reset();
+        report(none());
+        return;
+      }
+      text.textContent = question(n);
+      button.hidden = true;
+      ask.hidden = false;
+    });
+    no.addEventListener('click', reset);
+    yes.addEventListener('click', async () => {
+      yes.disabled = true;
+      no.disabled = true;
+      try {
+        const ids = await run();
+        if (closed) return;
+        reset();
+        report(`Deleted ${plural(ids.length, 'message')}.`);
+      } catch (err) {
+        if (closed) return;
+        reset();
+        report(`Could not delete: ${describeError(err)}`, true);
+      }
+      after();
+    });
+    undo.push(reset);
+    return { button, ask, hint };
+  };
+
+  // Clear history now: every stored line, in every room. The gallery is not touched.
+  const clearHistory = confirmStep('Clear history now', {
+    count: () => limits.countAll(),
+    none: () => 'No saved history.',
+    question: (n) => `Delete ${plural(n, 'message')}?`,
+    run: () => limits.clearHistory(),
+    after: () => refreshSenders(),
+  });
+  root.append(clearHistory.button, clearHistory.ask, clearHistory.hint);
+
+  // Delete messages by user: any sender in stored history, online or not. The option value is
+  // the stored sender, which is what the user index holds; the label is decoded.
+  const senderRow = el('label', 'tdf-opt-row tdf-opt-sender');
+  const sender = el('select', '');
+  senderRow.append(el('span', '', 'Delete messages by user'), sender);
+  // The sender asked about, fixed for that question; the picker is locked while it is open.
+  let asked = '';
+  let locked = false;
+  /** no sender to pick: an empty list, or one that failed to read */
+  let unavailable = false;
+  const syncSender = () => {
+    sender.disabled = locked || unavailable;
+    if (!locked) byUser.button.disabled = unavailable;
+  };
+  const byUser = confirmStep('Delete', {
+    count: () => {
+      asked = sender.value;
+      return limits.countByUser(asked);
+    },
+    none: () => `No saved messages from ${senderLabel(asked)}.`,
+    question: (n) => `Delete ${plural(n, 'message')} from ${senderLabel(asked)}?`,
+    run: () => limits.deleteByUser(asked),
+    after: () => refreshSenders(),
+    lock: (on) => {
+      locked = on;
+      syncSender();
+    },
+  });
+  root.append(senderRow, byUser.button, byUser.ask, byUser.hint);
+
+  // Only the latest read fills the list.
+  let senderSeq = 0;
+  let senderWarning = '';
+  const refreshSenders = async () => {
+    const mine = ++senderSeq;
+    /** @type {Array<{ user: string, count: number }>} */
+    let list;
+    try {
+      list = await limits.senders();
+    } catch (err) {
+      if (closed || mine !== senderSeq) return;
+      senderWarning = `Could not read saved senders: ${describeError(err)}`;
+      byUser.hint.textContent = senderWarning;
+      byUser.hint.classList.add('tdf-warn');
+      unavailable = true;
+      syncSender();
+      return;
+    }
+    if (closed || mine !== senderSeq) return;
+    if (senderWarning && byUser.hint.textContent === senderWarning) {
+      byUser.hint.textContent = '';
+      byUser.hint.classList.remove('tdf-warn');
+    }
+    senderWarning = '';
+    const keep = sender.value;
+    sender.replaceChildren(
+      ...list.map(({ user, count }) => {
+        const option = el('option', '', `${senderLabel(user)} (${count})`);
+        option.value = user;
+        return option;
+      }),
+    );
+    // The kept sender while still listed, else the first: chosen explicitly, not by default.
+    const chosen = list.find(({ user }) => user === keep) ?? list[0];
+    if (chosen) sender.value = chosen.user;
+    const empty = list.length === 0;
+    if (empty) sender.append(el('option', '', 'No saved history'));
+    unavailable = empty;
+    syncSender();
+  };
+  refreshSenders();
   const gallery = field('Gallery size limit (MB)', 'No limit');
   gallery.input.min = '1';
 
@@ -252,6 +420,7 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
         await settings.set('retentionDays', days);
         storedDays = days;
         await limits.pruneHistory(days);
+        refreshSenders();
       },
       () => historyText(value),
     );
