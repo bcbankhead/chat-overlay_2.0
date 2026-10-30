@@ -2,9 +2,12 @@
 // second copy — userscript plus site include — sets up nothing. Features open their own
 // database connections, wrap engine globals and write the DOM themselves, so each guards
 // itself with its own `__tdfChat2*` flag; build.mjs's checkSecondCopyInert verifies that a
-// second copy touches nothing past those flags.
+// second copy touches nothing past those flags. The flag is set at once, but the start waits
+// for the chat markup (ready.js): the site include may run from <head>, before the body is
+// parsed. Placed there, the body is cloaked until the overlay mounts (cloak.js).
 
 import { createAvatarResolver } from './avatarResolver.js';
+import { CLOAK_MS, cloak } from './cloak.js';
 import { openDb } from './db.js';
 import { installEngineHook } from './engine-hook.js';
 import { describeError } from './errors.js';
@@ -15,24 +18,42 @@ import { createSettings, onSettingChange } from './settings.js';
 import { mount, unmount } from './shell.js';
 import { FADE_CLASS, createTheme } from './theme.js';
 import css from './theme.css';
+import { whenDomReady } from './ready.js';
 import { createView } from './view.js';
 
 if (!(/** @type {any} */ (window).__tdfChat2Loaded)) {
   /** @type {any} */ (window).__tdfChat2Loaded = true;
-  start().catch((err) => startFailed(describeError(err)));
+  // A tag just before </body> also runs while loading, but the chat has painted by then.
+  const lift =
+    document.readyState === 'loading' && !document.body
+      ? cloak(document, window, CLOAK_MS, () =>
+          console.warn(`TDF Chat 2.0: still starting after ${CLOAK_MS / 1000} s; showing the page.`),
+        )
+      : () => {};
+  whenDomReady(document, () => {
+    start(lift).catch((err) => {
+      lift();
+      startFailed(describeError(err));
+    });
+  });
 }
 
-async function start() {
+/** @param {() => void} lift  removes the pre-mount cloak; called on every way out */
+async function start(lift) {
   const win = /** @type {any} */ (window);
   const container = document.getElementById(MAIN_DIV);
   // Pages under the @match without a chat (login, transcripts) are expected: nothing to do.
-  if (!container) return;
+  if (!container) {
+    lift();
+    return;
+  }
   const roomID = String(win.roomID ?? '');
 
   // The hook installs before the first await: what the engine renders during startup is
   // buffered and flushed after the replay, in order, rather than lost under the overlay.
   const hook = installEngineHook({ win, roomID });
   if (!hook) {
+    lift();
     startFailed('the chat engine was not recognised');
     return;
   }
@@ -46,9 +67,23 @@ async function start() {
   const unsubscribe = [];
   try {
     // Before the view mounts, a closed connection fails the start, and the banner says so.
-    const db = await openDb({
-      onVersionChange: () => shown?.notice('TDF Chat was updated in another tab; reload this tab to keep saving history.'),
-    });
+    // An open blocked by an older build's tab waits for it to close. Meanwhile the original
+    // chat shows, with a banner saying why, and the overlay mounts once the open goes through.
+    /** @type {HTMLElement | null} */
+    let waiting = null;
+    /** @type {IDBDatabase} */
+    let db;
+    try {
+      db = await openDb({
+        onVersionChange: () => shown?.notice('TDF Chat was updated in another tab; reload this tab to keep saving history.'),
+        onBlocked: () => {
+          lift();
+          waiting = banner('TDF Chat 2.0 is waiting for another TDF Chat tab to close.');
+        },
+      });
+    } finally {
+      /** @type {HTMLElement | null} */ (waiting)?.remove();
+    }
     const history = createHistory(db);
     const settings = createSettings(db);
     theme = createTheme({ win, settings, root: html });
@@ -75,6 +110,7 @@ async function start() {
     );
     replay(view, records);
     shown = view;
+    lift();
     hook.attach({ history, view, pending, replayed: records, storing: () => retentionDays !== 0 });
     // Expired with no inbound event; a feature that read the room before the expiry follows it.
     if (expired.length) {
@@ -131,14 +167,24 @@ function replay(view, records) {
  * @param {string} reason
  */
 function startFailed(reason) {
-  const banner = document.createElement('div');
-  banner.setAttribute('role', 'status');
-  banner.textContent = `TDF Chat 2.0 did not start (${reason}); showing the original chat.`;
-  banner.style.cssText =
+  banner(`TDF Chat 2.0 did not start (${reason}); showing the original chat.`);
+}
+
+/**
+ * A dismissable status line in the page's corner, outside the overlay.
+ * @param {string} text
+ * @returns {HTMLElement}
+ */
+function banner(text) {
+  const el = document.createElement('div');
+  el.setAttribute('role', 'status');
+  el.textContent = text;
+  el.style.cssText =
     'position:fixed;right:8px;bottom:8px;z-index:2147483647;max-width:360px;padding:6px 10px;' +
     'font:12px system-ui,sans-serif;color:#1f2328;background:#fff8c5;' +
     'border-left:3px solid #d1242f;box-shadow:0 2px 8px rgba(0,0,0,.2);cursor:pointer';
-  banner.title = 'Click to dismiss';
-  banner.addEventListener('click', () => banner.remove());
-  document.body.appendChild(banner);
+  el.title = 'Click to dismiss';
+  el.addEventListener('click', () => el.remove());
+  document.body.appendChild(el);
+  return el;
 }

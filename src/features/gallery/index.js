@@ -2,6 +2,7 @@
 // holds the double-load guard and the chat-page check.
 
 import { MAIN_DIV } from '../../core/parse.js';
+import { whenDomReady } from '../../core/ready.js';
 import css from './gallery.css';
 import { startGallery } from './start.js';
 
@@ -10,5 +11,7 @@ const win = /** @type {any} */ (window);
 // build.mjs's second-copy check sets).
 if (!win.__tdfChat2Gallery) {
   win.__tdfChat2Gallery = true;
-  if (document.getElementById(MAIN_DIV)) startGallery({ win: window, doc: document, css });
+  whenDomReady(document, () => {
+    if (document.getElementById(MAIN_DIV)) startGallery({ win: window, doc: document, css });
+  });
 }

@@ -22,17 +22,33 @@ The build exits with an error (do not upload its output) if either file would us
 ## Install
 
 1. Upload `dist/tdf-chat.js` to the site, for example to `/forum/chat/js/tdf-chat.js`.
-2. In the chat's `index.php`, add a script tag **after the chat engine's own script tags**,
-   just before `</body>`:
+2. In the chat's `index.php`, add a script tag. It works anywhere on the page; inside
+   `<head>` is recommended:
 
    ```html
-   <script src="/forum/chat/js/tdf-chat.js?v=0.1.2"></script>
-   </body>
+   <head>
+     …
+     <script src="/forum/chat/js/tdf-chat.js?v=0.1.2"></script>
+   </head>
    ```
 
-   The script needs the chat container and the engine's globals (`roomID`,
-   `handleMessages`, `receiveMesReq`, …) to exist when it runs. If the engine is not there
-   yet, members see a small "TDF Chat 2.0 did not start" notice and keep the original chat.
+   Placed in `<head>`, the script hides the page (showing only its background colour) until
+   the overlay has mounted, so members never see the original chat flash first on a slow
+   load. If the overlay has not mounted after 5 seconds the page is shown anyway.
+
+   Wherever the tag sits, the script waits until the page has been parsed, then needs the
+   chat container and the engine's globals (`roomID`, `handleMessages`, `receiveMesReq`, …).
+   If the engine is not there, members see a small "TDF Chat 2.0 did not start" notice and
+   keep the original chat. A tag placed just before `</body>`, after the engine's own script
+   tags, also works; it simply cannot prevent the flash.
+
+## Several chat tabs
+
+Members can keep the chat open in several tabs; each tab shows the overlay and saves
+history. The one exception follows an update: a tab still running an older copy of the
+script can hold the database open on the old version. The new tab then shows the original
+chat with a notice, "TDF Chat 2.0 is waiting for another TDF Chat tab to close", and the
+overlay appears by itself as soon as that old tab is closed or reloaded.
 
 ## What it stores
 
