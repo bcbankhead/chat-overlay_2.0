@@ -1,0 +1,18 @@
+{
+  "name": "tdf-chat-2",
+  "version": "0.1.2",
+  "private": true,
+  "description": "TDF Chat 2.0 — modern overlay userscript for the TDF chat",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test \"test/*.test.js\" \"src/features/*/*.test.js\"",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "fake-indexeddb": "^6.2.6",
+    "happy-dom": "^21.0.4",
+    "typescript": "^7.0.2"
+  }
+}

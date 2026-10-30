@@ -1,0 +1,41 @@
+/* Image reactions under a posted image (ui.js). Scoped to .tdf-rx-*, coloured from the
+   data-tdf-theme tokens (theme.css). Yours is outlined; a queued one is dimmed; a failed one
+   is marked in red. */
+
+#tdf-chat .tdf-rx-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0 2px;
+}
+
+#tdf-chat .tdf-rx-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px 4px;
+  border: 1px solid var(--tdf-border);
+  border-radius: 999px;
+  background: var(--tdf-hover-bg);
+  color: var(--tdf-fg);
+  font: 12px var(--tdf-ui-font);
+  cursor: pointer;
+}
+
+#tdf-chat .tdf-rx-chip img {
+  width: 18px;
+  height: 18px;
+}
+
+#tdf-chat .tdf-rx-chip.tdf-rx-mine {
+  border-color: var(--tdf-link);
+}
+
+#tdf-chat .tdf-rx-chip.tdf-rx-queued {
+  opacity: 0.55;
+}
+
+#tdf-chat .tdf-rx-chip.tdf-rx-failed {
+  border-color: #d1242f;
+  border-style: dashed;
+}

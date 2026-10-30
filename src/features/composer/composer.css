@@ -1,0 +1,313 @@
+/* The engine's composer restyled in place (docs/design/2026-10-27-ui-design.md, Composer).
+   Every rule selects from data-tdf-theme on <html>: until the overlay mounts its theme the
+   engine's composer is left as it was, and this slice's own pieces stay hidden. The box's
+   text colour is set inline by box.js (the chosen colour, shifted per theme); its font, size,
+   bold, italic and underline stay the engine's, previewing the message being written. */
+
+/* The engine's controls stay in the page, still read by it: the icon row (one smiley button
+   takes its place), Whisper To / AutoScroll / eCredits, and Logout. */
+:root[data-tdf-theme] #optionsIcons,
+:root[data-tdf-theme] .optionsSelectStatus,
+:root[data-tdf-theme] #optionsLogout {
+  display: none !important;
+}
+
+:root[data-tdf-theme="light"] #optionsContainer {
+  background-color: #dadae6 !important;
+  border-color: #dadae6 !important;
+}
+
+:root[data-tdf-theme="dark"] #optionsContainer {
+  background-color: #444450 !important;
+  border-color: #444450 !important;
+}
+
+/* The box: 75px, the message view's background, room on the right for the upload icon and at
+   the bottom for the hint line. Its scrollbar is hidden; it still scrolls. */
+:root[data-tdf-theme] #optionsBar {
+  box-sizing: border-box;
+  bottom: 10px !important;
+  height: 75px !important;
+  padding: 6px 52px 20px 8px !important;
+  background: var(--tdf-bg) !important;
+  border: 1px solid var(--tdf-border) !important;
+  border-radius: 6px !important;
+  outline: none;
+  resize: none;
+  scrollbar-width: none;
+}
+
+:root[data-tdf-theme] #optionsBar::-webkit-scrollbar {
+  display: none;
+}
+
+:root[data-tdf-theme] #optionsBar::placeholder {
+  color: var(--tdf-muted);
+}
+
+/* Dark: the border is the box's own colour, invisible. */
+:root[data-tdf-theme="dark"] #optionsBar {
+  border-color: var(--tdf-bg) !important;
+  caret-color: #ffffff;
+}
+
+:root[data-tdf-theme="light"] #optionsBar {
+  caret-color: #000000;
+}
+
+:root[data-tdf-theme] #optionsSend {
+  bottom: 10px !important;
+  height: 75px !important;
+  border: 0 !important;
+  border-radius: 6px !important;
+  background: #2da44e !important;
+  color: #ffffff !important;
+  font: 600 15px/1 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif !important;
+  cursor: pointer;
+}
+
+:root[data-tdf-theme] #optionsSend:hover {
+  background: #2c974b !important;
+}
+
+/* This slice's own pieces exist only on a themed page. */
+.tdf-sm-button,
+.tdf-whisper-chip,
+.tdf-attach-icon,
+.tdf-attach-hint,
+.tdf-attach-thumb {
+  display: none;
+}
+
+/* Smiley button, where the icon row was. */
+:root[data-tdf-theme] .tdf-sm-button {
+  position: absolute;
+  left: 8px;
+  bottom: 89px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: #3d444d;
+  cursor: pointer;
+}
+
+:root[data-tdf-theme="dark"] .tdf-sm-button {
+  color: #d1d5db;
+}
+
+:root[data-tdf-theme] .tdf-sm-button:hover {
+  color: var(--tdf-link);
+}
+
+.tdf-sm-button svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* Smiley picker: the composer's, and image reactions'. */
+.tdf-sm-picker {
+  position: absolute;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(5, 32px);
+  gap: 2px;
+  padding: 6px;
+  background: var(--tdf-bg, #ffffff);
+  border: 1px solid var(--tdf-border, #d1d9e0);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  color: var(--tdf-fg, #1f2328);
+}
+
+.tdf-sm-picker[hidden] {
+  display: none;
+}
+
+.tdf-sm-item {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+
+.tdf-sm-item:hover {
+  background: rgba(127, 127, 127, 0.18);
+}
+
+.tdf-sm-extra {
+  grid-column: 1 / -1;
+}
+
+.tdf-sm-extra:empty {
+  display: none;
+}
+
+.tdf-sm-action {
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 0;
+  border-top: 1px solid rgba(127, 127, 127, 0.25);
+  background: none;
+  color: inherit;
+  font: 13px system-ui, sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tdf-sm-action:hover {
+  background: rgba(127, 127, 127, 0.12);
+}
+
+/* Whisper: a blue border, and a chip on the box's top border at the right. */
+:root[data-tdf-theme] #optionsBar.tdf-whisper {
+  border-color: #2f81f7 !important;
+  box-shadow: 0 0 0 1px #2f81f7;
+}
+
+:root[data-tdf-theme] .tdf-whisper-chip {
+  position: absolute;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 10px;
+  border-radius: 999px;
+  background: #2f81f7;
+  color: #ffffff;
+  font: 600 12px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+:root[data-tdf-theme] .tdf-whisper-chip[hidden] {
+  display: none;
+}
+
+.tdf-whisper-label {
+  font-weight: 400;
+  opacity: 0.85;
+}
+
+.tdf-whisper-clear {
+  display: grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  color: inherit;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tdf-whisper-clear:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+/* Image attach. With an image pending, the text moves over for its thumbnail. */
+:root[data-tdf-theme] #optionsBar.tdf-attach-has {
+  padding-left: 62px !important;
+}
+
+:root[data-tdf-theme] #optionsBar.tdf-attach-over {
+  outline: 2px dashed #2f81f7;
+  outline-offset: -4px;
+}
+
+:root[data-tdf-theme] .tdf-attach-icon {
+  position: absolute;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #8b949e;
+  cursor: pointer;
+}
+
+:root[data-tdf-theme] .tdf-attach-icon:hover {
+  color: var(--tdf-link);
+}
+
+.tdf-attach-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+:root[data-tdf-theme] .tdf-attach-hint {
+  position: absolute;
+  z-index: 6;
+  display: block;
+  color: #8b949e;
+  font: 11px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+:root[data-tdf-theme] .tdf-attach-thumb {
+  position: absolute;
+  z-index: 6;
+  display: block;
+  width: 44px;
+  height: 44px;
+}
+
+:root[data-tdf-theme] .tdf-attach-thumb[hidden] {
+  display: none;
+}
+
+.tdf-attach-thumb img {
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  object-fit: cover;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.tdf-attach-thumb.tdf-attach-busy img {
+  opacity: 0.5;
+}
+
+:root[data-tdf-theme] .tdf-attach-hint.tdf-attach-refused {
+  color: #cf222e;
+}
+
+.tdf-attach-thumb.tdf-attach-failed img {
+  outline: 2px solid #cf222e;
+  outline-offset: -2px;
+  opacity: 0.6;
+}
+
+.tdf-attach-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #3d444d;
+  color: #ffffff;
+  font: 13px/1 system-ui, sans-serif;
+  cursor: pointer;
+}

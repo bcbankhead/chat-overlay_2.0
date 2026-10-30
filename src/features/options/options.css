@@ -1,0 +1,136 @@
+/* The Settings flyout (UI design 2026-10-27, Flyouts → Settings), inside the rail's flyout
+   body. Colours are the theme's and the rail's tokens; nothing of its own per theme. */
+
+#tdf-rail .tdf-opt-title {
+  margin: 0 2px 8px;
+  font-weight: 600;
+}
+
+#tdf-rail .tdf-opt-section {
+  margin: 16px 2px 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--tdf-rail-chip-border);
+  font-weight: 600;
+}
+
+#tdf-rail .tdf-opt-section.tdf-opt-first {
+  margin-top: 4px;
+  padding-top: 0;
+  border-top: 0;
+}
+
+#tdf-rail .tdf-opt-row,
+#tdf-rail .tdf-opt-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 2px 2px;
+}
+
+#tdf-rail .tdf-opt-field input {
+  width: 96px;
+  padding: 5px 8px;
+  color: var(--tdf-fg);
+  background: var(--tdf-rail-chip-bg);
+  border: 1px solid var(--tdf-rail-chip-border);
+  border-radius: 6px;
+  font: inherit;
+  text-align: right;
+}
+
+#tdf-rail .tdf-opt-field input:focus-visible {
+  outline: 2px solid var(--tdf-link);
+  outline-offset: 1px;
+}
+
+/* A switch drawn from a checkbox. */
+#tdf-rail .tdf-opt-switch {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  margin: 0;
+  background: var(--tdf-rail-chip-border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 150ms ease-out;
+}
+
+#tdf-rail .tdf-opt-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #ffffff;
+  border-radius: 50%;
+  transition: transform 150ms ease-out;
+}
+
+#tdf-rail .tdf-opt-switch:checked {
+  background: var(--tdf-link);
+}
+
+#tdf-rail .tdf-opt-switch:checked::after {
+  transform: translateX(14px);
+}
+
+#tdf-rail .tdf-opt-switch:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* A plain checkbox row (Include my images), in the theme's link colour. */
+#tdf-rail .tdf-opt-check {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--tdf-link);
+  cursor: pointer;
+}
+
+/* A checkbox row's hint shows only a failure. */
+#tdf-rail .tdf-opt-row + .tdf-opt-hint:empty {
+  display: none;
+}
+
+#tdf-rail .tdf-opt-clear {
+  width: 100%;
+  margin: 6px 0 2px;
+  padding: 7px 12px;
+  color: var(--tdf-fg);
+  background: var(--tdf-rail-chip-bg);
+  border: 1px solid var(--tdf-rail-chip-border);
+  border-radius: 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+#tdf-rail .tdf-opt-clear:hover {
+  border-color: var(--tdf-link);
+}
+
+#tdf-rail .tdf-opt-hint {
+  margin: 2px 2px 6px;
+  color: var(--tdf-muted);
+  font-size: 12px;
+}
+
+#tdf-rail .tdf-opt-hint.tdf-warn {
+  color: #cf222e;
+}
+
+:root[data-tdf-theme="dark"] #tdf-rail .tdf-opt-hint.tdf-warn {
+  color: #ff7b72;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #tdf-rail .tdf-opt-switch,
+  #tdf-rail .tdf-opt-switch::after {
+    transition: none !important;
+  }
+}

@@ -1,1 +1,3 @@
 reference/site-js/
+node_modules/
+dist/

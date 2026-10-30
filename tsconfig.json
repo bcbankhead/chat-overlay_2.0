@@ -1,0 +1,33 @@
+{
+  // Typecheck gate (Vector 18): only fully typed, pure modules are included.
+  // Widen `include` one typed module at a time, never in bulk.
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "target": "es2022",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["es2022", "dom"]
+  },
+  "include": [
+    "src/core/thumb.js",
+    "src/core/parse.js",
+    "src/core/expand.js",
+    "src/core/group.js",
+    "src/core/ink.js",
+    "src/core/reconcile.js",
+    "src/core/smiliefix.js",
+    "src/core/scroll.js",
+    "src/features/composer/link.js",
+    "src/features/composer/sharetext.js",
+    "src/features/profile/textStyle.js",
+    "src/features/gallery/shareParse.js",
+    "src/features/gallery/hash.js",
+    "src/features/tagging/reactions.js",
+    "src/features/tagging/infer.js",
+    "src/features/tagging/queue.js",
+    "src/features/options/selectors.js"
+  ]
+}

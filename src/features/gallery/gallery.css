@@ -1,0 +1,259 @@
+/* TDF Chat 2.0 gallery flyout (UI design 2026-10-27, Flyouts → Gallery). Rendered inside the
+   rail's flyout body; colours come from the rail's and theme.css's tokens, both scoped by
+   data-tdf-theme on <html>. */
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery {
+  --tdf-gallery-star: #e3b341;
+}
+
+/* Sticks to the top of the flyout body while the grid scrolls under it (the body pads 10px). */
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-head {
+  position: sticky;
+  top: -10px;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: -10px -10px 8px;
+  padding: 10px 10px 8px 12px;
+  background: var(--tdf-rail-bg);
+  border-bottom: 1px solid var(--tdf-rail-chip-border);
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-title {
+  font-weight: 600;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-stats {
+  flex: 1;
+  color: var(--tdf-muted);
+  font-size: 12px;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  font-size: 12px;
+  background: var(--tdf-rail-chip-bg);
+  border: 1px solid var(--tdf-rail-chip-border);
+  border-radius: 999px;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-chip[hidden] {
+  display: none;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-chip-clear {
+  padding: 0 4px;
+  color: var(--tdf-muted);
+  font-size: 14px;
+  line-height: 1;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-favfilter {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--tdf-muted);
+  background: var(--tdf-rail-chip-bg);
+  border: 1px solid var(--tdf-rail-chip-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-favfilter svg {
+  width: 16px;
+  height: 16px;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-favfilter[aria-pressed="true"] {
+  color: var(--tdf-gallery-star);
+  border-color: var(--tdf-gallery-star);
+}
+
+/* Failures recorded while the gallery was closed (errors.js); a click dismisses them. */
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-error {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  background: rgba(229, 72, 77, 0.12);
+  border-left: 3px solid #cf222e;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-error[hidden] {
+  display: none;
+}
+
+/* Three columns of 128×128 thumbnails, as many rows as there are images. */
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 128px);
+  gap: 6px;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-empty {
+  margin: 16px 0;
+  color: var(--tdf-muted);
+  text-align: center;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-tile {
+  position: relative;
+  width: 128px;
+  height: 128px;
+  cursor: pointer;
+  transition: opacity 180ms ease-out, transform 180ms ease-out;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-tile.tdf-removing {
+  opacity: 0;
+  transform: scale(0.9);
+}
+
+/* Hidden until the flyout has settled, then faded in, in grid order. */
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-thumb {
+  display: block;
+  width: 128px;
+  height: 128px;
+  box-sizing: border-box;
+  object-fit: cover;
+  background: var(--tdf-hover-bg);
+  border-radius: 8px;
+  opacity: 0;
+  transform: scale(0.96);
+  transition: opacity 260ms ease-out, transform 260ms ease-out;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-rail-flyout.tdf-settled .tdf-gallery-thumb.tdf-ready {
+  opacity: 1;
+  transform: none;
+  transition-delay: calc(var(--i, 0) / 3 * 35ms);
+}
+
+/* Closing hides thumbnails at once, so the next open fades them in again. */
+:root[data-tdf-theme] #tdf-rail .tdf-rail-flyout:not(.tdf-settled) .tdf-gallery-thumb {
+  transition: none;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-placeholder {
+  border: 1px dashed var(--tdf-rail-chip-border);
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-tile:is(:hover, :focus-visible) .tdf-gallery-thumb {
+  outline: 2px solid var(--tdf-link);
+  outline-offset: 1px;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-tile:focus-visible {
+  outline: none;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-btn,
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-action {
+  display: grid;
+  place-items: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 4px;
+  color: #ffffff;
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease-out, background 120ms ease-out;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-btn {
+  position: absolute;
+  top: 6px;
+  width: 26px;
+  padding: 0;
+}
+
+:root[data-tdf-theme] #tdf-rail :is(.tdf-gallery-btn, .tdf-gallery-action) svg {
+  width: 15px;
+  height: 15px;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-trash {
+  left: 6px;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-star {
+  right: 6px;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-actions {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  display: flex;
+  gap: 4px;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-rail-flyout.tdf-settled .tdf-gallery-tile:is(:hover, :focus-within) :is(.tdf-gallery-btn, .tdf-gallery-action),
+:root[data-tdf-theme] #tdf-rail .tdf-rail-flyout.tdf-settled .tdf-gallery-tile.tdf-fav .tdf-gallery-star {
+  opacity: 1;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-tile.tdf-fav .tdf-gallery-star {
+  color: var(--tdf-gallery-star);
+}
+
+:root[data-tdf-theme] #tdf-rail :is(.tdf-gallery-star, .tdf-gallery-action):hover {
+  background: rgba(0, 0, 0, 0.75);
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-trash:hover:not(:disabled) {
+  background: #cf222e;
+}
+
+/* A favourite's trash shows dimmed on hover or focus: there, but refused. */
+:root[data-tdf-theme] #tdf-rail .tdf-rail-flyout.tdf-settled .tdf-gallery-tile:is(:hover, :focus-within) .tdf-gallery-trash:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Broken link: the thumbnail stays, with a badge over its lower left corner. */
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-broken {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  display: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: #ffffff;
+  background: #cf222e;
+  border-radius: 6px;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-tile.tdf-broken .tdf-gallery-broken {
+  display: grid;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-broken svg {
+  width: 14px;
+  height: 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-tdf-theme] #tdf-rail .tdf-gallery-tile,
+  :root[data-tdf-theme] #tdf-rail .tdf-gallery-thumb,
+  :root[data-tdf-theme] #tdf-rail .tdf-rail-flyout.tdf-settled .tdf-gallery-thumb.tdf-ready,
+  :root[data-tdf-theme] #tdf-rail :is(.tdf-gallery-btn, .tdf-gallery-action) {
+    transition: none !important;
+  }
+}

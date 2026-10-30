@@ -1,0 +1,775 @@
+/* Sidebar mockup (harness only). Tokens mirror #tdf-chat's, so the theme toggle carries. */
+
+#tdf-side {
+  --side-ui-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  position: absolute;
+  /* Above the message box's own controls (attach.js, whisper.js: z-index 6), so its
+     flyouts cover them. */
+  z-index: 10;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  background: var(--side-bg);
+  color: var(--side-fg);
+  border: 1px solid var(--side-border);
+  border-radius: 10px;
+  font: 13px/1.4 var(--side-ui-font);
+  /* Every flyout shares the gallery's width: three 128px columns, gaps, padding, border. */
+  --flyout-width: calc(3 * 128px + 2 * 6px + 2 * 10px + 2px);
+}
+
+#tdf-side[data-theme="light"] {
+  --side-bg: #ededf5;
+  --side-fg: #1f2328;
+  --side-muted: #59636e;
+  --side-border: #d1d9e0;
+  --side-hover-bg: rgba(31, 35, 40, 0.05);
+  --side-chip-bg: #f6f8fa;
+  --side-chip-border: #d1d9e0;
+  --side-accent: #0969da;
+}
+
+#tdf-side[data-theme="dark"] {
+  /* A cool charcoal; chips one tint lighter, their borders one more. */
+  --side-bg: #27272e;
+  --side-fg: #e6edf3;
+  --side-muted: #9d9daa;
+  --side-border: #3a3a44;
+  --side-hover-bg: rgba(230, 237, 243, 0.07);
+  --side-chip-bg: #32323b;
+  --side-chip-border: #43434e;
+  --side-accent: #58a6ff;
+}
+
+/* Icon row: gallery, profile — just above the current room's chip. */
+#tdf-side .side-icons {
+  display: flex;
+  gap: 6px;
+}
+
+#tdf-side .side-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--side-chip-border);
+  border-radius: 8px;
+  background: var(--side-chip-bg);
+  color: var(--side-fg);
+  cursor: pointer;
+}
+
+#tdf-side .side-icon:hover {
+  color: var(--side-accent);
+}
+
+#tdf-side .side-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* A room chip is an accordion: the chip is its header, its users the panel. */
+#tdf-side .side-room {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#tdf-side .side-current {
+  flex: 1;
+}
+
+#tdf-side .side-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  border: 1px solid var(--side-chip-border);
+  border-radius: 999px;
+  background: var(--side-chip-bg);
+  color: var(--side-fg);
+  font: 600 13px/1.2 var(--side-ui-font);
+  text-align: left;
+  cursor: pointer;
+}
+
+#tdf-side .side-chip:hover {
+  border-color: var(--side-accent);
+}
+
+#tdf-side .side-chip .side-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#tdf-side .side-chip .side-count {
+  color: var(--side-muted);
+  font-weight: 400;
+}
+
+#tdf-side .side-chip .side-caret {
+  width: 12px;
+  height: 12px;
+  transition: transform 0.15s;
+}
+
+#tdf-side .side-room.open > .side-chip .side-caret {
+  transform: rotate(180deg);
+}
+
+#tdf-side .side-users {
+  display: none;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+#tdf-side .side-room.open > .side-users {
+  display: block;
+}
+
+#tdf-side .side-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#tdf-side .side-user:hover {
+  background: var(--side-hover-bg);
+}
+
+#tdf-side .side-user img {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  object-fit: cover;
+}
+
+#tdf-side .side-empty {
+  padding: 4px 8px;
+  color: var(--side-muted);
+  font-style: italic;
+}
+
+/* Other rooms sit at the bottom. */
+#tdf-side .side-others {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* render() rebuilds this wrapper; it lays out as if its children were the sidebar's own. */
+#tdf-side .side-content {
+  display: contents;
+}
+
+#tdf-side .side-icon.active {
+  border-color: var(--side-accent);
+  color: var(--side-accent);
+}
+
+/* Flyouts grow leftward from the sidebar's left edge, over the message view. */
+#tdf-side .side-flyout {
+  position: absolute;
+  top: 0;
+  right: calc(100% + 6px);
+  width: var(--flyout-width);
+  box-sizing: border-box;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 10px;
+  background: var(--side-bg);
+  border: 1px solid var(--side-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  /* Closed: tucked against the sidebar and invisible. Visibility flips only after the
+     slide back, so a closing panel stays drawn while it moves. */
+  opacity: 0;
+  transform: translateX(24px);
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 180ms ease-out,
+    visibility 0s linear 220ms;
+}
+
+#tdf-side .side-flyout.open {
+  opacity: 1;
+  transform: none;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 180ms ease-out,
+    visibility 0s;
+}
+
+
+/* Gallery: three columns of 128x128 thumbnails, as many rows as there are images. */
+#tdf-side .side-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 128px);
+  gap: 6px;
+}
+
+#tdf-side .side-thumb {
+  width: 128px;
+  height: 128px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--side-hover-bg);
+  cursor: pointer;
+  /* Hidden until the flyout has settled, then faded in, in grid order. */
+  opacity: 0;
+  transform: scale(0.96);
+  transition: opacity 260ms ease-out, transform 260ms ease-out;
+}
+
+#tdf-side .side-flyout.settled .side-thumb.ready {
+  opacity: 1;
+  transform: none;
+  transition-delay: calc(var(--i, 0) / 3 * 35ms);
+}
+
+/* Closing hides thumbnails at once, so the next open fades them in again. */
+#tdf-side .side-flyout:not(.settled) .side-thumb {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #tdf-side .side-flyout,
+  #tdf-side .side-flyout.open,
+  #tdf-side .side-thumb {
+    transition: none !important;
+  }
+}
+
+#tdf-side .side-thumb:hover {
+  outline: 2px solid var(--side-accent);
+  outline-offset: 1px;
+}
+
+/* Gallery header: title, count and size, favourites filter. Sticks to the top of the
+   flyout while the grid scrolls under it (the flyout pads 10px, hence top: -10px). */
+#tdf-side .g-head {
+  position: sticky;
+  top: -10px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -10px -10px 8px;
+  padding: 10px 10px 8px 12px;
+  background: var(--side-bg);
+  border-bottom: 1px solid var(--side-border);
+}
+
+#tdf-side .g-title {
+  font-weight: 600;
+}
+
+#tdf-side .g-stats {
+  flex: 1;
+  color: var(--side-muted);
+  font-size: 12px;
+}
+
+#tdf-side .g-favfilter {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--side-chip-border);
+  border-radius: 8px;
+  background: var(--side-chip-bg);
+  color: var(--side-muted);
+  cursor: pointer;
+}
+
+#tdf-side .g-favfilter svg {
+  width: 16px;
+  height: 16px;
+}
+
+#tdf-side .g-favfilter[aria-pressed="true"] {
+  border-color: #e3b341;
+  color: #e3b341;
+}
+
+/* A tile: the thumbnail with a trash can (top left) and star (top right) over it. Both
+   show on hover; a starred tile keeps its star showing. */
+#tdf-side .g-tile {
+  position: relative;
+  width: 128px;
+  height: 128px;
+  transition: opacity 180ms ease-out, transform 180ms ease-out;
+}
+
+#tdf-side .g-tile[hidden] {
+  display: none;
+}
+
+#tdf-side .g-tile.removing {
+  opacity: 0;
+  transform: scale(0.9);
+}
+
+#tdf-side .g-btn {
+  position: absolute;
+  top: 6px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #ffffff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease-out, background 120ms ease-out;
+}
+
+#tdf-side .g-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+#tdf-side .g-star {
+  right: 6px;
+}
+
+#tdf-side .g-trash {
+  left: 6px;
+}
+
+#tdf-side .side-flyout.settled .g-tile:hover .g-btn,
+#tdf-side .side-flyout.settled .g-tile.fav .g-star {
+  opacity: 1;
+}
+
+#tdf-side .g-tile.fav .g-star {
+  color: #e3b341;
+}
+
+#tdf-side .g-star:hover {
+  background: rgba(0, 0, 0, 0.75);
+}
+
+#tdf-side .g-trash:hover:not(:disabled) {
+  background: #cf222e;
+}
+
+/* A starred tile's trash can shows dimmed on hover: there, but refused. */
+#tdf-side .side-flyout.settled .g-tile:hover .g-trash:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Profile flyout: the gallery's width, only as tall as its rows. */
+#tdf-side .p-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 8px;
+  padding: 2px 2px 10px;
+  border-bottom: 1px solid var(--side-border);
+}
+
+#tdf-side .p-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+#tdf-side .p-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+#tdf-side .p-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--side-fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+#tdf-side .p-row:hover {
+  background: var(--side-hover-bg);
+}
+
+#tdf-side .p-value {
+  color: var(--side-muted);
+}
+
+/* A switch drawn from a checkbox. */
+#tdf-side .p-switch {
+  appearance: none;
+  position: relative;
+  width: 34px;
+  height: 20px;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--side-chip-border);
+  cursor: pointer;
+  transition: background 150ms ease-out;
+}
+
+#tdf-side .p-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  transition: transform 150ms ease-out;
+}
+
+#tdf-side .p-switch:checked {
+  background: var(--side-accent);
+}
+
+#tdf-side .p-switch:checked::after {
+  transform: translateX(14px);
+}
+
+/* A user's menu, opened at the pointer from their name. */
+#tdf-side .side-menu {
+  position: absolute;
+  z-index: 10;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--side-bg);
+  border: 1px solid var(--side-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+#tdf-side .side-menu[hidden] {
+  display: none;
+}
+
+#tdf-side .side-menu-title {
+  padding: 4px 8px 6px;
+  color: var(--side-muted);
+  font-size: 12px;
+}
+
+#tdf-side .side-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--side-fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+#tdf-side .side-menu-item:hover:not(:disabled) {
+  background: var(--side-hover-bg);
+}
+
+#tdf-side .side-menu-item:disabled {
+  color: var(--side-muted);
+  cursor: default;
+}
+
+/* Page background and the message box's container, replacing the engine's greys
+   (#E2E2E2 and #c8c8c8). */
+/* Page background, per theme (read off the overlay's own theme). */
+.body {
+  background-color: #fbfbff !important;
+  background-image: none !important;
+}
+
+.body:has(#tdf-chat[data-theme="dark"]) {
+  background-color: #dadae6 !important;
+}
+
+/* The message box's container, per theme (the composer marks the theme on the box). */
+#optionsContainer:has(#optionsBar[data-tdf-theme="dark"]) {
+  background-color: #444450 !important;
+  border-color: #444450 !important;
+}
+
+#optionsContainer:has(#optionsBar[data-tdf-theme="light"]) {
+  background-color: #dadae6 !important;
+  border-color: #dadae6 !important;
+}
+
+/* The message box: the message view's own background in both themes, never the contrast
+   chip (its text colour is shifted instead, messages.js). In dark, the border is the box's
+   own colour. */
+#optionsBar[data-tdf-theme] {
+  background: var(--tdf-bg) !important;
+}
+
+#optionsBar[data-tdf-theme="dark"]:not(:focus) {
+  border-color: var(--tdf-bg) !important;
+}
+
+/* The gear sits at the row's right end; the free space is the gap after the toggle. */
+#tdf-side .side-icon-end {
+  margin-left: auto;
+}
+
+/* Logout: a red outline button under the last room. */
+#tdf-side .side-logout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  border: 1px solid #e5484d;
+  border-radius: 999px;
+  background: none;
+  color: #e5484d;
+  font: 600 13px/1.2 var(--side-ui-font);
+  cursor: pointer;
+}
+
+#tdf-side .side-logout svg {
+  width: 15px;
+  height: 15px;
+}
+
+#tdf-side .side-logout:hover {
+  background: rgba(229, 72, 77, 0.16);
+}
+
+/* Text style flyout (gear): preview, font faces, colour swatches. */
+#tdf-side .st-title {
+  margin: 0 2px 8px;
+  font-weight: 600;
+}
+
+#tdf-side .st-preview {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--side-border);
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 14px;
+}
+
+#tdf-side .st-label {
+  margin: 10px 2px 6px;
+  color: var(--side-muted);
+  font-size: 12px;
+}
+
+#tdf-side .st-fonts {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+}
+
+#tdf-side .st-font {
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--side-fg);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+#tdf-side .st-font:hover {
+  background: var(--side-hover-bg);
+}
+
+#tdf-side .st-font.on {
+  border-color: var(--side-accent);
+}
+
+#tdf-side .st-colors {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 3px;
+}
+
+#tdf-side .st-color {
+  aspect-ratio: 1;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+#tdf-side .st-color:hover {
+  transform: scale(1.15);
+}
+
+#tdf-side .st-color.on {
+  outline: 2px solid var(--side-accent);
+  outline-offset: 1px;
+}
+
+/* Gear flyout: storage limits. */
+#tdf-side .st-section {
+  margin: 16px 2px 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--side-border);
+  font-weight: 600;
+}
+
+#tdf-side .st-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 2px 2px;
+}
+
+#tdf-side .st-field input {
+  width: 96px;
+  padding: 5px 8px;
+  border: 1px solid var(--side-chip-border);
+  border-radius: 6px;
+  background: var(--side-chip-bg);
+  color: var(--side-fg);
+  font: inherit;
+  text-align: right;
+}
+
+#tdf-side .st-hint {
+  margin: 2px 2px 6px;
+  color: var(--side-muted);
+  font-size: 12px;
+}
+
+#tdf-side .st-hint.warn {
+  color: #cf222e;
+}
+
+/* Theme cross-fade: while the light/dark toggle switches, every colour eases over 300ms.
+   Only colour properties, and only for the switch, so nothing else is slowed. */
+.theme-fading,
+.theme-fading *,
+.theme-fading *::before,
+.theme-fading *::after {
+  transition-property: background-color, color, border-color, outline-color, fill, stroke, box-shadow !important;
+  transition-duration: 300ms !important;
+  transition-timing-function: ease !important;
+  transition-delay: 0s !important;
+}
+
+#tdf-side .st-clear {
+  width: 100%;
+  margin: 6px 0 2px;
+  padding: 7px 12px;
+  border: 1px solid var(--side-chip-border);
+  border-radius: 8px;
+  background: var(--side-chip-bg);
+  color: var(--side-fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+#tdf-side .st-clear:hover {
+  border-color: var(--side-accent);
+}
+
+/* Gear flyout: Font and Colour as accordions, closed by default. */
+#tdf-side .st-acc {
+  margin: 6px 0;
+  border: 1px solid var(--side-border);
+  border-radius: 8px;
+}
+
+#tdf-side .st-acc > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  list-style: none;
+  cursor: pointer;
+}
+
+#tdf-side .st-acc > summary::-webkit-details-marker {
+  display: none;
+}
+
+#tdf-side .st-acc > summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin-left: 4px;
+  border-right: 2px solid var(--side-muted);
+  border-bottom: 2px solid var(--side-muted);
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 150ms ease-out;
+}
+
+#tdf-side .st-acc[open] > summary::after {
+  transform: rotate(225deg) translateY(-2px);
+}
+
+#tdf-side .st-acc > summary:hover {
+  background: var(--side-hover-bg);
+  border-radius: 8px;
+}
+
+#tdf-side .st-acc > summary > span:first-child {
+  flex: 1;
+  font-weight: 600;
+}
+
+#tdf-side .st-now-font {
+  color: var(--side-muted);
+}
+
+#tdf-side .st-now-color {
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+#tdf-side .st-acc .st-fonts,
+#tdf-side .st-acc .st-colors {
+  padding: 2px 8px 10px;
+}
+
+/* Text style block inside the profile flyout. */
+#tdf-side .side-profile .st-block {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--side-border);
+}
+
+#tdf-side .st-section.st-first {
+  margin-top: 4px;
+  padding-top: 0;
+  border-top: 0;
+}

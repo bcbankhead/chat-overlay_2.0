@@ -1,0 +1,244 @@
+/* TDF Chat 2.0 Profile flyout (UI design 2026-10-27, Flyouts → Profile). Width, slide and
+   the scroll area are the rail's shared flyout's (rail.css); height is the content's. Colours
+   come only from theme tokens, set under data-tdf-theme on <html>. */
+
+#tdf-rail .tdf-profile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#tdf-rail .tdf-profile-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 2px 2px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--tdf-rail-chip-border);
+  background: none;
+  color: var(--tdf-fg);
+  font: inherit;
+  text-align: left;
+}
+
+#tdf-rail button.tdf-profile-head {
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+}
+
+#tdf-rail button.tdf-profile-head:hover {
+  background: var(--tdf-hover-bg);
+}
+
+#tdf-rail .tdf-profile-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+#tdf-rail .tdf-profile-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+#tdf-rail .tdf-profile-error {
+  color: var(--tdf-muted);
+  font-size: 12px;
+}
+
+/* Status: a segmented Here / BRB / Away row. */
+#tdf-rail .tdf-profile-status {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--tdf-rail-chip-border);
+  border-radius: 6px;
+}
+
+#tdf-rail .tdf-profile-seg {
+  padding: 6px 0;
+  border: 0;
+  border-left: 1px solid var(--tdf-rail-chip-border);
+  background: var(--tdf-rail-chip-bg);
+  color: var(--tdf-fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+#tdf-rail .tdf-profile-seg:first-child {
+  border-left: 0;
+}
+
+#tdf-rail .tdf-profile-seg:hover {
+  background: var(--tdf-hover-bg);
+}
+
+#tdf-rail .tdf-profile-seg[aria-pressed="true"] {
+  color: var(--tdf-link);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--tdf-link);
+}
+
+#tdf-rail .tdf-profile-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--tdf-fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+#tdf-rail .tdf-profile-row:hover {
+  background: var(--tdf-hover-bg);
+}
+
+#tdf-rail .tdf-profile-value {
+  color: var(--tdf-muted);
+}
+
+/* Text style: preview, then Font and Colour accordions, closed by default. */
+#tdf-rail .tdf-profile-style {
+  padding-top: 10px;
+  border-top: 1px solid var(--tdf-rail-chip-border);
+}
+
+#tdf-rail .tdf-profile-title {
+  margin: 0 2px 8px;
+  font-weight: 600;
+}
+
+#tdf-rail .tdf-profile-preview {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--tdf-rail-chip-border);
+  border-radius: 8px;
+  background: var(--tdf-bg);
+  color: var(--tdf-fg);
+  font-size: 14px;
+}
+
+#tdf-rail .tdf-profile-acc {
+  margin: 6px 0;
+  border: 1px solid var(--tdf-rail-chip-border);
+  border-radius: 8px;
+}
+
+#tdf-rail .tdf-profile-acc > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  list-style: none;
+  cursor: pointer;
+}
+
+#tdf-rail .tdf-profile-acc > summary::-webkit-details-marker {
+  display: none;
+}
+
+#tdf-rail .tdf-profile-acc > summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin-left: 4px;
+  border-right: 2px solid var(--tdf-muted);
+  border-bottom: 2px solid var(--tdf-muted);
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 150ms ease-out;
+}
+
+#tdf-rail .tdf-profile-acc[open] > summary::after {
+  transform: rotate(225deg) translateY(-2px);
+}
+
+#tdf-rail .tdf-profile-acc > summary:hover {
+  background: var(--tdf-hover-bg);
+  border-radius: 8px;
+}
+
+#tdf-rail .tdf-profile-acc-title {
+  flex: 1;
+  font-weight: 600;
+}
+
+#tdf-rail .tdf-profile-now-font {
+  color: var(--tdf-muted);
+}
+
+#tdf-rail .tdf-profile-now-color {
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  border: 1px solid var(--tdf-rail-chip-border);
+  border-radius: 4px;
+}
+
+#tdf-rail .tdf-profile-fonts {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+  padding: 2px 8px 10px;
+}
+
+#tdf-rail .tdf-profile-font {
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--tdf-fg);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+#tdf-rail .tdf-profile-font:hover {
+  background: var(--tdf-hover-bg);
+}
+
+#tdf-rail .tdf-profile-font.tdf-on {
+  border-color: var(--tdf-link);
+}
+
+#tdf-rail .tdf-profile-colors {
+  display: grid;
+  grid-template-columns: repeat(var(--tdf-profile-per-row, 12), 1fr);
+  gap: 3px;
+  padding: 2px 8px 10px;
+}
+
+#tdf-rail .tdf-profile-color {
+  aspect-ratio: 1;
+  padding: 0;
+  border: 1px solid var(--tdf-rail-chip-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+#tdf-rail .tdf-profile-color:hover {
+  transform: scale(1.15);
+}
+
+#tdf-rail .tdf-profile-color.tdf-on {
+  outline: 2px solid var(--tdf-link);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #tdf-rail .tdf-profile-acc > summary::after {
+    transition: none;
+  }
+
+  #tdf-rail .tdf-profile-color:hover {
+    transform: none;
+  }
+}
