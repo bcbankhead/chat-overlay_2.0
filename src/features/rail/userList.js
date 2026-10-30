@@ -2,6 +2,8 @@
 // current room is open by default and fills the height; the others sit collapsed at the
 // bottom, and an expanded one offers Join room. A name opens the name menu.
 
+import { renderAvatar } from '../../core/avatar.js';
+import { safeDecodeURIComponent } from '../../core/parse.js';
 import { ICONS, renderIcon } from './icons.js';
 import { readRooms } from './rowParse.js';
 
@@ -91,10 +93,11 @@ export function createUserStore(win, container, onError) {
  *   attachScrollbar: (el: HTMLElement) => () => void,
  *   onUser: (user: import('./rowParse.js').RailUser, x: number, y: number) => void,
  *   onError: (err: unknown) => void,
- * }} deps
+ *   avatars?: () => import('../../core/avatarResolver.js').AvatarResolver | null,
+ * }} deps `avatars` is read per render: the bootstrap publishes it after the rail may mount
  * @returns {(slots: { current: HTMLElement, others: HTMLElement }) => () => void} mount, returning unmount
  */
-export function createRoomList({ doc, engine, store, attachScrollbar, onUser, onError }) {
+export function createRoomList({ doc, engine, store, attachScrollbar, onUser, onError, avatars = () => null }) {
   return (slots) => {
     /** @type {Map<string, boolean>} opened or closed by the user, this page load */
     const chosen = new Map();
@@ -157,10 +160,14 @@ export function createRoomList({ doc, engine, store, attachScrollbar, onUser, on
       li.className = 'tdf-rail-user';
       li.dataset.uuid = user.uuID;
       li.dataset.room = user.roomID;
-      const img = doc.createElement('img');
-      img.className = 'tdf-rail-avatar';
-      img.alt = '';
-      if (user.avatar) img.src = `avatars/${user.avatar}`;
+      const img = renderAvatar(doc, {
+        name: safeDecodeURIComponent(user.rawName),
+        userID: user.userID,
+        file: user.avatar,
+        src: `avatars/${user.avatar}`,
+        className: 'tdf-rail-avatar',
+        resolver: avatars(),
+      });
       const name = doc.createElement('span');
       name.className = 'tdf-rail-user-name';
       name.textContent = user.name;

@@ -78,7 +78,7 @@ const settle = () => new Promise((r) => setTimeout(r, 20));
 
 test('the head shows your avatar and decoded name, and opens your own profile', () => {
   const { $, calls } = setup();
-  assert.equal($('.tdf-profile-avatar').getAttribute('src'), 'avatars/me.gif');
+  assert.equal($('.tdf-profile-avatar img').getAttribute('src'), 'avatars/me.gif');
   assert.equal($('.tdf-profile-name').textContent, 'Me Too');
   const head = $('.tdf-profile-head');
   assert.equal(head.tagName, 'BUTTON');
@@ -247,9 +247,10 @@ test('a grey that fails contrast previews in the theme text colour', () => {
   assert.equal($('.tdf-profile-preview').style.color, 'var(--tdf-fg)');
 });
 
-test('with no avatar image the avatar is hidden', () => {
+test('with no avatar image the avatar shows your initials', () => {
   const { $ } = setup({ row: false });
-  assert.equal(/** @type {any} */ ($('.tdf-profile-avatar')).hidden, true);
+  assert.equal($('.tdf-profile-avatar img'), null);
+  assert.equal($('.tdf-profile-avatar .tdf-tile').textContent, 'MT');
 });
 
 test('with no engine eCredits the row says so and its click reports the missing control', () => {
@@ -319,4 +320,52 @@ test('startProfile injects the styles and registers the panel once', () => {
   assert.equal(theme.listeners.size, 1);
   cleanup();
   assert.equal(theme.listeners.size, 0);
+});
+
+test('with online.gif the head shows your initials, then the forum picture found by your name and forum id', async () => {
+  const win = new Window();
+  const doc = win.document;
+  doc.body.innerHTML = ownRow.replace("src='avatars/me.gif'", "src='avatars/online.gif'");
+  Object.assign(win, { uID: 7, userName: 'Me%20Too', profileOn: 1, profileRef: 2, myFontFamily: FONTS, myColor: COLORS });
+  /** @type {HTMLImageElement[]} */
+  const made = [];
+  const create = doc.createElement.bind(doc);
+  /** @type {any} */ (doc).createElement = (/** @type {string} */ tag) => {
+    const el = create(tag);
+    if (tag === 'img') made.push(/** @type {any} */ (el));
+    return el;
+  };
+  /** @type {any[]} */
+  const panels = [];
+  const theme = stubTheme();
+  startProfile({
+    win: /** @type {any} */ (win),
+    doc: /** @type {any} */ (doc),
+    css: '',
+    icon: '',
+    register: (/** @type {any} */ p) => panels.push(p),
+    currentTheme: theme.currentTheme,
+    onThemeChange: theme.onThemeChange,
+    shift: (/** @type {string} */ c) => c,
+  });
+  /** @type {string[][]} */
+  const asked = [];
+  // Published after the panel registers, as the bootstrap does.
+  /** @type {any} */ (win).__tdfChat2Avatars = {
+    peek: () => undefined,
+    resolve: (/** @type {string} */ name, /** @type {string} */ userID) => (asked.push([name, userID]), Promise.resolve('https://f/me.jpg')),
+  };
+  const container = doc.createElement('div');
+  const cleanup = panels[0].render(container);
+  const avatar = () => /** @type {HTMLElement} */ (container.querySelector('.tdf-profile-avatar'));
+  assert.equal(avatar().querySelector('.tdf-tile')?.textContent, 'MT');
+  assert.equal(avatar().querySelector('img'), null);
+  await settle();
+  assert.deepEqual(asked, [['Me Too', '97']]);
+  const forum = made.filter((i) => i.getAttribute('src') === 'https://f/me.jpg');
+  assert.equal(forum.length, 1);
+  assert.equal(avatar().querySelector('img'), null);
+  forum[0].dispatchEvent(new win.Event('load'));
+  assert.equal(avatar().querySelector('img')?.getAttribute('src'), 'https://f/me.jpg');
+  cleanup();
 });

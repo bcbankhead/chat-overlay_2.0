@@ -28,6 +28,15 @@
   --tdf-link: #0969da;
   --tdf-link-hover: #ffffff;
   --tdf-link-hover-bg: #0969da;
+  /* Initials tiles (initials.js tileSlot): white text on each, at least 4.5:1. */
+  --tdf-tile-0: #b42318;
+  --tdf-tile-1: #b54708;
+  --tdf-tile-2: #027a48;
+  --tdf-tile-3: #0e7090;
+  --tdf-tile-4: #175cd3;
+  --tdf-tile-5: #5925dc;
+  --tdf-tile-6: #c11574;
+  --tdf-tile-7: #4b5563;
 }
 
 :root[data-tdf-theme="dark"] {
@@ -40,6 +49,48 @@
   --tdf-link: #58a6ff;
   --tdf-link-hover: #0d1117;
   --tdf-link-hover-bg: #58a6ff;
+  --tdf-tile-0: #912018;
+  --tdf-tile-1: #93370d;
+  --tdf-tile-2: #05603a;
+  --tdf-tile-3: #155b75;
+  --tdf-tile-4: #1849a9;
+  --tdf-tile-5: #4a1fb8;
+  --tdf-tile-6: #9e165f;
+  --tdf-tile-7: #374151;
+}
+
+/* An avatar (avatar.js): the initials tile, with the picture over it once there is one. The
+   box is sized by each surface; the tile and the picture fill it. */
+.tdf-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  color: #ffffff;
+  font-family: var(--tdf-ui-font, system-ui, sans-serif);
+  font-weight: 600;
+  line-height: 1;
+  user-select: none;
+}
+
+.tdf-tile[data-tile="0"] { background: var(--tdf-tile-0); }
+.tdf-tile[data-tile="1"] { background: var(--tdf-tile-1); }
+.tdf-tile[data-tile="2"] { background: var(--tdf-tile-2); }
+.tdf-tile[data-tile="3"] { background: var(--tdf-tile-3); }
+.tdf-tile[data-tile="4"] { background: var(--tdf-tile-4); }
+.tdf-tile[data-tile="5"] { background: var(--tdf-tile-5); }
+.tdf-tile[data-tile="6"] { background: var(--tdf-tile-6); }
+.tdf-tile[data-tile="7"] { background: var(--tdf-tile-7); }
+
+.tdf-avatar-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
 }
 
 /* The engine page: themed background, its background image removed. */
@@ -216,7 +267,7 @@
   padding-bottom: 1px;
 }
 
-/* A missing or failed avatar has no src and shows as the neutral square. */
+/* The initials tile shows until, and unless, a picture covers it. */
 #tdf-chat .tdf-avatar {
   position: absolute;
   left: 12px;
@@ -224,8 +275,8 @@
   width: 48px;
   height: 48px;
   border-radius: 8px;
-  object-fit: cover;
-  background: var(--tdf-hover-bg);
+  overflow: hidden;
+  font-size: 18px;
 }
 
 #tdf-chat .tdf-head .tdf-user {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import 'fake-indexeddb/auto';
-import { DB_VERSION, openDb } from '../src/core/db.js';
+import { DB_VERSION, SUPERSEDED, openDb } from '../src/core/db.js';
 import { createHistory } from '../src/core/history.js';
 import { PENDING_TTL_MS } from '../src/core/reconcile.js';
 import { DEFAULTS, createSettings, onSettingChange } from '../src/core/settings.js';
@@ -35,11 +35,12 @@ const msg = (over) => ({
   ...over,
 });
 
-test('opens at version 3 with every store and index', async () => {
+test('opens at version 4 with every store and index', async () => {
   const db = await fresh();
   assert.equal(db.version, DB_VERSION);
-  assert.equal(DB_VERSION, 3);
-  assert.deepEqual([...db.objectStoreNames].sort(), ['images', 'messages', 'settings', 'tags']);
+  assert.equal(DB_VERSION, 4);
+  assert.deepEqual([...db.objectStoreNames].sort(), ['avatars', 'images', 'messages', 'settings', 'tags']);
+  assert.equal(db.transaction('avatars').objectStore('avatars').keyPath, 'name');
   const t = db.transaction(['messages', 'images', 'tags'], 'readonly');
   const messages = t.objectStore('messages');
   assert.equal(messages.keyPath, 'id');
@@ -117,7 +118,7 @@ test('a version 1 database upgrades to the current version with its records inta
   db.close();
 });
 
-test('a version 2 database upgrades to version 3, reclassifying placeholder whispers as public', async () => {
+test('a version 2 database upgrades to the current version, reclassifying placeholder whispers as public', async () => {
   const name = `test-v2-${++n}`;
   // The version 2 schema: version 1 plus the images hash index (TDF-0009.13).
   const open = indexedDB.open(name, 2);
@@ -148,7 +149,7 @@ test('a version 2 database upgrades to version 3, reclassifying placeholder whis
   v2.close();
 
   const db = await openDb({ name });
-  assert.equal(db.version, 3);
+  assert.equal(db.version, DB_VERSION);
   const kinds = Object.fromEntries(
     (await settled(db.transaction('messages').objectStore('messages').getAll())).map((r) => [r.id, r.kind]),
   );
@@ -161,6 +162,43 @@ test('a version 2 database upgrades to version 3, reclassifying placeholder whis
     entry: 'entry',
   });
   assert.equal((await stored(db, 'underscore')).text, 'hi');
+  db.close();
+});
+
+test('a version 3 database upgrades to version 4, adding the avatars store and keeping every record', async () => {
+  const name = `test-v3-${++n}`;
+  // The version 3 schema: the same stores and indexes as version 2 (TDF-0012 migrated data only).
+  const open = indexedDB.open(name, 3);
+  open.onupgradeneeded = () => {
+    const v3 = open.result;
+    const messages = v3.createObjectStore('messages', { keyPath: 'id' });
+    for (const i of ['roomID', 'mTime', 'user', 'receivedAt']) messages.createIndex(i, i);
+    messages.createIndex('roomID_receivedAt', ['roomID', 'receivedAt']);
+    v3.createObjectStore('settings', { keyPath: 'key' });
+    const images = v3.createObjectStore('images', { keyPath: 'id' });
+    for (const i of ['user', 'receivedAt', 'hash']) images.createIndex(i, i);
+    const tags = v3.createObjectStore('tags', { keyPath: 'id', autoIncrement: true });
+    tags.createIndex('imageId', 'imageId');
+    tags.createIndex('sourceMessageId', 'sourceMessageId');
+  };
+  const v3 = /** @type {IDBDatabase} */ (await settled(open));
+  const w = v3.transaction(['messages', 'settings', 'images', 'tags'], 'readwrite');
+  w.objectStore('messages').put(msg({ id: 'm', kind: 'whisper', toUser: '_' }));
+  w.objectStore('settings').put({ key: 'theme', value: 'dark' });
+  w.objectStore('images').put({ id: 'i', user: 'bob', receivedAt: 1, hash: 'h' });
+  w.objectStore('tags').put({ imageId: 'i', sourceMessageId: 'm', tag: 'x' });
+  await settled(w);
+  v3.close();
+
+  const db = await openDb({ name });
+  assert.equal(db.version, 4);
+  assert.ok(db.objectStoreNames.contains('avatars'));
+  const r = db.transaction(['messages', 'settings', 'images', 'tags']);
+  // Version 4 migrates no data: the version 3 rewrite is not run again.
+  assert.equal((await settled(r.objectStore('messages').get('m'))).kind, 'whisper');
+  assert.equal((await settled(r.objectStore('settings').get('theme'))).value, 'dark');
+  assert.equal((await settled(r.objectStore('images').get('i'))).hash, 'h');
+  assert.equal((await settled(r.objectStore('tags').getAll())).length, 1);
   db.close();
 });
 
@@ -217,6 +255,49 @@ test('a blocked open keeps waiting and resolves once the blocker closes', async 
   v1.close();
   const db = await opening;
   assert.equal(db.version, DB_VERSION);
+  db.close();
+});
+
+test('a connection closed by a later version fails every later write with one explanation', async () => {
+  const name = `test-superseded-${++n}`;
+  const db = await openDb({ name });
+  const h = createHistory(db);
+  const bumped = /** @type {IDBDatabase} */ (await settled(indexedDB.open(name, DB_VERSION + 1)));
+  const errors = [];
+  for (const id of ['a', 'b', 'c']) await h.put(msg({ id })).catch((err) => errors.push(err.message));
+  assert.equal(errors.length, 3);
+  assert.deepEqual(new Set(errors), new Set([SUPERSEDED]));
+  await assert.rejects(createSettings(db).get('theme'), { message: SUPERSEDED });
+  bumped.close();
+});
+
+test('a stored whisper with no text survives the upgrade', async () => {
+  const name = `test-textless-${++n}`;
+  const open = indexedDB.open(name, 2);
+  open.onupgradeneeded = () => {
+    const v2 = open.result;
+    const messages = v2.createObjectStore('messages', { keyPath: 'id' });
+    for (const i of ['roomID', 'mTime', 'user', 'receivedAt']) messages.createIndex(i, i);
+    messages.createIndex('roomID_receivedAt', ['roomID', 'receivedAt']);
+    v2.createObjectStore('settings', { keyPath: 'key' });
+    const images = v2.createObjectStore('images', { keyPath: 'id' });
+    for (const i of ['user', 'receivedAt', 'hash']) images.createIndex(i, i);
+    const tags = v2.createObjectStore('tags', { keyPath: 'id', autoIncrement: true });
+    tags.createIndex('imageId', 'imageId');
+    tags.createIndex('sourceMessageId', 'sourceMessageId');
+  };
+  const v2 = /** @type {IDBDatabase} */ (await settled(open));
+  const { text: _, ...textless } = msg({ id: 'textless', kind: 'whisper', ircFlag: '1' });
+  const w = v2.transaction('messages', 'readwrite');
+  w.objectStore('messages').put(textless);
+  await settled(w);
+  v2.close();
+
+  const db = await openDb({ name });
+  assert.equal(db.version, DB_VERSION);
+  const record = await stored(db, 'textless');
+  assert.equal(record.kind, 'public');
+  assert.equal('text' in record, false);
   db.close();
 });
 
