@@ -42,3 +42,50 @@ export function clockHHMM(seconds) {
   const d = new Date(seconds * 1000);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
+
+/**
+ * The local calendar day of a time in seconds, as `YYYY-MM-DD`.
+ * @param {number} seconds
+ */
+export function localDay(seconds) {
+  const d = new Date(seconds * 1000);
+  const pad = (/** @type {number} */ n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** @type {Map<string | undefined, { weekday: Intl.DateTimeFormat, month: Intl.DateTimeFormat }>} */
+const labelFormatters = new Map();
+
+/**
+ * The weekday and month formatters for `locale`, built once per locale.
+ * @param {string} [locale]
+ */
+function formattersFor(locale) {
+  let f = labelFormatters.get(locale);
+  if (!f) {
+    f = {
+      weekday: new Intl.DateTimeFormat(locale, { weekday: 'short' }),
+      month: new Intl.DateTimeFormat(locale, { month: 'short' }),
+    };
+    labelFormatters.set(locale, f);
+  }
+  return f;
+}
+
+/**
+ * A message's time label: `HH:MM` on the viewer's local day, otherwise the full form
+ * `<weekday>, <month> <day> <year> HH:MM` (`Thu, Oct 29 2026 22:43` in en-US). Weekday and
+ * month names follow `locale` (the viewer's own when omitted); the order is fixed, 24-hour.
+ * @param {number} seconds the message's time
+ * @param {number} nowSeconds the viewer's current time
+ * @param {string} [locale]
+ */
+export function timeLabel(seconds, nowSeconds, locale) {
+  const clock = clockHHMM(seconds);
+  if (localDay(seconds) === localDay(nowSeconds)) return clock;
+  const d = new Date(seconds * 1000);
+  const f = formattersFor(locale);
+  const weekday = f.weekday.format(d);
+  const month = f.month.format(d);
+  return `${weekday}, ${month} ${d.getDate()} ${d.getFullYear()} ${clock}`;
+}
