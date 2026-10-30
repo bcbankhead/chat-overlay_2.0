@@ -1,6 +1,6 @@
 {
   "name": "tdf-chat-2",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "private": true,
   "description": "TDF Chat 2.0 — modern overlay userscript for the TDF chat",
   "type": "module",
