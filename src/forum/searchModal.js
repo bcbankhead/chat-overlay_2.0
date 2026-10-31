@@ -10,6 +10,8 @@ export const SEARCH_INPUT_ID = 'tdf-search-input';
 export const MODAL_ID = 'tdf-search-modal';
 export const SEARCH_URL = 'search.php';
 export const WILDCARD_NOTE = 'Use * as a wildcard for partial matches.';
+/** On the backdrop while the modal is open; forum.css transitions the tint and dialog on it. */
+export const OPEN_CLASS = 'tdf-open';
 /** The search.php options the modal does not offer, in the order they are sent. */
 export const FIXED_FIELDS = /** @type {const} */ ([
   ['sc', '1'],
@@ -235,15 +237,38 @@ export function installSearch(doc, rowFor, location = doc.location) {
     }
   };
   let returning = false;
+  let shown = false;
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let hiding;
   const open = () => {
-    if (returning || !modal.backdrop.hidden) return;
-    modal.keywords.value = input.value;
-    modal.backdrop.hidden = false;
+    if (returning || shown) return;
+    shown = true;
+    // Reopened mid-close: the backdrop is still showing, so only the pending hide is undone.
+    clearTimeout(hiding);
+    if (modal.backdrop.hidden) {
+      modal.keywords.value = input.value;
+      modal.backdrop.hidden = false;
+      // Lay the backdrop out in its closed state first, so adding the class transitions from it.
+      void modal.backdrop.offsetWidth;
+    }
+    modal.backdrop.classList.add(OPEN_CLASS);
     doc.addEventListener('keydown', onKeydown);
     modal.keywords.focus();
   };
   const close = () => {
-    modal.backdrop.hidden = true;
+    if (!shown) return;
+    shown = false;
+    modal.backdrop.classList.remove(OPEN_CLASS);
+    // Hidden once the closing transitions forum.css sets have run; at once when there are none.
+    const view = doc.defaultView;
+    const ms = view
+      ? Math.max(...[modal.backdrop, modal.dialog].map((el) => {
+          const style = view.getComputedStyle(el);
+          return transitionMs(style.transitionDuration, style.transitionDelay);
+        }))
+      : 0;
+    if (ms > 0) hiding = setTimeout(() => (modal.backdrop.hidden = true), ms);
+    else modal.backdrop.hidden = true;
     doc.removeEventListener('keydown', onKeydown);
     returning = true;
     input.focus();
@@ -259,6 +284,32 @@ export function installSearch(doc, rowFor, location = doc.location) {
     if (e.target === modal.backdrop) close();
   });
   return input;
+}
+
+/**
+ * How long an element's transitions run, in ms: the longest delay + duration pair, from the
+ * comma-separated lists getComputedStyle gives (the shorter list repeats, as CSS repeats it).
+ * 0 for empty or unparseable values.
+ * @param {string} durations e.g. "0.15s, 200ms"
+ * @param {string} delays e.g. "0.2s"
+ * @returns {number}
+ */
+export function transitionMs(durations, delays) {
+  /** @param {string} list */
+  const parse = (list) =>
+    (list || '0s').split(',').map((t) => {
+      const v = parseFloat(t);
+      if (!Number.isFinite(v)) return 0;
+      return t.trim().endsWith('ms') ? v : v * 1000;
+    });
+  const d = parse(durations);
+  const w = parse(delays);
+  let max = 0;
+  for (let i = 0; i < Math.max(d.length, w.length); i++) {
+    const duration = d[i % d.length];
+    if (duration > 0) max = Math.max(max, duration + w[i % w.length]);
+  }
+  return max;
 }
 
 /**
