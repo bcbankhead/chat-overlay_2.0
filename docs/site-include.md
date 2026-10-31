@@ -38,9 +38,10 @@ The build exits with an error (do not upload its output) if any file would use a
 
    `npm run deploy` runs the tests and the build, then uploads `dist/tdf-forum-sticky-header.js`
    and then `dist/tdf-chat.js` to `s3://sb76images/tdf_chat_2.0/` with
-   `Content-Type: text/javascript` and `Cache-Control: max-age=300`. `tdf-chat.js` goes last
-   because its first line is the live version marker: if an upload fails, the live version is
-   unchanged and the deploy can simply be re-run. If the tests or the build fail, nothing is
+   `Content-Type: text/javascript` and `Cache-Control: max-age=300`. Each file's first line
+   is its own live version marker (the forum include versions separately; see below), and each
+   upload replaces one whole object, so if an upload fails, that file's live version is unchanged
+   and the deploy can simply be re-run. If the tests or the build fail, nothing is
    uploaded and the command exits with an error. The script uses the AWS profile `conduit`; no credentials are
    stored in the repository.
 2. In the chat's `index.php`, add a script tag. It works anywhere on the page; inside
@@ -90,13 +91,15 @@ checks this.
 
 ## Updating
 
-Bump `version` in `package.json`, then run `npm run deploy` (after `aws sso login --profile
+Bump the version of each include whose build changed — `version` in `package.json` for the chat
+(`tdf-chat.js` and the userscript), `version` in `src/forum/version.json` for the forum include —
+then run `npm run deploy` (after `aws sso login --profile
 conduit` if the session has expired). The file is served with `max-age=300`, so members pick
 up the new build within about 5 minutes. Adding a `?v=<version>` query string to the script
 tag is optional; it makes browsers fetch the new build immediately.
 
 To check which version is live, read the bundle's first line, which names the
-`package.json` version:
+`package.json` version (the forum include's names its own; see below):
 
 ```sh
 curl -s https://sb76images.s3.us-west-2.amazonaws.com/tdf_chat_2.0/tdf-chat.js | head -1
@@ -145,8 +148,10 @@ in the userscript's row.
 the same way: the build fails, writing nothing, if it uses a userscript-manager API or a second copy
 would do anything. `npm run deploy` uploads it to
 `s3://sb76images/tdf_chat_2.0/tdf-forum-sticky-header.js`, with the same `Content-Type` and
-`Cache-Control` as `tdf-chat.js`, before `tdf-chat.js`. Both files carry the same `package.json`
-version, so the Updating steps above cover both.
+`Cache-Control` as `tdf-chat.js`, before `tdf-chat.js`. The forum include carries its own version,
+from `src/forum/version.json`, not `package.json`'s: a deploy that changes only one include bumps only
+that include's version, so each live banner names a version that changed only when its code did.
+`npm run deploy` still uploads both; an unchanged include is re-uploaded byte for byte.
 
 ### Install
 
