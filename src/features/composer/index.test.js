@@ -66,9 +66,9 @@ function fakeTheme(initial = 'dark') {
 
 /**
  * A page with the engine's composer and the globals the composer touches. `sent` counts
- * submitenter's sends, `clicks` the Send button's.
+ * submitenter's sends, `clicks` the Send button's. `coarse` stands in for a touch screen.
  */
-function page({ chat = true, theme = /** @type {'light' | 'dark' | null} */ ('dark') } = {}) {
+function page({ chat = true, theme = /** @type {'light' | 'dark' | null} */ ('dark'), coarse = false } = {}) {
   const window = new Window({ url: 'https://chat.example.com/forum/chat/' });
   const { document } = window;
   document.body.innerHTML = `${chat ? '<div id="chatContainer"></div>' : ''}
@@ -112,6 +112,12 @@ function page({ chat = true, theme = /** @type {'light' | 'dark' | null} */ ('da
   win.changeMessBoxStyle = (/** @type {string} */ id) => {
     /** @type {any} */ (document.getElementById(id)).style.color = win.textColor;
   };
+
+  if (coarse) {
+    const matchMedia = win.matchMedia.bind(win);
+    win.matchMedia = (/** @type {string} */ q) =>
+      q === '(pointer: coarse)' ? { matches: true, addEventListener() {}, removeEventListener() {} } : matchMedia(q);
+  }
 
   if (theme) document.documentElement.dataset.tdfTheme = theme;
   window.eval(bundle);
@@ -429,9 +435,57 @@ test('a close leaves focus with another field; with nothing closing, focus is ne
   assert.ok(document.activeElement !== bar, 'no menu closed, so nothing refocused');
 });
 
-test('a menu closed by a press outside it leaves focus alone; a pick inside it refocuses', async () => {
+/** A mouse (or `pointerType`) press and release on `el`, closing `menu` on the press if given. */
+async function press(/** @type {any} */ window, /** @type {any} */ el, { pointerType = 'mouse', menu = /** @type {any} */ (null) } = {}) {
+  el.dispatchEvent(new window.PointerEvent('pointerdown', { bubbles: true, pointerType }));
+  if (menu) menu.hidden = true;
+  await settle();
+  const during = el.ownerDocument.activeElement;
+  el.dispatchEvent(new window.PointerEvent('pointerup', { bubbles: true, pointerType }));
+  el.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 1 }));
+  await settle();
+  return during;
+}
+
+test('a keyboard-activated click leaves focus on the control', async () => {
+  const { window, document } = page();
+  const button = document.createElement('button');
+  document.body.append(button);
+  await settle();
+  button.focus();
+  button.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 0 }));
+  await settle();
+  assert.ok(document.activeElement === button);
+});
+
+test('a press cancelled by the browser does not hold back a later menu close', async () => {
   const { window, document, bar } = page();
   const text = document.createElement('p');
+  const menu = document.createElement('div');
+  menu.className = 'tdf-rail-menu';
+  document.body.append(text, menu);
+  await settle();
+  bar.blur();
+  text.dispatchEvent(new window.PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }));
+  text.dispatchEvent(new window.PointerEvent('pointercancel', { bubbles: true, pointerType: 'mouse' }));
+  menu.hidden = true;
+  await settle();
+  assert.ok(document.activeElement === bar);
+});
+
+test('the box takes focus when the chat loads, and not on a touch screen', async () => {
+  const { document, bar } = page();
+  await settle();
+  assert.ok(document.activeElement === bar);
+  const touch = page({ coarse: true });
+  await settle();
+  assert.ok(touch.document.activeElement !== touch.bar);
+});
+
+test('a menu closed by a press outside it refocuses on the click, not during the press', async () => {
+  const { window, document, bar } = page();
+  const text = document.createElement('p');
+  text.textContent = 'chat text';
   const menu = document.createElement('div');
   menu.className = 'tdf-rail-menu';
   const item = document.createElement('button');
@@ -439,26 +493,134 @@ test('a menu closed by a press outside it leaves focus alone; a pick inside it r
   document.body.append(text, menu);
   await settle();
   bar.blur();
-  text.dispatchEvent(new window.Event('pointerdown', { bubbles: true }));
-  menu.hidden = true;
-  await settle();
-  assert.ok(document.activeElement !== bar, 'a press on chat text does not take focus');
-
-  menu.hidden = false;
-  await settle();
-  item.dispatchEvent(new window.Event('pointerdown', { bubbles: true }));
-  menu.hidden = true;
-  await settle();
-  assert.ok(document.activeElement === bar, 'a pick inside the menu refocuses');
+  const during = await press(window, text, { menu });
+  assert.ok(during !== bar, 'the press itself takes nothing, so a drag can still select');
+  assert.ok(document.activeElement === bar, 'its click refocuses');
 
   bar.blur();
   menu.hidden = false;
   await settle();
-  text.dispatchEvent(new window.Event('pointerdown', { bubbles: true }));
-  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  item.dispatchEvent(new window.PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }));
+  item.dispatchEvent(new window.PointerEvent('pointerup', { bubbles: true, pointerType: 'mouse' }));
   menu.hidden = true;
   await settle();
-  assert.ok(document.activeElement === bar, 'an Escape after the press still refocuses');
+  assert.ok(document.activeElement === bar, 'a pick inside the menu refocuses');
+});
+
+test('a plain click focuses the box; a text selection, a field or an opened menu keeps it', async () => {
+  const { window, document, bar } = page();
+  const text = document.createElement('p');
+  text.textContent = 'some chat text to select';
+  const field = document.createElement('input');
+  const opener = document.createElement('button');
+  const menu = document.createElement('div');
+  menu.className = 'tdf-rail-menu';
+  menu.hidden = true;
+  opener.addEventListener('click', () => {
+    menu.hidden = false;
+  });
+  document.body.append(text, field, opener, menu);
+  await settle();
+
+  bar.blur();
+  await press(window, text);
+  assert.ok(document.activeElement === bar, 'a plain click on chat text');
+
+  bar.blur();
+  const range = document.createRange();
+  range.selectNodeContents(text);
+  document.getSelection()?.removeAllRanges();
+  document.getSelection()?.addRange(range);
+  await press(window, text);
+  assert.ok(document.activeElement !== bar, 'a selection the user made is kept');
+  document.getSelection()?.removeAllRanges();
+
+  field.focus();
+  await press(window, field);
+  assert.ok(document.activeElement === field, 'a click into another field keeps it');
+
+  bar.blur();
+  await press(window, opener);
+  assert.ok(document.activeElement !== bar, 'a click that opens a menu leaves focus to the menu');
+
+  menu.hidden = true;
+  await settle();
+  bar.blur();
+  await press(window, text, { pointerType: 'touch' });
+  assert.ok(document.activeElement !== bar, 'a tap does not open the keyboard');
+});
+
+test('a printable key with nothing editable focused goes to the box', async () => {
+  const { window, document, bar } = page();
+  const field = document.createElement('input');
+  const button = document.createElement('button');
+  document.body.append(field, button);
+  await settle();
+  /** @param {string} key @param {object} [opts] */
+  const key = (key, opts = {}) => document.dispatchEvent(new window.KeyboardEvent('keydown', { key, bubbles: true, ...opts }));
+
+  bar.blur();
+  key('a');
+  assert.ok(document.activeElement === bar, 'a letter');
+
+  field.focus();
+  key('a');
+  assert.ok(document.activeElement === field, 'another field keeps its typing');
+
+  bar.blur();
+  key('c', { ctrlKey: true });
+  key('c', { metaKey: true });
+  key('c', { altKey: true });
+  key('Tab');
+  key('ArrowDown');
+  assert.ok(document.activeElement !== bar, 'shortcuts and navigation keys are left alone');
+
+  button.focus();
+  key(' ');
+  assert.ok(document.activeElement === button, 'Space presses a focused control');
+  key('x');
+  assert.ok(document.activeElement === bar, 'a letter from a focused control');
+
+  const menu = document.createElement('div');
+  menu.className = 'tdf-rail-menu';
+  const item = document.createElement('button');
+  menu.append(item);
+  document.body.append(menu);
+  await settle();
+  item.focus();
+  key('x');
+  assert.ok(document.activeElement === item, 'a letter in an open menu stays with the menu');
+});
+
+test('the window regaining focus focuses the box, unless text is selected or on a touch screen', async () => {
+  const { window, document, bar } = page();
+  const text = document.createElement('p');
+  text.textContent = 'chat text';
+  document.body.append(text);
+  await settle();
+  bar.blur();
+  window.dispatchEvent(new window.Event('focus'));
+  assert.ok(document.activeElement === bar);
+
+  bar.blur();
+  const range = document.createRange();
+  range.selectNodeContents(text);
+  document.getSelection()?.addRange(range);
+  window.dispatchEvent(new window.Event('focus'));
+  assert.ok(document.activeElement !== bar, 'the selection is kept');
+
+  const touch = page({ coarse: true });
+  await settle();
+  touch.window.dispatchEvent(new touch.window.Event('focus'));
+  assert.ok(touch.document.activeElement !== touch.bar);
+});
+
+test('clicking Send leaves focus in the box', async () => {
+  const { window, document, bar } = page();
+  await settle();
+  bar.blur();
+  await press(window, document.getElementById('optionsSend'));
+  assert.ok(document.activeElement === bar);
 });
 
 for (const [name, make] of /** @type {[string, (d: any) => any][]} */ ([
