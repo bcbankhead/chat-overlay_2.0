@@ -25,9 +25,31 @@ export function findFeatures(root) {
     .sort();
 }
 
-/** @param {string} root */
+/** The chat's version: package.json's, shared by the userscript and the chat include. @param {string} root */
 function version(root) {
   return JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+}
+
+/**
+ * The forum include's own version, from src/forum/version.json, so a chat-only deploy leaves the
+ * forum include's banner unchanged and a forum-only deploy leaves the chat's unchanged.
+ * @param {string} root
+ */
+export function forumVersion(root) {
+  const file = path.join(root, 'src', 'forum', 'version.json');
+  if (!existsSync(file)) throw new Error('src/forum/version.json not found; it holds the forum include\'s version');
+  /** @type {unknown} */
+  let config;
+  try {
+    config = JSON.parse(readFileSync(file, 'utf8').replace(/^﻿/, ''));
+  } catch (err) {
+    throw new Error(`src/forum/version.json is not valid JSON: ${err instanceof Error ? err.message : err}`);
+  }
+  const value = config !== null && typeof config === 'object' ? /** @type {{ version?: unknown }} */ (config).version : undefined;
+  if (typeof value !== 'string' || !/^\d+\.\d+\.\d+$/.test(value)) {
+    throw new Error(`src/forum/version.json must set "version" to x.y.z, found: ${JSON.stringify(value)}`);
+  }
+  return value;
 }
 
 /**
@@ -87,7 +109,7 @@ function includeBanner(root) {
 
 /** @param {string} root */
 function forumBanner(root) {
-  return `// TDF Forum sticky header v${version(root)} — site include build (https://github.com/bcbankhead/chat-overlay_2.0)`;
+  return `// TDF Forum sticky header v${forumVersion(root)} — site include build (https://github.com/bcbankhead/chat-overlay_2.0)`;
 }
 
 /**

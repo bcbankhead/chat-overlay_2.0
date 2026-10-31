@@ -256,16 +256,65 @@ test('the committed example config is valid and uses the neutral host', () => {
   }
 });
 
-test('the forum include is written beside the chat files, with its own banner and the package version', async () => {
+test('the forum include is written beside the chat files, with its own banner and its own version', async () => {
   const root = rootWith(undefined);
   try {
     const { outputs } = await build({ match: MATCH, root, outfile: path.join(root, 'dist', 'tdf-chat.user.js') });
     assert.equal(outputs.forum, path.join(root, 'dist', 'tdf-forum-sticky-header.js'));
-    const { version } = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+    const { version } = JSON.parse(readFileSync(path.join(root, 'src', 'forum', 'version.json'), 'utf8'));
     const code = readFileSync(outputs.forum, 'utf8');
     assert.equal(code.split('\n')[0], `// TDF Forum sticky header v${version} — site include build (https://github.com/bcbankhead/chat-overlay_2.0)`);
     assert.ok(code.includes('__tdfChat2ForumLoaded'));
     assert.ok(!code.includes('__tdfChat2Loaded'), 'the chat bootstrap is not in the forum bundle');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the chat and forum versions are independent: each banner reads only its own source', async () => {
+  const root = rootWith(undefined);
+  try {
+    const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+    writeFileSync(path.join(root, 'package.json'), JSON.stringify({ ...pkg, version: '9.9.9' }));
+    writeFileSync(path.join(root, 'src', 'forum', 'version.json'), JSON.stringify({ version: '1.2.3' }));
+    const { outputs } = await build({ match: MATCH, root, outfile: path.join(root, 'dist', 'tdf-chat.user.js') });
+    assert.match(readFileSync(outputs.include, 'utf8').split('\n')[0], /^\/\/ TDF Chat 2\.0 v9\.9\.9 — /);
+    assert.match(readFileSync(outputs.userscript, 'utf8'), /^\/\/ @version\s+9\.9\.9$/m);
+    const forum = readFileSync(outputs.forum, 'utf8');
+    assert.match(forum.split('\n')[0], /^\/\/ TDF Forum sticky header v1\.2\.3 — /);
+    assert.ok(!forum.includes('9.9.9'), 'the chat version does not reach the forum include');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const [name, contents, expected] of [
+  ['a version that is not x.y.z', JSON.stringify({ version: 'next' }), /src\/forum\/version\.json must set "version" to x\.y\.z, found: "next"/],
+  ['no "version" key', JSON.stringify({}), /src\/forum\/version\.json must set "version" to x\.y\.z, found: undefined/],
+  ['a non-object value', 'null', /src\/forum\/version\.json must set "version" to x\.y\.z/],
+  ['invalid JSON', '{ version: ', /src\/forum\/version\.json is not valid JSON: /],
+  ['no file', null, /src\/forum\/version\.json not found/],
+]) {
+  test(`src/forum/version.json with ${name} fails the build, naming the file, and writes nothing`, async () => {
+    const root = rootWith(undefined);
+    try {
+      const file = path.join(root, 'src', 'forum', 'version.json');
+      if (contents === null) rmSync(file);
+      else writeFileSync(file, contents);
+      await assert.rejects(build({ match: MATCH, root }), expected);
+      assert.ok(!existsSync(path.join(root, 'dist')), 'nothing was written');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test('src/forum/version.json with a leading BOM is read', async () => {
+  const root = rootWith(undefined);
+  try {
+    writeFileSync(path.join(root, 'src', 'forum', 'version.json'), '﻿' + JSON.stringify({ version: '4.5.6' }));
+    const { outputs } = await build({ match: MATCH, root, outfile: path.join(root, 'dist', 'tdf-chat.user.js') });
+    assert.match(readFileSync(outputs.forum, 'utf8').split('\n')[0], /^\/\/ TDF Forum sticky header v4\.5\.6 — /);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -285,7 +334,8 @@ test('a userscript-manager API in the forum include fails the build and writes n
 test('a missing forum include fails the build and writes nothing', async () => {
   const root = rootWith(undefined);
   try {
-    rmSync(path.join(root, 'src', 'forum'), { recursive: true, force: true });
+    // Only the entry: src/forum/version.json stays, so the failure is the missing source.
+    rmSync(path.join(root, 'src', 'forum', 'index.js'));
     await assert.rejects(build({ match: MATCH, root }), /Could not resolve .*forum.*index\.js/);
     assert.ok(!existsSync(path.join(root, 'dist')), 'dist/ left behind');
   } finally {
