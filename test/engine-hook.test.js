@@ -95,7 +95,8 @@ test('a rendered server message is stored with its server id and emitted', () =>
   assert.equal(put[1].mTime, '1700');
   assert.equal(put[1].kind, 'public');
   assert.equal(put[1].text, 'hello');
-  assert.ok(calls.some((c) => c[0] === 'view.append'));
+  assert.ok(calls.some((c) => c[0] === 'view.place' && c[1].id === '901'));
+  assert.ok(!calls.some((c) => c[0] === 'view.append'));
   assert.deepEqual(seen, ['901']);
 });
 
@@ -103,7 +104,7 @@ test("a main-room message to the server's placeholder '_' is public; a named rec
   const { calls, poll } = setup();
   poll(um('905', 'bob', 'hi all', '1705', '_'), um('906', 'bob', 'psst', '1706', 'carol'));
   const puts = calls.filter((c) => c[0] === 'put').map((c) => [c[1].id, c[1].kind, c[1].toUser]);
-  const shown = calls.filter((c) => c[0] === 'view.append').map((c) => [c[1].id, c[1].kind]);
+  const shown = calls.filter((c) => c[0] === 'view.place').map((c) => [c[1].id, c[1].kind]);
   assert.deepEqual(puts, [
     ['905', 'public', '_'],
     ['906', 'whisper', 'carol'],
@@ -484,10 +485,10 @@ test('calls observed before attach are flushed in order once attached', () => {
   assert.deepEqual(calls, []);
   hook.attach({ history, view, replayed: [{ id: '921' }] });
   assert.deepEqual(
-    calls.filter((c) => c[0] === 'put' || c[0] === 'view.append').map((c) => [c[0], c[1].id]),
+    calls.filter((c) => c[0] === 'put' || c[0] === 'view.place').map((c) => [c[0], c[1].id]),
     [
       ['put', '920'],
-      ['view.append', '920'],
+      ['view.place', '920'],
     ],
   );
 });
@@ -698,4 +699,66 @@ test('with no server record observed yet, a confirmed own message orders by its 
   await history.addPending({ ...confirmed, confirm: 'pending' });
   await history.confirmPending(confirmed.id, confirmed);
   assert.equal((await history.get(confirmed.id))?.orderKey, confirmed.receivedAt);
+});
+
+// TDF-0032: server records are placed by order; own echoes and engine notices append.
+test('a server record goes to view.place; an own echo and an engine notice to view.append', () => {
+  const { win, calls, poll } = setup();
+  poll(um('950', 'bob', 'hi', '1750'));
+  sendOwn(win, 'mine');
+  win.createMessageDiv('1', '9', 'chatContainer', 1, 'av|#000|12px|v|welcome|0|0', 'x', '', '', '');
+  const shown = calls.filter((c) => c[0] === 'view.place' || c[0] === 'view.append').map((c) => [c[0], c[1].id === null ? null : c[1].text]);
+  assert.deepEqual(shown, [
+    ['view.place', 'hi'],
+    ['view.append', 'mine'],
+    ['view.append', null],
+  ]);
+});
+
+test('before any poll, a pending own message and an engine notice carry no orderAt', () => {
+  const { win, calls } = setup();
+  sendOwn(win, 'early');
+  win.createMessageDiv('1', '9', 'chatContainer', 1, 'av|#000|12px|v|welcome|0|0', 'x', '', '', '');
+  const pending = calls.find((c) => c[0] === 'addPending')[1];
+  assert.equal('orderAt' in pending, false);
+  const notice = calls.find((c) => c[0] === 'view.append' && c[1].id === null)[1];
+  assert.equal('orderAt' in notice, false);
+});
+
+test('after a poll, a pending own message and an engine notice order on the server clock', (t) => {
+  // The device clock runs 30 s ahead of the server's.
+  const skew = 30_000;
+  const local0 = Math.ceil((Date.now() + 1e9) / 1000) * 1000;
+  let clock = local0;
+  t.mock.method(Date, 'now', () => clock);
+  const { win, calls, poll } = setup();
+  poll(um('951', 'bob', 'hi', String((local0 - skew) / 1000)));
+  clock = local0 + 2_000;
+  sendOwn(win, 'mine');
+  const pending = calls.find((c) => c[0] === 'addPending')[1];
+  assert.equal(pending.orderAt, pending.receivedAt - skew, 'receipt moved onto the server clock');
+  const shownOwn = calls.find((c) => c[0] === 'view.append' && c[1].text === 'mine')[1];
+  assert.equal(shownOwn.orderAt, pending.orderAt, 'the view orders it as storage does');
+  clock = local0 + 3_000;
+  win.createMessageDiv('1', '9', 'chatContainer', 1, 'av|#000|12px|v|welcome|0|0', 'x', '', '', '');
+  const notice = calls.find((c) => c[0] === 'view.append' && c[1].id === null)[1];
+  assert.equal(notice.orderAt, local0 + 3_000 - skew);
+});
+
+test('a stored pending own message orders by its corrected orderAt', async (t) => {
+  const skew = 30_000;
+  const local0 = Math.ceil((Date.now() + 2e9) / 1000) * 1000;
+  let clock = local0;
+  t.mock.method(Date, 'now', () => clock);
+  const win = fakeEngine();
+  const history = createHistory(await openDb({ name: 'engine-hook-pending-order' }));
+  installEngineHook({ win, roomID: '1' }).attach({ history, view: new Proxy({}, { get: () => () => {} }) });
+  win.receiveMesReq.responseXML = xml(um('952', 'bob', 'hi', String((local0 - skew) / 1000)));
+  win.handleMessages();
+  clock = local0 + 2_000;
+  sendOwn(win, 'still pending');
+  await new Promise((r) => setTimeout(r, 20));
+  const own = (await history.recent('1')).find((r) => r.text === 'still pending');
+  assert.equal(own.confirm, 'pending');
+  assert.equal(own.orderKey, own.receivedAt - skew);
 });

@@ -132,6 +132,13 @@ export function installEngineHook({ win, roomID }) {
   /** @type {() => boolean} */
   let storing = () => true;
 
+  /**
+   * A local time (ms) moved onto the server's clock, or undefined before any poll has
+   * supplied a skew sample. A record without a server mTime orders by it (TDF-0032).
+   * @param {number} now
+   */
+  const serverAt = (now) => (skewSamples.length ? now + Math.max(...skewSamples) : undefined);
+
   /** @param {Promise<unknown>} p */
   const report = (p) => p.catch((err) => view.notice(`Chat history not saved: ${describeError(err)}`));
 
@@ -212,9 +219,8 @@ export function installEngineHook({ win, roomID }) {
       // The server never returns this message, so it orders by its receipt time moved onto
       // the server's clock, alongside the server-timed messages around it.
       /** @type {MessageRecord} */
-      const confirmed = skewSamples.length
-        ? { ...rest, orderAt: rest.receivedAt + Math.max(...skewSamples) }
-        : rest;
+      const orderAt = serverAt(rest.receivedAt);
+      const confirmed = orderAt === undefined ? rest : { ...rest, orderAt };
       if (storing()) report(history.confirmPending(record.id, confirmed));
       view.confirm(record.id, confirmed);
       const now = Date.now();
@@ -364,7 +370,7 @@ export function installEngineHook({ win, roomID }) {
       }
       if (!rendered || replayedIds.has(record.id)) return;
       if (storing()) report(history.put(record));
-      view.append(record);
+      view.place(record);
       emit(record);
       return;
     }
@@ -376,6 +382,9 @@ export function installEngineHook({ win, roomID }) {
     const ownEcho = call.mTime === '' && call.mUser !== '' && call.mUser === win.userName;
     if (ownEcho) {
       const receivedAt = nextReceivedAt(now);
+      // Ordered on the server's clock from the start, so a later server message lands below it
+      // in the view and in storage even with the device clock fast.
+      const orderAt = serverAt(receivedAt);
       /** @type {MessageRecord} */
       const record = {
         id: provisionalId(receivedAt, seq++),
@@ -386,6 +395,7 @@ export function installEngineHook({ win, roomID }) {
         kind,
         ...body,
         receivedAt,
+        ...(orderAt === undefined ? {} : { orderAt }),
         confirm: 'pending',
       };
       pendings.push(record);
@@ -402,6 +412,7 @@ export function installEngineHook({ win, roomID }) {
 
     // Engine-local notices (welcome, the entry pseudo-message, AdBot) have no server id:
     // shown live, never stored (A7).
+    const orderAt = serverAt(now);
     view.append({
       id: null,
       roomID,
@@ -411,6 +422,7 @@ export function installEngineHook({ win, roomID }) {
       kind,
       ...body,
       receivedAt: now,
+      ...(orderAt === undefined ? {} : { orderAt }),
     });
   }
 

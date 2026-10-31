@@ -1065,3 +1065,196 @@ test('with Auto-scroll off a failed preview becomes a chip without moving the vi
   assert.equal(preview(root).querySelector('.tdf-chip').textContent, 'img.example.com');
   assert.equal(geo.top, 500);
 });
+
+// TDF-0032: server records are placed by their replay order, not appended at the bottom.
+const ids = (root) => msgs(root).map((el) => el.dataset.id ?? '-');
+
+test('every record row carries its replay order; a problem notice carries none', async () => {
+  const { view, root } = await setup();
+  view.append(rec({ id: 's', mTime: '100' }));
+  view.append(rec({ id: 'p', mTime: '', receivedAt: 150_500, confirm: 'pending' }));
+  view.append(rec({ id: 'o', mTime: '', receivedAt: 999_000, orderAt: 160_000 }));
+  view.notice('trouble');
+  assert.deepEqual(
+    msgs(root).map((el) => el.dataset.order),
+    ['100000', '150500', '160000', undefined],
+  );
+});
+
+test('a backlog re-delivered after the replay is trimmed; the newest rows stay', async () => {
+  const { view, root } = await setup();
+  const newest = Array.from({ length: DEFAULT_REPLAY_LIMIT }, (_, i) => rec({ id: `n${i}`, mTime: `${10_000 + i}` }));
+  view.replay(newest);
+  // The engine's first poll: the server backlog, oldest first, overlapping the replay.
+  // The overlap re-delivers the replayed records themselves, under their own ids.
+  for (let i = 0; i < 300; i++) {
+    const mTime = 9_900 + i;
+    view.place(rec({ id: mTime >= 10_000 ? `n${mTime - 10_000}` : `b${i}`, mTime: `${mTime}` }));
+  }
+  const shown = ids(root);
+  assert.equal(shown.length, DEFAULT_REPLAY_LIMIT);
+  assert.deepEqual(shown, newest.map((r) => r.id), 'exactly the replayed window, in order');
+});
+
+test('a backlog row inside the shown window is inserted at its time, grouped on both sides', async () => {
+  const { view, root } = await setup();
+  view.replay([
+    rec({ id: '1', mTime: '1000' }),
+    rec({ id: '2', mTime: '1010' }),
+    rec({ id: '4', mTime: '1030', user: 'carol' }),
+    rec({ id: '5', mTime: '1040', user: 'carol' }),
+  ]);
+  view.place(rec({ id: '3', mTime: '1020', user: 'carol' }));
+  assert.deepEqual(ids(root), ['1', '2', '3', '4', '5']);
+  assert.deepEqual(heads(root), ['h', 'c', 'h', 'c', 'c'], 'the old head of carol\'s run now continues it');
+});
+
+test('a row inserted into a group splits it: the row after heads its own group again', async () => {
+  const { view, root } = await setup();
+  view.replay([
+    rec({ id: '1', mTime: '1000' }),
+    rec({ id: '2', mTime: '1010' }),
+    rec({ id: '3', mTime: '1020' }),
+  ]);
+  view.place(rec({ id: 'x', mTime: '1015', user: 'carol' }));
+  assert.deepEqual(ids(root), ['1', '2', 'x', '3']);
+  assert.deepEqual(heads(root), ['h', 'c', 'h', 'h']);
+});
+
+test('a backlog row older than every shown row goes to the top', async () => {
+  const { view, root } = await setup();
+  view.replay([rec({ id: '2', mTime: '1010' }), rec({ id: '3', mTime: '1020' })]);
+  view.place(rec({ id: '1', mTime: '1000' }));
+  assert.deepEqual(ids(root), ['1', '2', '3']);
+  assert.deepEqual(heads(root), ['h', 'c', 'c']);
+});
+
+test('a record already shown is not rendered a second time', async () => {
+  const { view, root } = await setup();
+  view.replay([rec({ id: '1', mTime: '1000' }), rec({ id: '2', mTime: '1010' })]);
+  view.place(rec({ id: '1', mTime: '1000' }));
+  view.place(rec({ id: '2', mTime: '1010' }));
+  assert.deepEqual(ids(root), ['1', '2']);
+});
+
+test('an equal order is placed after the rows already holding it, in arrival order', async () => {
+  const { view, root } = await setup();
+  view.replay([rec({ id: '1', mTime: '1000' }), rec({ id: '2', mTime: '1000' }), rec({ id: '3', mTime: '1010' })]);
+  view.place(rec({ id: 'x', mTime: '1000', user: 'carol' }));
+  assert.deepEqual(ids(root), ['1', '2', 'x', '3']);
+});
+
+test('a placed row passes over problem notices; a newer one still goes below a trailing notice', async () => {
+  const { view, root } = await setup();
+  view.replay([rec({ id: '1', mTime: '1000' }), rec({ id: '3', mTime: '1020' })]);
+  view.notice('trouble');
+  view.place(rec({ id: '2', mTime: '1010' }));
+  view.place(rec({ id: '4', mTime: '1030' }));
+  assert.deepEqual(ids(root), ['1', '2', '3', '-', '4']);
+});
+
+test('a server message after an own message stays below it with the device clock fast', async () => {
+  const { view, root } = await setup();
+  // The device runs 30 s fast: the own message's receipt (and its time label) reads 12:00:30,
+  // but its order is its estimated server time, 12:00:00.
+  const server = 1_767_355_200; // 12:00:00 on the server
+  view.replay([rec({ id: '1', mTime: String(server - 60) })]);
+  view.append(rec({ id: 'own', mTime: '', user: 'alice', receivedAt: (server + 30) * 1000, orderAt: server * 1000 }));
+  view.place(rec({ id: 'next', mTime: String(server + 10) }));
+  assert.deepEqual(ids(root), ['1', 'own', 'next']);
+});
+
+test('a newer placed row slides in at the bottom like an appended one', async () => {
+  const { view, frames, geo } = await pinnedAt300();
+  geo.height = 560;
+  view.place(rec({ id: 'n', mTime: '101' }));
+  assert.equal(geo.top, 300, 'nothing moves before the first frame');
+  frames.tick(0);
+  frames.tick(75);
+  assert.ok(geo.top > 300 && geo.top < 360, `part way at 75ms, got ${geo.top}`);
+  frames.tick(75);
+  assert.equal(geo.top, 560);
+});
+
+test('a pinned view stays at its bottom, without a slide, when a row is inserted above', async () => {
+  const { view, frames, geo, root } = await pinnedAt300();
+  geo.height = 560;
+  view.place(rec({ id: 'old', mTime: '50' }));
+  assert.deepEqual(ids(root), ['old', 'r0']);
+  assert.equal(geo.top, 560, 'at the bottom at once');
+  assert.equal(frames.pending, 0);
+});
+
+test('a row inserted above does not move a user scrolled up', async () => {
+  const { win, view, frames, geo, list } = await pinnedAt300();
+  geo.top = 100;
+  list.dispatchEvent(new win.Event('scroll'));
+  geo.height = 560;
+  view.place(rec({ id: 'old', mTime: '50' }));
+  frames.finish();
+  assert.equal(geo.top, 100);
+});
+
+test('a problem notice at the top is trimmed first, ahead of a lower-ordered row below it', async () => {
+  const { view, root } = await setup();
+  view.notice('trouble');
+  view.replay(Array.from({ length: DEFAULT_REPLAY_LIMIT }, (_, i) => rec({ id: `r${i}`, mTime: `${1000 - i}` })));
+  const shown = ids(root);
+  assert.equal(shown.length, DEFAULT_REPLAY_LIMIT);
+  assert.equal(shown[0], 'r0', 'the notice went, every record stayed');
+  assert.ok(!root.querySelector('.tdf-notice'));
+});
+
+test('a row placed into an empty list is shown', async () => {
+  const { view, root } = await setup();
+  view.place(rec({ id: '1', mTime: '1000' }));
+  assert.deepEqual(ids(root), ['1']);
+  assert.deepEqual(heads(root), ['h']);
+});
+
+test('a row placed into a list holding only notices goes below them', async () => {
+  const { view, root } = await setup();
+  view.notice('one');
+  view.notice('two');
+  view.place(rec({ id: '1', mTime: '1000' }));
+  assert.deepEqual(ids(root), ['-', '-', '1']);
+  view.place(rec({ id: '0', mTime: '900' }));
+  assert.deepEqual(ids(root), ['0', '-', '-', '1'], 'an older one, with no row to go after, goes to the top');
+});
+
+test('an own message ordered by a slow clock survives the trim of a full list', async () => {
+  const { view, root } = await setup();
+  view.replay(Array.from({ length: DEFAULT_REPLAY_LIMIT }, (_, i) => rec({ id: `n${i}`, mTime: `${10_000 + i}` })));
+  // Before the first poll: no skew correction, and the device clock reads far behind the server.
+  view.append(rec({ id: 'own', mTime: '', user: 'alice', receivedAt: 1000, confirm: 'pending' }));
+  const shown = ids(root);
+  assert.equal(shown.length, DEFAULT_REPLAY_LIMIT);
+  assert.equal(shown.at(-1), 'own');
+  assert.equal(shown[0], 'n1', 'the oldest ordered row went instead');
+  view.confirm('own', rec({ id: '9', mTime: '20000', user: 'alice' }));
+  assert.equal(ids(root).at(-1), '9');
+});
+
+test('a server message after an own message ordered by a fast clock lands below it and slides', async () => {
+  const { view, frames, geo, root } = await pinnedAt300();
+  geo.height = 560;
+  // Before the first poll: the device clock reads 30 s ahead, uncorrected.
+  view.append(rec({ id: 'own', mTime: '', user: 'alice', receivedAt: 130_000 }));
+  frames.finish();
+  geo.top = 300;
+  geo.height = 620;
+  view.place(rec({ id: 'next', mTime: '110' }));
+  assert.deepEqual(ids(root), ['r0', 'own', 'next']);
+  assert.equal(geo.top, 300, 'nothing moves before the first frame');
+  frames.finish();
+  assert.equal(geo.top, 620);
+});
+
+test('a server message lands below an own message its confirm re-ordered later', async () => {
+  const { view, root } = await setup();
+  view.replay([rec({ id: '1', mTime: '100' })]);
+  view.append(rec({ id: 'local-1', mTime: '', user: 'alice', confirm: 'pending', receivedAt: 101_000 }));
+  view.confirm('local-1', rec({ id: '2', mTime: '130', user: 'alice' }));
+  view.place(rec({ id: '3', mTime: '110' }));
+  assert.deepEqual(ids(root), ['1', '2', '3']);
+});

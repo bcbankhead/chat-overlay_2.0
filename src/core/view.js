@@ -2,7 +2,7 @@
 // in the DOM, hidden, so its scrolling and trimming keep working underneath.
 
 import { expand } from './expand.js';
-import { continuesGroup, groupTime, localDay, timeLabel } from './group.js';
+import { continuesGroup, groupTime, localDay, orderKey, timeLabel } from './group.js';
 import { DEFAULT_REPLAY_LIMIT } from './history.js';
 import { renderAvatar } from './avatar.js';
 import { adapt, THEME_BG } from './ink.js';
@@ -315,6 +315,8 @@ export function createView({ doc, win, container, css, avatars = null, now = () 
     el.dataset.kind = record.kind;
     el.dataset.user = record.user;
     el.dataset.t = String(t);
+    // The value a reload sorts by (TDF-0031), so a live row is placed where a replay puts it.
+    el.dataset.order = String(orderKey(record));
     const chat = record.kind === 'public' || record.kind === 'whisper';
 
     // Sender family and size are ignored: every message uses the UI font (theme.css).
@@ -473,11 +475,68 @@ export function createView({ doc, win, container, css, avatars = null, now = () 
   // Live: the rows currently shown.
   const shown = list.getElementsByClassName('tdf-msg');
 
+  // Rows added at the bottom by append, and their confirm replacements: their order is the
+  // device clock's estimate, so they are not taken as in sequence with the rows around them.
+  /** @type {WeakSet<Element>} */
+  const appended = new WeakSet();
+
+  /**
+   * A row's replay order, or null for a problem notice, which has none, and for an appended row,
+   * which is passed over the same way.
+   * @param {Element} el
+   */
+  const orderOf = (el) => {
+    if (appended.has(el)) return null;
+    const order = /** @type {HTMLElement} */ (el).dataset.order;
+    return order === undefined ? null : Number(order);
+  };
+
+  // Scans walk the list's children, which are only its rows: indexing the live `shown`
+  // collection re-reads the DOM per access, quadratic over a 200-row list.
+
+  // The oldest row: a problem notice or appended row at the top goes first, as it always has;
+  // otherwise the row with the lowest order, the first of equals (TDF-0032).
+  function oldest() {
+    const first = /** @type {HTMLElement} */ (list.firstElementChild);
+    let min = orderOf(first);
+    if (min === null) return first;
+    let pick = first;
+    for (let el = first.nextElementSibling; el; el = el.nextElementSibling) {
+      const order = orderOf(el);
+      if (order !== null && order < min) {
+        min = order;
+        pick = /** @type {HTMLElement} */ (el);
+      }
+    }
+    return pick;
+  }
+
+  // The order of the last row that has one, or null when no row does.
+  function lastOrder() {
+    for (let el = list.lastElementChild; el; el = el.previousElementSibling) {
+      const order = orderOf(el);
+      if (order !== null) return order;
+    }
+    return null;
+  }
+
   // The list keeps no more than a replay shows; the oldest entries go first.
   function trim() {
-    while (shown.length > DEFAULT_REPLAY_LIMIT) {
-      remove(/** @type {HTMLElement} */ (shown[0]));
+    while (shown.length > DEFAULT_REPLAY_LIMIT) remove(oldest());
+  }
+
+  /**
+   * The row a record of this order goes after: the last row ordered at or below it, problem
+   * notices and appended rows passed over; null for the start of the list. Equal orders go
+   * after, in arrival order, as storage's `receivedAt` tie-break has them.
+   * @param {number} order
+   */
+  function placeAfter(order) {
+    for (let el = list.lastElementChild; el; el = el.previousElementSibling) {
+      const value = orderOf(el);
+      if (value !== null && value <= order) return /** @type {HTMLElement} */ (el);
     }
+    return null;
   }
 
   /** @param {ViewRecord} record */
@@ -514,10 +573,39 @@ export function createView({ doc, win, container, css, avatars = null, now = () 
     append(record) {
       relabel();
       const el = add(record);
+      appended.add(el);
       list.appendChild(el);
       regroup(el);
       trim();
       autoscroll();
+    },
+
+    /**
+     * A server record, placed by its replay order rather than at the bottom: the engine's
+     * first poll re-delivers an older backlog after the replay, and appended it would push the
+     * newest rows out at the trim (TDF-0032). A record already shown is not shown again.
+     * @param {ViewRecord} record
+     */
+    place(record) {
+      relabel();
+      if (record.id !== null && byKey.id.has(record.id)) return;
+      const el = add(record);
+      const order = Number(el.dataset.order);
+      const last = lastOrder();
+      const atEnd = last === null || order >= last;
+      if (atEnd) {
+        list.appendChild(el);
+      } else {
+        const after = placeAfter(order);
+        if (after) after.after(el);
+        else list.prepend(el);
+      }
+      regroup(el);
+      regroup(el.nextElementSibling);
+      trim();
+      // A row slid in at the bottom, as append does; one inserted above keeps a pinned view at
+      // its bottom without a slide, and leaves a scrolled-up user where they are.
+      autoscroll(!atEnd);
     },
 
     /** @param {ViewRecord[]} records oldest first */
@@ -547,6 +635,7 @@ export function createView({ doc, win, container, css, avatars = null, now = () 
         unindex(el);
         resized?.unobserve(el);
         const replacement = add(record);
+        if (appended.has(el)) appended.add(replacement);
         el.replaceWith(replacement);
         regroup(replacement);
         regroup(replacement.nextElementSibling);

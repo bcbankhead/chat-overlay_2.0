@@ -22,8 +22,9 @@ import { isExpired } from './reconcile.js';
  * @property {string} lineBreakFlag
  * @property {number} receivedAt    first seen by any tab; a re-delivery keeps it
  * @property {number} orderKey      replay order (`group.js` orderKey), computed on write
- * @property {number} [orderAt]     a send-confirmed own message's estimated server time (ms),
- *   ordering it while it has no mTime
+ * @property {number} [orderAt]     estimated server time (ms) of a record with no mTime, ordering
+ *   it: set on a pending own message or engine notice once a poll has supplied clock-skew
+ *   samples, re-estimated when the send is confirmed; without it, receipt time orders it
  * @property {'pending' | 'unconfirmed'} [confirm] absent on server records
  */
 
@@ -78,7 +79,7 @@ export function createHistory(db) {
 
     /**
      * Store an own message's local echo, before its send settles. With no mTime yet, it
-     * orders by its receipt time.
+     * orders by its `orderAt` when it carries one, else by its receipt time.
      * @param {MessageRecord} record carries a provisional id
      */
     async addPending(record) {
