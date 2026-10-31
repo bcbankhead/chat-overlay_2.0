@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { clockHHMM, continuesGroup, GROUP_GAP_S, groupTime, localDay, timeLabel } from '../src/core/group.js';
+import { clockHHMM, continuesGroup, GROUP_GAP_S, groupTime, localDay, orderKey, timeLabel } from '../src/core/group.js';
 
 const key = (over) => ({ user: 'bob', kind: 'public', t: 1000, ...over });
 
@@ -30,6 +30,17 @@ test('the first row heads its group', () => {
 test('group time is mTime, or receipt time while pending', () => {
   assert.equal(groupTime({ mTime: '1700000000', receivedAt: 5 }), 1700000000);
   assert.equal(groupTime({ mTime: '', receivedAt: 1700000000500 }), 1700000000.5);
+});
+
+test('order key is mTime in milliseconds, or receipt time while pending', () => {
+  assert.equal(orderKey({ mTime: '1700000000', receivedAt: 5 }), 1700000000000);
+  assert.equal(orderKey({ mTime: '', receivedAt: 1700000000500 }), 1700000000500);
+  assert.equal(orderKey({ mTime: '0', receivedAt: 42 }), 42);
+});
+
+test("order key is a send-confirmed own message's estimated server time; mTime still wins", () => {
+  assert.equal(orderKey({ mTime: '', receivedAt: 1700000600500, orderAt: 1700000000500 }), 1700000000500);
+  assert.equal(orderKey({ mTime: '1700000000', receivedAt: 5, orderAt: 9 }), 1700000000000);
 });
 
 test('clock is 24-hour local HH:MM', () => {

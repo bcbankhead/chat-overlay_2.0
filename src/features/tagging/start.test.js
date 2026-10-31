@@ -99,7 +99,7 @@ function chatPage() {
 
 /** @param {string} id @param {string} user @param {string} text @param {number} at @param {object} [over] */
 const record = (id, user, text, at, over = {}) =>
-  /** @type {any} */ ({ id, roomID: '1', mTime: String(at), user, toUser: '', kind: 'public', text, receivedAt: at, ...over });
+  /** @type {any} */ ({ id, roomID: '1', mTime: String(at), user, toUser: '', kind: 'public', text, receivedAt: at * 1000, ...over });
 
 test('an own message spaces the next reaction; an echo core marks unconfirmed stops counting', async (t) => {
   const { win, doc, held, hearts } = chatPage();

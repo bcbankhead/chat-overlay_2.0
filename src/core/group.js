@@ -19,6 +19,18 @@ export function groupTime(record) {
 }
 
 /**
+ * A record's replay order in milliseconds: `groupTime` scaled, so history replays by message
+ * time (TDF-0031) and a pending own message sorts by its receipt time until confirmed. A
+ * record with no mTime but an `orderAt` (an own message the server never returns, confirmed
+ * by its send) sorts by that estimate of its server time instead.
+ * @param {{ mTime: string, receivedAt: number, orderAt?: number }} record
+ */
+export function orderKey(record) {
+  if (!(Number(record.mTime) > 0) && typeof record.orderAt === 'number') return record.orderAt;
+  return groupTime(record) * 1000;
+}
+
+/**
  * Whether `cur` continues the group `prev` belongs to. Only public messages group; a
  * whisper or notice never continues one and is never continued.
  * @param {GroupKey | null} prev

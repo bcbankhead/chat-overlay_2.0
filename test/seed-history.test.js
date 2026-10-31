@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import vm from 'node:vm';
+import { orderKey } from '../src/core/group.js';
 import { MAIN_DIV, WHISPER_PREFIX, isWhisper } from '../src/core/parse.js';
 
 // The mockup's seed-history.js is a classic script loaded by the saved page, so it cannot
@@ -41,4 +42,17 @@ test('drift: seed-history isStaleWhisper matches the db.js v3 rule built on isWh
     const expected = r.kind === 'whisper' && !isWhisper({ targetDiv: MAIN_DIV, toUser: r.toUser, body: r });
     assert.equal(isStaleWhisper(r), expected, JSON.stringify(r));
   }
+});
+
+test('drift: seed-history orderKey matches group.js', () => {
+  const { orderKey: seedOrderKey } = loadSeedHistory();
+  const records = [
+    { mTime: '1700000000', receivedAt: 5 },
+    { mTime: '', receivedAt: 1700000000500 },
+    { mTime: '0', receivedAt: 42 },
+    { mTime: 'capture', receivedAt: 7 },
+    { mTime: '', receivedAt: 1700000000500, orderAt: 1700000003500 },
+    { mTime: '1700000000', receivedAt: 5, orderAt: 9 },
+  ];
+  for (const r of records) assert.equal(seedOrderKey(r), orderKey(r), JSON.stringify(r));
 });
