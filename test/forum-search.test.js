@@ -8,6 +8,7 @@ import { ROW_ID, chatRow, installForumNavbar } from '../src/forum/navbar.js';
 import {
   FIXED_FIELDS,
   MODAL_ID,
+  OPEN_CLASS,
   SEARCH_INPUT_ID,
   SEARCH_ITEM_ID,
   WILDCARD_NOTE,
@@ -17,6 +18,7 @@ import {
   moreOptionsHref,
   searchParams,
   searchUrl,
+  transitionMs,
 } from '../src/forum/searchModal.js';
 
 const repo = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -401,4 +403,45 @@ test('forum.css keeps every search colour and font under :where() so the forum t
     const declarations = body.split(';').filter((d) => themed.test(d));
     assert.deepEqual(declarations, [], `${selector.trim()} sets a theme value outside :where()`);
   }
+});
+
+test('transitionMs is the longest delay + duration pair, 0 without transitions', () => {
+  assert.equal(transitionMs('', ''), 0);
+  assert.equal(transitionMs('0s', '0s'), 0);
+  assert.equal(transitionMs('0.15s', '0.2s'), 350);
+  assert.equal(transitionMs('0.2s, 200ms', '0.15s'), 350);
+  assert.equal(transitionMs('0s, 0.1s', '5s, 0s'), 100);
+  assert.equal(transitionMs('bogus', '0s'), 0);
+});
+
+test('with closing transitions, the modal stays shown until they finish; reopening mid-close keeps it', async () => {
+  const { window, document } = forumDoc();
+  // happy-dom computes no transitions from a stylesheet: report forum.css's closing pair.
+  /** @type {any} */ (window).getComputedStyle = () => ({ transitionDuration: '0.15s', transitionDelay: '0.05s' });
+  installSearch(document, chatRow, INDEX);
+  const { input, backdrop, keywords } = parts(document);
+  input.focus();
+  assert.equal(backdrop.classList.contains(OPEN_CLASS), true);
+  keywords.value = 'kept';
+  press(window, keywords, 'Escape');
+  assert.equal(backdrop.classList.contains(OPEN_CLASS), false);
+  assert.equal(backdrop.hidden, false);
+  input.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.equal(backdrop.classList.contains(OPEN_CLASS), true);
+  assert.equal(keywords.value, 'kept');
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(backdrop.hidden, false);
+  press(window, keywords, 'Escape');
+  assert.equal(backdrop.hidden, false);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(backdrop.hidden, true);
+});
+
+test('forum.css fades the tint in first, then the dialog sliding down 30px, and reverses on close', () => {
+  const css = readFileSync(path.join(repo, 'src', 'forum', 'forum.css'), 'utf8');
+  assert.match(css, /\.tdf-search-backdrop\s*\{[^}]*opacity:\s*0;[^}]*transition:\s*opacity 0\.15s ease 0\.2s/);
+  assert.match(css, /\.tdf-search-backdrop\.tdf-open\s*\{[^}]*transition-delay:\s*0s/);
+  assert.match(css, /\.tdf-search-backdrop \.tdf-search-dialog\s*\{[^}]*translateY\(-30px\)[^}]*transition:\s*opacity 0\.2s ease, transform 0\.2s ease/);
+  assert.match(css, /\.tdf-open \.tdf-search-dialog\s*\{[^}]*transition-delay:\s*0\.15s/);
+  assert.match(css, /prefers-reduced-motion:\s*reduce/);
 });

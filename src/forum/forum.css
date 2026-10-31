@@ -46,10 +46,39 @@
   align-items: flex-start;
   justify-content: center;
   padding-top: 10vh;
+  /* Closing: the tint fades after the dialog has gone (the delay is the dialog's duration). */
+  opacity: 0;
+  transition: opacity 0.15s ease 0.2s;
 }
 
 .tdf-search-backdrop[hidden] {
   display: none;
+}
+
+/* Opening: the tint fades in over 0.15s, then the dialog fades in sliding down 30px into place.
+   searchModal.js adds .tdf-open, and on close waits out these transitions before hiding. */
+.tdf-search-backdrop.tdf-open {
+  opacity: 1;
+  transition-delay: 0s;
+}
+
+.tdf-search-backdrop .tdf-search-dialog {
+  opacity: 0;
+  transform: translateY(-30px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.tdf-search-backdrop.tdf-open .tdf-search-dialog {
+  opacity: 1;
+  transform: none;
+  transition-delay: 0.15s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tdf-search-backdrop,
+  .tdf-search-backdrop .tdf-search-dialog {
+    transition: none;
+  }
 }
 
 .tdf-search-dialog {
