@@ -1,6 +1,6 @@
 // Whisper state on the message box, replacing the engine's Whisper To field. While a user is
-// whispered to, the box gets a blue border and a "Whisper <name> ×" chip on its top border at
-// the right; × clears the whisper.
+// whispered to, the box gets a blue border and a "Whisper <name> ×" chip, a tab standing on its
+// top edge at the right; × clears the whisper. Starting a whisper focuses the box.
 //
 // whisperUser() and clearWhisper() assign #whisperID's .value with no event, so both globals
 // are wrapped to re-read it — by this slice alone (TDF-0009 Shared Contract, Single wrappers).
@@ -36,8 +36,9 @@ export function installWhisper(bar, host) {
 
   const place = () => {
     if (chip.hidden) return;
-    chip.style.left = `${bar.offsetLeft + bar.offsetWidth - chip.offsetWidth - 10}px`;
-    chip.style.top = `${bar.offsetTop - chip.offsetHeight / 2}px`;
+    // Flush with the outer edge of the whisper ring, 1px outside the box (composer.css).
+    chip.style.left = `${bar.offsetLeft + bar.offsetWidth + 1 - chip.offsetWidth}px`;
+    chip.style.top = `${bar.offsetTop - chip.offsetHeight}px`;
   };
 
   const sync = () => {
@@ -54,6 +55,7 @@ export function installWhisper(bar, host) {
     win[fn] = function (/** @type {unknown[]} */ ...args) {
       const result = original.apply(this, args);
       sync();
+      if (fn === 'whisperUser' && field.value) bar.focus();
       return result;
     };
   }
