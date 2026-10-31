@@ -20,9 +20,10 @@ export function groupTime(record) {
 
 /**
  * A record's replay order in milliseconds: `groupTime` scaled, so history replays by message
- * time (TDF-0031) and a pending own message sorts by its receipt time until confirmed. A
- * record with no mTime but an `orderAt` (an own message the server never returns, confirmed
- * by its send) sorts by that estimate of its server time instead.
+ * time (TDF-0031). A record with no mTime (an own message the server never returns, or an
+ * engine notice) sorts by its `orderAt`, an estimate of its server time set once a poll has
+ * supplied clock-skew samples and re-estimated when an own message's send is confirmed;
+ * without one, it sorts by its receipt time.
  * @param {{ mTime: string, receivedAt: number, orderAt?: number }} record
  */
 export function orderKey(record) {
