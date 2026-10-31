@@ -363,6 +363,150 @@ test('whispering shows the chip and blue border; its × stops the whisper', () =
   assert.equal(bar.classList.contains('tdf-whisper'), false);
 });
 
+test('starting a whisper focuses the box; the chip stands on its top edge at the right', () => {
+  const { document, bar, win } = page();
+  const chip = /** @type {any} */ (document.querySelector('.tdf-whisper-chip'));
+  for (const [key, value] of Object.entries({ offsetLeft: 20, offsetTop: 100, offsetWidth: 500 })) {
+    Object.defineProperty(bar, key, { value, configurable: true });
+  }
+  for (const [key, value] of Object.entries({ offsetWidth: 120, offsetHeight: 22 })) {
+    Object.defineProperty(chip, key, { value, configurable: true });
+  }
+  const other = document.getElementById('optionsSend');
+  other?.focus();
+  win.whisperUser('Alice');
+  assert.ok(document.activeElement === bar);
+  // Right edge on the whisper ring's outer edge (1px outside the box), bottom on the box's top.
+  assert.equal(chip.style.left, `${20 + 500 + 1 - 120}px`);
+  assert.equal(chip.style.top, `${100 - 22}px`);
+  other?.focus();
+  win.clearWhisper();
+  assert.ok(document.activeElement === other, 'clearing a whisper does not move focus');
+});
+
+test('closing the last open menu or picker focuses the box', async () => {
+  const { window, document, bar, win } = page();
+  win.__test.openSmileyPicker({ x: 40, y: 300, onPick: () => {} });
+  await settle();
+  /** @type {any} */ (document.activeElement)?.blur?.();
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await settle();
+  assert.ok(document.activeElement === bar, 'the picker closed');
+
+  // A menu another slice owns, closed while a flyout is still open: focus waits for both.
+  const menu = document.createElement('div');
+  menu.className = 'tdf-rail-menu';
+  const flyout = document.createElement('div');
+  flyout.className = 'tdf-rail-flyout tdf-open';
+  document.body.append(menu, flyout);
+  await settle();
+  bar.blur();
+  menu.hidden = true;
+  await settle();
+  assert.ok(document.activeElement !== bar, 'a flyout is still open');
+  flyout.classList.remove('tdf-open');
+  await settle();
+  assert.ok(document.activeElement === bar, 'the flyout closed');
+});
+
+test('a close leaves focus with another field; with nothing closing, focus is never taken', async () => {
+  const { document, bar } = page();
+  const field = document.createElement('input');
+  document.body.appendChild(field);
+  const menu = document.createElement('div');
+  menu.className = 'tdf-rail-menu';
+  document.body.appendChild(menu);
+  await settle();
+  field.focus();
+  menu.hidden = true;
+  await settle();
+  assert.ok(document.activeElement === field, 'the field keeps its typing');
+
+  bar.blur();
+  document.body.appendChild(document.createElement('p'));
+  menu.className = 'tdf-other';
+  await settle();
+  assert.ok(document.activeElement !== bar, 'no menu closed, so nothing refocused');
+});
+
+test('a menu closed by a press outside it leaves focus alone; a pick inside it refocuses', async () => {
+  const { window, document, bar } = page();
+  const text = document.createElement('p');
+  const menu = document.createElement('div');
+  menu.className = 'tdf-rail-menu';
+  const item = document.createElement('button');
+  menu.appendChild(item);
+  document.body.append(text, menu);
+  await settle();
+  bar.blur();
+  text.dispatchEvent(new window.Event('pointerdown', { bubbles: true }));
+  menu.hidden = true;
+  await settle();
+  assert.ok(document.activeElement !== bar, 'a press on chat text does not take focus');
+
+  menu.hidden = false;
+  await settle();
+  item.dispatchEvent(new window.Event('pointerdown', { bubbles: true }));
+  menu.hidden = true;
+  await settle();
+  assert.ok(document.activeElement === bar, 'a pick inside the menu refocuses');
+
+  bar.blur();
+  menu.hidden = false;
+  await settle();
+  text.dispatchEvent(new window.Event('pointerdown', { bubbles: true }));
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  menu.hidden = true;
+  await settle();
+  assert.ok(document.activeElement === bar, 'an Escape after the press still refocuses');
+});
+
+for (const [name, make] of /** @type {[string, (d: any) => any][]} */ ([
+  ['a textarea', (d) => d.createElement('textarea')],
+  ['a select', (d) => d.createElement('select')],
+  [
+    'a contenteditable element',
+    (d) => {
+      const el = d.createElement('div');
+      el.contentEditable = 'true';
+      el.tabIndex = 0;
+      return el;
+    },
+  ],
+])) {
+  test(`a close leaves focus with ${name}`, async () => {
+    const { document, bar } = page();
+    const field = make(document);
+    const menu = document.createElement('div');
+    menu.className = 'tdf-rail-menu';
+    document.body.append(field, menu);
+    await settle();
+    field.focus();
+    assert.ok(document.activeElement === field);
+    menu.hidden = true;
+    await settle();
+    assert.ok(document.activeElement === field, 'the field keeps its typing');
+    assert.ok(document.activeElement !== bar);
+  });
+}
+
+for (const type of ['checkbox', 'button']) {
+  test(`a close takes focus back from a ${type} input`, async () => {
+    const { document, bar } = page();
+    const field = document.createElement('input');
+    field.type = type;
+    const menu = document.createElement('div');
+    menu.className = 'tdf-rail-menu';
+    document.body.append(field, menu);
+    await settle();
+    field.focus();
+    assert.ok(document.activeElement === field);
+    menu.hidden = true;
+    await settle();
+    assert.ok(document.activeElement === bar, 'a non-typing input does not hold focus');
+  });
+}
+
 test('the box shows the chosen colour shifted per theme, and never changes the choice', () => {
   const { document, bar, win, theme } = page({ theme: 'dark' });
   win.changeMessBoxStyle('optionsBar');

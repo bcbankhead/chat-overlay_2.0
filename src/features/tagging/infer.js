@@ -4,15 +4,18 @@
 //
 // Only public messages count (A1): another install never sees a whisper. An own message
 // whose send failed (`unconfirmed`) never reached anyone else, so it counts for nothing.
-// Messages are ordered by receivedAt, then id (B2): own messages keep their local id.
+// Messages are ordered by message time (orderKey, TDF-0031), then receivedAt, then id (B2):
+// a backlog message another tab stored late keeps its place, and own messages keep their
+// local id.
 
+import { orderKey } from '../../core/group.js';
 import { extractShareIds } from '../gallery/shareParse.js';
 import { parseReaction } from './reactions.js';
 
 /**
  * The fields inference reads from a stored message.
  * @typedef {Pick<import('../../core/history.js').MessageRecord,
- *   'id' | 'roomID' | 'user' | 'kind' | 'text' | 'receivedAt' | 'confirm'>} InferMessage
+ *   'id' | 'roomID' | 'mTime' | 'user' | 'kind' | 'text' | 'receivedAt' | 'confirm'>} InferMessage
  */
 
 /**
@@ -30,7 +33,10 @@ import { parseReaction } from './reactions.js';
  * @param {InferMessage} a
  * @param {InferMessage} b
  */
-function byArrival(a, b) {
+function byMessageTime(a, b) {
+  const ka = orderKey(a);
+  const kb = orderKey(b);
+  if (ka !== kb) return ka - kb;
   if (a.receivedAt !== b.receivedAt) return a.receivedAt - b.receivedAt;
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
@@ -51,7 +57,7 @@ const tagKey = (imageId, code, sender) => `${imageId}\n${code}\n${sender}`;
  * @returns {Tag[]}
  */
 export function deriveTags(roomMessages, me, codes) {
-  const messages = roomMessages.filter((m) => m.kind === 'public' && m.confirm !== 'unconfirmed').sort(byArrival);
+  const messages = roomMessages.filter((m) => m.kind === 'public' && m.confirm !== 'unconfirmed').sort(byMessageTime);
   /** @type {Map<string, Tag>} */
   const tags = new Map();
   /** @type {string[][]} share ids of each message, by position */

@@ -1,6 +1,6 @@
 // Seeds the overlay's local history (IndexedDB `tdf-chat-2`) from the messages the saved
 // page carries in the engine's #chatContainer, so the overlay replays them on start.
-// Runs before the overlay loads. The schema below copies src/core/db.js at version 4;
+// Runs before the overlay loads. The schema below copies src/core/db.js at version 5;
 // if that changes, this must too. Re-running is harmless: records are keyed and put.
 window.__seedHistory = function () {
   var container = document.getElementById('chatContainer');
@@ -49,16 +49,21 @@ window.__seedHistory = function () {
     };
   });
 
-  records = records.concat(fictionalUsers(records, roomID, base));
+  records = records.concat(fictionalUsers(records, roomID, base)).map(withOrderKey);
 
   return new Promise(function (resolve, reject) {
-    var req = indexedDB.open('tdf-chat-2', 4);
+    var req = indexedDB.open('tdf-chat-2', 5);
     req.onupgradeneeded = function (event) {
       if (event.oldVersion >= 1) {
         var tx = req.transaction;
+        var stored = tx.objectStore('messages');
         if (event.oldVersion < 2) tx.objectStore('images').createIndex('hash', 'hash');
-        if (event.oldVersion < 3) reclassifyWhispers(tx.objectStore('messages'));
         if (event.oldVersion < 4) req.result.createObjectStore('avatars', { keyPath: 'name' });
+        if (event.oldVersion < 5) {
+          stored.createIndex('roomID_orderKey', ['roomID', 'orderKey', 'receivedAt']);
+          stored.deleteIndex('roomID_receivedAt');
+        }
+        migrateMessages(stored, event.oldVersion);
         return;
       }
       var db = req.result;
@@ -67,7 +72,7 @@ window.__seedHistory = function () {
       messages.createIndex('mTime', 'mTime');
       messages.createIndex('user', 'user');
       messages.createIndex('receivedAt', 'receivedAt');
-      messages.createIndex('roomID_receivedAt', ['roomID', 'receivedAt']);
+      messages.createIndex('roomID_orderKey', ['roomID', 'orderKey', 'receivedAt']);
       db.createObjectStore('settings', { keyPath: 'key' });
       var images = db.createObjectStore('images', { keyPath: 'id' });
       images.createIndex('user', 'user');
@@ -101,15 +106,30 @@ function isStaleWhisper(r) {
   return r.kind === 'whisper' && (r.toUser === '' || r.toUser === '_') && !echo;
 }
 
-function reclassifyWhispers(messages) {
+// Copy of orderKey in src/core/group.js (version 5); test/seed-history.test.js fails when
+// they drift.
+function orderKey(r) {
+  var t = Number(r.mTime);
+  if (!(t > 0) && typeof r.orderAt === 'number') return r.orderAt;
+  return (t > 0 ? t : r.receivedAt / 1000) * 1000;
+}
+
+function withOrderKey(r) {
+  return Object.assign({}, r, { orderKey: orderKey(r) });
+}
+
+// Versions 3 and 5 in one cursor pass, as db.js runs them: two cursors would each write the
+// record as first read, and the later write would undo the earlier.
+function migrateMessages(messages, oldVersion) {
   var cursorReq = messages.openCursor();
   cursorReq.onsuccess = function () {
     var cursor = cursorReq.result;
     if (!cursor) return;
     var r = cursor.value;
-    if (isStaleWhisper(r)) {
-      cursor.update(Object.assign({}, r, { kind: 'public' }));
-    }
+    var next = r;
+    if (oldVersion < 3 && isStaleWhisper(next)) next = Object.assign({}, next, { kind: 'public' });
+    if (oldVersion < 5) next = withOrderKey(next);
+    if (next !== r) cursor.update(next);
     cursor.continue();
   };
 }

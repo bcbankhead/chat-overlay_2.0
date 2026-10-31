@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { onConfirmChange, onDeleted, onInbound } from '../src/core/events.js';
 import { engineAvailable, installEngineHook } from '../src/core/engine-hook.js';
+import 'fake-indexeddb/auto';
+import { openDb } from '../src/core/db.js';
+import { createHistory } from '../src/core/history.js';
 
 /** A fake engine: createMessageDiv renders unless the body says FILTERED or repeats. */
 function fakeEngine() {
@@ -608,4 +611,91 @@ test('with Chat history at 0 days nothing is written, but messages are still sho
   storing = true;
   poll(um('951', 'bob', 'again', '1751'));
   assert.ok(calls.some((c) => c[0] === 'put' && c[1].id === '951'));
+});
+
+test('a second tab whose first poll re-delivers the backlog does not reorder the next replay', async () => {
+  const name = 'engine-hook-two-tabs';
+  const noView = new Proxy({}, { get: () => () => {} });
+  /** One tab: its own engine, its own connection to the shared database. */
+  const tab = async () => {
+    const win = fakeEngine();
+    const history = createHistory(await openDb({ name }));
+    installEngineHook({ win, roomID: '1' }).attach({ history, view: noView });
+    const poll = (...messages) => {
+      win.receiveMesReq.responseXML = xml(...messages);
+      win.handleMessages();
+    };
+    return { history, poll };
+  };
+  const flush = () => new Promise((r) => setTimeout(r, 20));
+  const backlog = [um('801', 'bob', 'one', '1800'), um('802', 'carol', 'two', '1801')];
+
+  const first = await tab();
+  first.poll(...backlog);
+  first.poll(um('803', 'bob', 'three', '1900'));
+  await flush();
+  const seen = (await first.history.get('801'))?.receivedAt;
+
+  // A new tab with nothing replayed: its first poll hands it the server backlog again.
+  const second = await tab();
+  second.poll(...backlog);
+  await flush();
+
+  assert.deepEqual(
+    (await second.history.recent('1')).map((r) => r.id),
+    ['801', '802', '803'],
+  );
+  assert.deepEqual(
+    (await first.history.recent('1', 1)).map((r) => r.id),
+    ['803'],
+    'the newest message is still the newest',
+  );
+  assert.equal((await second.history.get('801'))?.receivedAt, seen, 'first-seen receipt time kept');
+});
+
+test("with a skewed client clock, an own message orders by its estimated server time among others'", async (t) => {
+  // The client clock runs ten minutes ahead of the server's.
+  const skew = 600_000;
+  const local0 = Math.ceil((Date.now() + 1e9) / 1000) * 1000;
+  const server0 = (local0 - skew) / 1000;
+  let clock = local0;
+  t.mock.method(Date, 'now', () => clock);
+  const win = fakeEngine();
+  const history = createHistory(await openDb({ name: 'engine-hook-skew' }));
+  installEngineHook({ win, roomID: '1' }).attach({ history, view: new Proxy({}, { get: () => () => {} }) });
+  const poll = (...messages) => {
+    win.receiveMesReq.responseXML = xml(...messages);
+    win.handleMessages();
+  };
+
+  clock = local0 + 500;
+  poll(um('701', 'bob', 'question', String(server0)));
+  clock = local0 + 2_000;
+  sendOwn(win, 'answer');
+  win.sendReq.finish(200);
+  clock = local0 + 5_300;
+  poll(um('702', 'bob', 'thanks', String(server0 + 5)));
+  await new Promise((r) => setTimeout(r, 20));
+
+  const replay = await history.recent('1');
+  assert.deepEqual(
+    replay.map((r) => r.text),
+    ['question', 'answer', 'thanks'],
+  );
+  const own = replay[1];
+  assert.equal(own.mTime, '', 'still no server mTime');
+  assert.equal(own.orderKey, own.receivedAt - skew - 500, 'receipt time moved by the observed skew');
+});
+
+test('with no server record observed yet, a confirmed own message orders by its receipt time', async () => {
+  const { win, calls } = setup();
+  sendOwn(win, 'first words');
+  win.sendReq.finish(200);
+  const confirmed = calls.find((c) => c[0] === 'confirmPending')[2];
+  assert.equal(confirmed.orderAt, undefined);
+
+  const history = createHistory(await openDb({ name: 'engine-hook-no-skew' }));
+  await history.addPending({ ...confirmed, confirm: 'pending' });
+  await history.confirmPending(confirmed.id, confirmed);
+  assert.equal((await history.get(confirmed.id))?.orderKey, confirmed.receivedAt);
 });

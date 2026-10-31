@@ -76,6 +76,9 @@ export function engineAvailable(win) {
  * @property {() => void} abandon stop observing; the wrappers pass straight through
  */
 
+/** How many recent server records the clock-skew estimate reads. */
+const SKEW_SAMPLES = 20;
+
 const UNPAIRED_NOTICE =
   'A message was shown but not saved: no server record in its poll matched its time and sender';
 
@@ -111,6 +114,12 @@ export function installEngineHook({ win, roomID }) {
   let sentOwn = [];
   /** @type {Send | null} the send the engine's next own echo belongs to */
   let lastSend = null;
+  /**
+   * Recent `server mTime - local receipt` samples (ms). Each is the clock skew less that
+   * message's delivery delay, so the largest is the closest estimate of the skew.
+   * @type {number[]}
+   */
+  let skewSamples = [];
   /** @type {Observed[] | null} calls awaiting `attach`; null once attached */
   let buffered = [];
   let abandoned = false;
@@ -199,7 +208,13 @@ export function installEngineHook({ win, roomID }) {
     if (!pendings.includes(record)) return;
     pendings = pendings.filter((p) => p !== record);
     if (state === 'sent') {
-      const { confirm: _drop, ...confirmed } = record;
+      const { confirm: _drop, ...rest } = record;
+      // The server never returns this message, so it orders by its receipt time moved onto
+      // the server's clock, alongside the server-timed messages around it.
+      /** @type {MessageRecord} */
+      const confirmed = skewSamples.length
+        ? { ...rest, orderAt: rest.receivedAt + Math.max(...skewSamples) }
+        : rest;
       if (storing()) report(history.confirmPending(record.id, confirmed));
       view.confirm(record.id, confirmed);
       const now = Date.now();
@@ -322,6 +337,8 @@ export function installEngineHook({ win, roomID }) {
     const kind = classify({ targetDiv: call.mDiv, toUser: call.mToUser, body }, lang);
 
     if (server) {
+      const serverSeconds = Number(server.mTime);
+      if (serverSeconds > 0) skewSamples = [...skewSamples.slice(1 - SKEW_SAMPLES), serverSeconds * 1000 - now];
       /** @type {MessageRecord} */
       const record = {
         id: server.id,

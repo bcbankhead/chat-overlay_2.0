@@ -264,7 +264,7 @@ test('with Chat history at 0 days messages are shown but never stored, and nothi
   const t = db.transaction('messages', 'readwrite');
   t.objectStore('messages').put({
     id: 'legacy', roomID: '1', mTime: '99', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '',
-    size: '', family: '', text: 'old', ircFlag: '0', lineBreakFlag: '0', receivedAt: Date.now(),
+    size: '', family: '', text: 'old', ircFlag: '0', lineBreakFlag: '0', receivedAt: Date.now(), orderKey: 99_000,
   });
   await new Promise((resolve) => (t.oncomplete = resolve));
   db.close();
@@ -276,11 +276,12 @@ test('a stored record that will not render is skipped with a notice; the rest re
   const indexedDB = new IDBFactory();
   const db = await openDb({ indexedDB });
   const base = { roomID: '1', mTime: '', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '', size: '', family: '', ircFlag: '0', lineBreakFlag: '0' };
-  // Recent, so the default 30-day Chat history limit (features/options) keeps them.
+  // Recent, so the default 30-day Chat history limit (features/options) keeps them. Seeded
+  // raw, so each carries the orderKey history would compute (TDF-0031).
   const now = Date.now();
   const t = db.transaction('messages', 'readwrite');
-  t.objectStore('messages').put({ ...base, id: 'good', mTime: '100', text: 'fine', receivedAt: now - 2 });
-  t.objectStore('messages').put({ ...base, id: 'bad', mTime: '101', text: 42, receivedAt: now - 1 });
+  t.objectStore('messages').put({ ...base, id: 'good', mTime: '100', text: 'fine', receivedAt: now - 2, orderKey: 100_000 });
+  t.objectStore('messages').put({ ...base, id: 'bad', mTime: '101', text: 42, receivedAt: now - 1, orderKey: 101_000 });
   await new Promise((resolve) => (t.oncomplete = resolve));
   db.close();
 

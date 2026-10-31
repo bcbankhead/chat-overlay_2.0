@@ -35,10 +35,10 @@ const msg = (over) => ({
   ...over,
 });
 
-test('opens at version 4 with every store and index', async () => {
+test('opens at version 5 with every store and index', async () => {
   const db = await fresh();
   assert.equal(db.version, DB_VERSION);
-  assert.equal(DB_VERSION, 4);
+  assert.equal(DB_VERSION, 5);
   assert.deepEqual([...db.objectStoreNames].sort(), ['avatars', 'images', 'messages', 'settings', 'tags']);
   assert.equal(db.transaction('avatars').objectStore('avatars').keyPath, 'name');
   const t = db.transaction(['messages', 'images', 'tags'], 'readonly');
@@ -48,10 +48,10 @@ test('opens at version 4 with every store and index', async () => {
     'mTime',
     'receivedAt',
     'roomID',
-    'roomID_receivedAt',
+    'roomID_orderKey',
     'user',
   ]);
-  assert.deepEqual(messages.index('roomID_receivedAt').keyPath, ['roomID', 'receivedAt']);
+  assert.deepEqual(messages.index('roomID_orderKey').keyPath, ['roomID', 'orderKey', 'receivedAt']);
   assert.deepEqual([...t.objectStore('images').indexNames].sort(), ['hash', 'receivedAt', 'user']);
   assert.deepEqual([...t.objectStore('tags').indexNames].sort(), ['imageId', 'sourceMessageId']);
   db.close();
@@ -162,10 +162,13 @@ test('a version 2 database upgrades to the current version, reclassifying placeh
     entry: 'entry',
   });
   assert.equal((await stored(db, 'underscore')).text, 'hi');
+  // The version 5 backfill runs in the same pass: both migrations land on every record.
+  assert.equal((await stored(db, 'underscore')).orderKey, 100_000);
+  assert.equal((await stored(db, 'named')).orderKey, 100_000);
   db.close();
 });
 
-test('a version 3 database upgrades to version 4, adding the avatars store and keeping every record', async () => {
+test('a version 3 database upgrades to the current version, adding the avatars store and keeping every record', async () => {
   const name = `test-v3-${++n}`;
   // The version 3 schema: the same stores and indexes as version 2 (TDF-0012 migrated data only).
   const open = indexedDB.open(name, 3);
@@ -191,14 +194,77 @@ test('a version 3 database upgrades to version 4, adding the avatars store and k
   v3.close();
 
   const db = await openDb({ name });
-  assert.equal(db.version, 4);
+  assert.equal(db.version, DB_VERSION);
   assert.ok(db.objectStoreNames.contains('avatars'));
   const r = db.transaction(['messages', 'settings', 'images', 'tags']);
-  // Version 4 migrates no data: the version 3 rewrite is not run again.
+  // Versions 4 and 5 do not rerun the version 3 rewrite.
   assert.equal((await settled(r.objectStore('messages').get('m'))).kind, 'whisper');
   assert.equal((await settled(r.objectStore('settings').get('theme'))).value, 'dark');
   assert.equal((await settled(r.objectStore('images').get('i'))).hash, 'h');
   assert.equal((await settled(r.objectStore('tags').getAll())).length, 1);
+  db.close();
+});
+
+/**
+ * The version 4 schema: version 3 plus the avatars store (TDF-0013).
+ * @param {string} name
+ */
+const openV4 = (name) => {
+  const open = indexedDB.open(name, 4);
+  open.onupgradeneeded = () => {
+    const v4 = open.result;
+    const messages = v4.createObjectStore('messages', { keyPath: 'id' });
+    for (const i of ['roomID', 'mTime', 'user', 'receivedAt']) messages.createIndex(i, i);
+    messages.createIndex('roomID_receivedAt', ['roomID', 'receivedAt']);
+    v4.createObjectStore('settings', { keyPath: 'key' });
+    const images = v4.createObjectStore('images', { keyPath: 'id' });
+    for (const i of ['user', 'receivedAt', 'hash']) images.createIndex(i, i);
+    const tags = v4.createObjectStore('tags', { keyPath: 'id', autoIncrement: true });
+    tags.createIndex('imageId', 'imageId');
+    tags.createIndex('sourceMessageId', 'sourceMessageId');
+    v4.createObjectStore('avatars', { keyPath: 'name' });
+  };
+  return /** @type {Promise<IDBDatabase>} */ (settled(open));
+};
+
+test('a version 4 database upgrades to version 5, backfilling orderKey and deleting no record', async () => {
+  const name = `test-v4-${++n}`;
+  const v4 = await openV4(name);
+  const w = v4.transaction(['messages', 'avatars'], 'readwrite');
+  // A backlog record another tab re-stored late, a newer message, a pending own echo, a
+  // whisper (version 3 already ran on it) and another room's record.
+  const seed = [
+    msg({ id: 'old', mTime: '100', receivedAt: 9_000 }),
+    msg({ id: 'new', mTime: '200', receivedAt: 5_000 }),
+    msg({ id: 'local-1', mTime: '', receivedAt: 300_500, confirm: 'pending' }),
+    msg({ id: 'w', mTime: '150', kind: 'whisper', toUser: '_', receivedAt: 6_000 }),
+    msg({ id: 'other', roomID: '2', mTime: '50', receivedAt: 1 }),
+  ];
+  for (const record of seed) w.objectStore('messages').put(record);
+  w.objectStore('avatars').put({ name: 'alice', url: null, at: 1 });
+  await settled(w);
+  v4.close();
+
+  const db = await openDb({ name });
+  assert.equal(db.version, 5);
+  const t = db.transaction(['messages', 'avatars']);
+  const messages = t.objectStore('messages');
+  assert.equal(messages.indexNames.contains('roomID_receivedAt'), false);
+  assert.ok(messages.indexNames.contains('roomID_orderKey'));
+  assert.ok(messages.indexNames.contains('receivedAt'), 'retention keeps its index');
+  const all = /** @type {any[]} */ (await settled(messages.getAll()));
+  assert.equal(all.length, seed.length, 'nothing deleted');
+  const keys = Object.fromEntries(all.map((r) => [r.id, r.orderKey]));
+  assert.deepEqual(keys, { old: 100_000, new: 200_000, 'local-1': 300_500, w: 150_000, other: 50_000 });
+  assert.equal((await settled(t.objectStore('avatars').get('alice'))).at, 1);
+  // Every other field is kept, including receipt time and the version 3 classification.
+  assert.equal((await stored(db, 'old')).receivedAt, 9_000);
+  assert.equal((await stored(db, 'w')).kind, 'whisper');
+  // Replay now follows message time, not receipt.
+  assert.deepEqual(
+    (await createHistory(db).recent('1')).map((r) => r.id),
+    ['old', 'w', 'new', 'local-1'],
+  );
   db.close();
 });
 
@@ -329,6 +395,100 @@ test('put upserts on the server id', async () => {
   const all = await h.recent('1');
   assert.equal(all.length, 1);
   assert.equal(all[0].text, 'again');
+});
+
+test('a re-delivered message keeps its first-seen receivedAt', async () => {
+  const db = await fresh();
+  const h = createHistory(db);
+  await h.put(msg({ id: 's1', receivedAt: 1_000, text: 'first' }));
+  await h.put(msg({ id: 's1', receivedAt: 9_000, text: 'again' }));
+  const record = await stored(db, 's1');
+  assert.equal(record.receivedAt, 1_000);
+  assert.equal(record.text, 'again', 'the rest of the record is the re-delivered copy');
+  assert.equal(record.orderKey, 100_000);
+});
+
+test('recent orders by message time; one mTime second keeps first-seen arrival order', async () => {
+  const h = createHistory(await fresh());
+  await h.put(msg({ id: 'late-new', mTime: '300', receivedAt: 1 }));
+  await h.put(msg({ id: 'tie-b', mTime: '200', receivedAt: 5 }));
+  await h.put(msg({ id: 'tie-a', mTime: '200', receivedAt: 7 }));
+  await h.put(msg({ id: 'early', mTime: '100', receivedAt: 9 }));
+  assert.deepEqual(
+    (await h.recent('1')).map((r) => r.id),
+    ['early', 'tie-b', 'tie-a', 'late-new'],
+  );
+  // The replay window keeps the newest by message time.
+  assert.deepEqual(
+    (await h.recent('1', 2)).map((r) => r.id),
+    ['tie-a', 'late-new'],
+  );
+});
+
+test('a pending echo orders by receipt time, then takes its server time once confirmed', async () => {
+  const db = await fresh();
+  const h = createHistory(db);
+  await h.put(msg({ id: 's1', mTime: '100' }));
+  await h.put(msg({ id: 's3', mTime: '300' }));
+  await h.addPending(msg({ id: 'local-1', mTime: '', receivedAt: 400_000 }));
+  assert.equal((await stored(db, 'local-1')).orderKey, 400_000);
+  assert.deepEqual(
+    (await h.recent('1')).map((r) => r.id),
+    ['s1', 's3', 'local-1'],
+  );
+  await h.confirmPending('local-1', msg({ id: 's2', mTime: '200', receivedAt: 400_000 }));
+  assert.equal((await stored(db, 's2')).orderKey, 200_000);
+  assert.deepEqual(
+    (await h.recent('1')).map((r) => r.id),
+    ['s1', 's2', 's3'],
+  );
+});
+
+test('a send-confirmed own message with no mTime orders by its orderAt, else its receipt time', async () => {
+  const db = await fresh();
+  const h = createHistory(db);
+  await h.put(msg({ id: 's1', mTime: '100' }));
+  await h.put(msg({ id: 's3', mTime: '300' }));
+  await h.addPending(msg({ id: 'local-1', mTime: '', receivedAt: 900_000 }));
+  await h.addPending(msg({ id: 'local-2', mTime: '', receivedAt: 900_001 }));
+  await h.confirmPending('local-1', msg({ id: 'local-1', mTime: '', receivedAt: 900_000, orderAt: 200_000 }));
+  await h.confirmPending('local-2', msg({ id: 'local-2', mTime: '', receivedAt: 900_001 }));
+  assert.equal((await stored(db, 'local-1')).orderKey, 200_000);
+  assert.equal((await stored(db, 'local-2')).orderKey, 900_001);
+  assert.deepEqual(
+    (await h.recent('1')).map((r) => r.id),
+    ['s1', 'local-1', 's3', 'local-2'],
+  );
+});
+
+test('a second tab re-storing the backlog does not reorder replay or move receipt times', async () => {
+  const name = `test-two-tabs-${++n}`;
+  const first = createHistory(await openDb({ name }));
+  const second = createHistory(await openDb({ name }));
+  // The first tab saw the backlog, then a newer message.
+  await first.put(msg({ id: 'b1', mTime: '100', receivedAt: 1_000 }));
+  await first.put(msg({ id: 'b2', mTime: '101', receivedAt: 1_001 }));
+  await first.put(msg({ id: 'n1', mTime: '200', receivedAt: 2_000 }));
+  // A newly opened tab's first poll re-delivers the backlog with its own clock, while the
+  // first tab keeps storing new messages: the writes interleave across connections.
+  await Promise.all([
+    second.put(msg({ id: 'b1', mTime: '100', receivedAt: 50_000 })),
+    first.put(msg({ id: 'n2', mTime: '300', receivedAt: 50_001 })),
+    second.put(msg({ id: 'b2', mTime: '101', receivedAt: 50_002 })),
+  ]);
+  for (const h of [first, second]) {
+    assert.deepEqual(
+      (await h.recent('1')).map((r) => r.id),
+      ['b1', 'b2', 'n1', 'n2'],
+    );
+    assert.deepEqual(
+      (await h.recent('1', 2)).map((r) => r.id),
+      ['n1', 'n2'],
+      'the newest stay in the replay window',
+    );
+  }
+  assert.equal((await first.get('b1'))?.receivedAt, 1_000);
+  assert.equal((await second.get('b2'))?.receivedAt, 1_001);
 });
 
 test('get returns the stored record by id, or undefined', async () => {

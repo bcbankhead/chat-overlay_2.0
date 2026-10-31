@@ -34,7 +34,8 @@ const msg = (user, text, over = {}) => ({
   text,
   ircFlag: '',
   lineBreakFlag: '',
-  receivedAt: at,
+  // Milliseconds against mTime's seconds, so a pending echo orders after what it follows.
+  receivedAt: at * 1000,
   ...over,
 });
 

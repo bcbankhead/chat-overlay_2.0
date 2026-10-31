@@ -11,6 +11,7 @@ import { installAttach } from './attach.js';
 import { installBox } from './box.js';
 import css from './composer.css';
 import { buildLabelledLink, isSingleHttpUrl } from './link.js';
+import { installRefocus } from './refocus.js';
 import { installSmileyButton } from './smilies.js';
 import { installWhisper } from './whisper.js';
 
@@ -55,6 +56,7 @@ function install() {
   installSmileyButton(bar);
   installWhisper(bar, host);
   installAttach(bar, host);
+  installRefocus(bar);
 }
 
 /**

@@ -5,12 +5,15 @@
 // reclassifies stored messages: a `whisper` record whose only whisper signal was the `_`
 // placeholder toUser is rewritten `public`. Nothing is deleted. Version 4 (TDF-0013) adds
 // the `avatars` store, the forum-avatar cache `{ name, url | null, at }`, with no data
-// migration.
+// migration. Version 5 (TDF-0031) orders history by message time: every `messages` record
+// gains `orderKey` (group.js), backfilled, under the new `roomID_orderKey` index
+// `[roomID, orderKey, receivedAt]`; `roomID_receivedAt` is removed. Nothing is deleted.
 
+import { orderKey } from './group.js';
 import { MAIN_DIV, isWhisper } from './parse.js';
 
 export const DB_NAME = 'tdf-chat-2';
-export const DB_VERSION = 4;
+export const DB_VERSION = 5;
 
 /** Why storage stops after another tab opened a newer version of the database. */
 export const SUPERSEDED = 'a newer version opened in another tab; reload this page';
@@ -30,7 +33,7 @@ function createSchema(db) {
   messages.createIndex('mTime', 'mTime');
   messages.createIndex('user', 'user');
   messages.createIndex('receivedAt', 'receivedAt');
-  messages.createIndex('roomID_receivedAt', ['roomID', 'receivedAt']);
+  createOrderIndex(messages);
 
   db.createObjectStore(STORES.settings, { keyPath: 'key' });
 
@@ -46,27 +49,54 @@ function createSchema(db) {
   createAvatars(db);
 }
 
+/** @param {IDBObjectStore} messages */
+function createOrderIndex(messages) {
+  messages.createIndex('roomID_orderKey', ['roomID', 'orderKey', 'receivedAt']);
+}
+
+/**
+ * Give a stored message its order key (version 5).
+ * @param {any} record
+ */
+function withOrderKey(record) {
+  return { ...record, orderKey: orderKey({ mTime: String(record.mTime ?? ''), receivedAt: record.receivedAt }) };
+}
+
 /** @param {IDBDatabase} db */
 function createAvatars(db) {
   db.createObjectStore(STORES.avatars, { keyPath: 'name' });
 }
 
 /**
- * Rewrite stored whispers the narrowed rule no longer counts as whispers (version 3). Only
+ * Rewrite a stored whisper the narrowed rule no longer counts as a whisper (version 3). Only
  * `whisper` records are touched: the rule only narrowed. MAIN_DIV is assumed because the
  * old toUser branch already required it.
- * @param {IDBObjectStore} messages
+ * @param {any} record
  */
-function reclassifyWhispers(messages) {
+function reclassifyWhisper(record) {
+  const body = { text: String(record.text ?? ''), ircFlag: record.ircFlag };
+  if (record.kind === 'whisper' && !isWhisper({ targetDiv: MAIN_DIV, toUser: record.toUser, body })) {
+    return { ...record, kind: 'public' };
+  }
+  return record;
+}
+
+/**
+ * Apply each record migration to every stored message in one cursor pass: two cursors in
+ * one upgrade would each write from the record as first read, and the later write would
+ * undo the earlier. A record no migration changes is not rewritten.
+ * @param {IDBObjectStore} messages
+ * @param {Array<(record: any) => any>} migrations
+ */
+function migrateMessages(messages, migrations) {
+  if (!migrations.length) return;
   const cursorReq = messages.openCursor();
   cursorReq.onsuccess = () => {
     const cursor = cursorReq.result;
     if (!cursor) return;
     const record = cursor.value;
-    const body = { text: String(record.text ?? ''), ircFlag: record.ircFlag };
-    if (record.kind === 'whisper' && !isWhisper({ targetDiv: MAIN_DIV, toUser: record.toUser, body })) {
-      cursor.update({ ...record, kind: 'public' });
-    }
+    const next = migrations.reduce((r, migrate) => migrate(r), record);
+    if (next !== record) cursor.update(next);
     cursor.continue();
   };
 }
@@ -93,8 +123,17 @@ export function openDb({ indexedDB = globalThis.indexedDB, name = DB_NAME, onVer
       const tx = req.transaction;
       if (!tx) return;
       if (oldVersion < 2) tx.objectStore(STORES.images).createIndex('hash', 'hash');
-      if (oldVersion < 3) reclassifyWhispers(tx.objectStore(STORES.messages));
       if (oldVersion < 4) createAvatars(req.result);
+      const messages = tx.objectStore(STORES.messages);
+      /** @type {Array<(record: any) => any>} */
+      const migrations = [];
+      if (oldVersion < 3) migrations.push(reclassifyWhisper);
+      if (oldVersion < 5) {
+        createOrderIndex(messages);
+        messages.deleteIndex('roomID_receivedAt');
+        migrations.push(withOrderKey);
+      }
+      migrateMessages(messages, migrations);
     };
     req.onsuccess = () => {
       const db = req.result;

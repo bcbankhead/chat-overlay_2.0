@@ -17,6 +17,7 @@ let at = 0;
 const msg = (user, text, over = {}) => ({
   id: String(++at),
   roomID: '1',
+  mTime: '',
   user,
   kind: 'public',
   text,
@@ -107,12 +108,21 @@ test('duplicates collapse to one tag per image, code and sender, kept from the f
   assert.equal(tags[0].sourceMessageId, first.id);
 });
 
-test('messages are ordered by receivedAt, then id, not by array order', () => {
+test('messages are ordered by message time, then receivedAt, then id, not by array order', () => {
   const image = msg('alice', img(A), { id: 'b', receivedAt: 5 });
   const reaction = msg('bob', ':h', { id: 'local-1', receivedAt: 6 });
   const between = msg('carol', 'hi', { id: 'a', receivedAt: 5 });
   // `a` sorts before `b` at the same receivedAt, so the image is directly before the reaction.
   assert.deepEqual(brief(deriveTags([reaction, image, between], 'me', CODES)), ['111111 :h bob']);
+});
+
+test('a backlog message stored late keeps its message-time place, so a reaction keeps its image', () => {
+  const image = msg('alice', img(A), { mTime: '100', receivedAt: 1_000 });
+  const reaction = msg('bob', ':h', { mTime: '101', receivedAt: 2_000 });
+  // An older message first stored between the two: by receipt it would split them; by mTime
+  // it comes first.
+  const late = msg('carol', 'hi', { mTime: '99', receivedAt: 1_500 });
+  assert.deepEqual(brief(deriveTags([image, reaction, late], 'me', CODES)), ['111111 :h bob']);
 });
 
 test('two installs on the same messages derive the same tags', () => {

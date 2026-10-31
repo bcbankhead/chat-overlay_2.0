@@ -144,8 +144,10 @@
   background: rgba(127, 127, 127, 0.18);
 }
 
-/* Whisper: a blue border, and a chip on the box's top border at the right. */
+/* Whisper: a blue border, and a chip as a tab on the box's top edge at the right, so it
+   covers none of the text; the box's corner under the tab is square. */
 :root[data-tdf-theme] #optionsBar.tdf-whisper {
+  border-radius: 6px 0 6px 6px !important;
   border-color: var(--tdf-whisper-fg) !important;
   box-shadow: 0 0 0 1px var(--tdf-whisper-fg);
 }
@@ -157,7 +159,7 @@
   align-items: center;
   gap: 6px;
   padding: 2px 4px 2px 10px;
-  border-radius: 999px;
+  border-radius: 6px 6px 0 0;
   background: var(--tdf-whisper-fg);
   color: #ffffff;
   font: 600 12px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
