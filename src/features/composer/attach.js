@@ -1,10 +1,10 @@
-// Image attach on the message box. An image dropped on the box, or chosen with the grey upload
-// icon at its right edge, waits as a 44 px thumbnail where the text starts until Enter or Send
-// posts it; its × drops it. One image at a time. The always-shown hint line sits in the box's
-// lower right.
+// Image and video attach on the message box. An image or video dropped on the box, or chosen
+// with the grey upload icon at its right edge, waits as a 44 px thumbnail (a muted video frame for
+// a video) where the text starts until Enter or Send posts it; its × drops it. One file at a
+// time. The always-shown hint line sits in the box's lower right.
 //
-// Posting uploads the image through the Share Files plugin (share.js), which posts the image
-// message to the room itself — the observed share message has the plugin's 5 fields, not the
+// Posting uploads the file through the Share Files plugin (share.js), which posts the file's
+// link message to the room itself — the observed share message has the plugin's 5 fields, not the
 // engine's 7. Any typed text then goes out through the engine's own Send, so whisper,
 // silence, length and repeat checks still apply to it. A failed upload sends nothing and keeps
 // both the text and the thumbnail, marked failed with the reason as its title.
@@ -19,7 +19,8 @@ import { uploadShare } from './share.js';
 const UPLOAD_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>';
 
-const HINT = 'Shift+Enter for newline · Drag and drop images';
+const HINT = 'Shift+Enter for newline · Drag and drop images or videos';
+const ADMITTED = /^(image|video)\//;
 const REFUSAL_MS = 3000;
 
 const themed = () => Boolean(document.documentElement.dataset.tdfTheme);
@@ -31,14 +32,14 @@ const themed = () => Boolean(document.documentElement.dataset.tdfTheme);
 export function installAttach(bar, host) {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = 'image/*';
+  input.accept = 'image/*,video/*';
   input.hidden = true;
 
   const icon = document.createElement('button');
   icon.type = 'button';
   icon.className = 'tdf-attach-icon';
-  icon.title = 'Add an image';
-  icon.setAttribute('aria-label', 'Add an image');
+  icon.title = 'Add an image or video';
+  icon.setAttribute('aria-label', 'Add an image or video');
   icon.innerHTML = UPLOAD_ICON;
 
   // A textarea's placeholder cannot sit in a corner and hides while typing; composer.css
@@ -52,13 +53,19 @@ export function installAttach(bar, host) {
   thumb.hidden = true;
   const img = document.createElement('img');
   img.alt = '';
+  // An <img> cannot render a video; a muted, paused <video> shows its first frame instead.
+  const video = document.createElement('video');
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = 'metadata';
+  video.hidden = true;
   const remove = document.createElement('button');
   remove.type = 'button';
   remove.className = 'tdf-attach-remove';
-  remove.title = 'Remove image';
-  remove.setAttribute('aria-label', 'Remove image');
+  remove.title = 'Remove attachment';
+  remove.setAttribute('aria-label', 'Remove attachment');
   remove.textContent = '×';
-  thumb.append(img, remove);
+  thumb.append(img, video, remove);
 
   host.append(input, icon, thumb, hint);
 
@@ -96,15 +103,32 @@ export function installAttach(bar, host) {
     }, REFUSAL_MS);
   };
 
+  // Removing src alone leaves the loaded video held; load() with no source releases it.
+  const dropVideo = () => {
+    if (!video.hasAttribute('src')) return;
+    video.removeAttribute('src');
+    video.load();
+  };
+
   /** @param {File | null | undefined} file */
   const attach = (file) => {
     if (!file || !themed()) return;
-    if (!/^image\//.test(file.type)) return refuse(`Only images can be attached: ${file.name}`);
-    if (pending?.busy) return refuse('An image is still uploading');
+    if (!ADMITTED.test(file.type)) return refuse(`Only images and videos can be attached: ${file.name}`);
+    if (pending?.busy) return refuse('A file is still uploading');
     if (pending) revoke(pending.url);
     const url = typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : '';
     pending = { file, url, busy: false };
-    img.src = url;
+    const isVideo = /^video\//.test(file.type);
+    // The preview not in use drops its source, so no stale image or video lingers behind it.
+    if (isVideo) {
+      video.src = url;
+      img.removeAttribute('src');
+    } else {
+      img.src = url;
+      dropVideo();
+    }
+    video.hidden = !isVideo;
+    img.hidden = isVideo;
     thumb.title = file.name;
     thumb.classList.remove('tdf-attach-failed', 'tdf-attach-busy');
     thumb.hidden = false;
@@ -116,6 +140,7 @@ export function installAttach(bar, host) {
   const clear = () => {
     if (pending) revoke(pending.url);
     pending = null;
+    dropVideo();
     thumb.hidden = true;
     thumb.classList.remove('tdf-attach-failed', 'tdf-attach-busy');
     bar.classList.remove('tdf-attach-has');
@@ -177,10 +202,10 @@ export function installAttach(bar, host) {
     if (!file || !themed()) return;
     event.preventDefault();
     attach(file);
-    if (files.length > 1 && pending?.file === file) refuse('One image at a time: the first was kept');
+    if (files.length > 1 && pending?.file === file) refuse('One file at a time: the first was kept');
   });
 
-  // With an image pending, Enter and Send post it instead of reaching the engine. Window
+  // With a file pending, Enter and Send post it instead of reaching the engine. Window
   // capture runs before the box's inline submitenter and the button's inline onclick.
   window.addEventListener(
     'keypress',

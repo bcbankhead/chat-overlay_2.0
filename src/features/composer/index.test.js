@@ -704,7 +704,7 @@ test('private boxes keep the engine styling', () => {
 
 test('the hint line is always present', () => {
   const { document } = page();
-  assert.equal(document.querySelector('.tdf-attach-hint')?.textContent, 'Shift+Enter for newline · Drag and drop images');
+  assert.equal(document.querySelector('.tdf-attach-hint')?.textContent, 'Shift+Enter for newline · Drag and drop images or videos');
 });
 
 test('a dropped image shows a thumbnail; × removes it; non-images are ignored', () => {
@@ -889,6 +889,114 @@ test('the upload icon opens the file chooser, and a chosen image attaches', () =
   assert.equal(thumb.title, 'pick.png');
 });
 
+test('a dropped mp4 attaches with a video preview in place of the image', () => {
+  const { window, document, bar } = page();
+  const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
+  const event = drop(window, bar, new window.File(['x'], 'clip.mp4', { type: 'video/mp4' }));
+  assert.equal(event.defaultPrevented, true);
+  assert.equal(thumb.hidden, false);
+  assert.equal(thumb.title, 'clip.mp4');
+  const video = thumb.querySelector('video');
+  assert.ok(video, 'the thumbnail holds a video preview');
+  assert.equal(video.hidden, false);
+  assert.equal(video.muted, true);
+  assert.notEqual(video.getAttribute('src'), null);
+  const img = thumb.querySelector('img');
+  assert.equal(img.hidden, true);
+  assert.equal(img.getAttribute('src'), null);
+  assert.equal(document.querySelector('.tdf-attach-hint')?.textContent, 'Shift+Enter for newline · Drag and drop images or videos');
+});
+
+test('the file chooser offers videos, and a chosen mp4 attaches', () => {
+  const { window, document } = page();
+  const input = /** @type {any} */ (document.querySelector('input[type=file]'));
+  assert.match(input.accept, /(^|,)video\/\*(,|$)/);
+  assert.match(input.accept, /(^|,)image\/\*(,|$)/);
+  Object.defineProperty(input, 'files', { value: [new window.File(['x'], 'pick.mp4', { type: 'video/mp4' })] });
+  input.dispatchEvent(new window.Event('change'));
+  const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
+  assert.equal(thumb.hidden, false);
+  assert.equal(thumb.title, 'pick.mp4');
+  assert.equal(thumb.querySelector('video').hidden, false);
+});
+
+test('Enter with a video pending uploads it through Share Files and clears the thumbnail', async () => {
+  const { window, document, bar, state, win } = page();
+  const calls = stubShare(win);
+  drop(window, bar, new window.File(['x'], 'clip.mp4', { type: 'video/mp4' }));
+  enter(window, bar, false);
+  assert.equal(state.sent, 0, 'the engine never saw the Enter');
+  await settle();
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].method, 'POST');
+  assert.equal(calls[1].body.get('uploadedfile').name, 'clip.mp4');
+  const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
+  assert.equal(thumb.hidden, true);
+  assert.equal(thumb.querySelector('video').getAttribute('src'), null, 'no video source is left behind');
+});
+
+test('an image dropped after a pending video switches the preview back, leaving no video source', () => {
+  const { window, document, bar } = page();
+  const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
+  drop(window, bar, new window.File(['x'], 'clip.mp4', { type: 'video/mp4' }));
+  drop(window, bar, new window.File(['y'], 'cat.png', { type: 'image/png' }));
+  assert.equal(thumb.title, 'cat.png');
+  const img = thumb.querySelector('img');
+  const video = thumb.querySelector('video');
+  assert.equal(img.hidden, false);
+  assert.notEqual(img.getAttribute('src'), null);
+  assert.equal(video.hidden, true);
+  assert.equal(video.getAttribute('src'), null);
+});
+
+test('an mp4 dropped after a pending image switches the preview to video, leaving no image source', () => {
+  const { window, document, bar } = page();
+  const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
+  drop(window, bar, new window.File(['y'], 'cat.png', { type: 'image/png' }));
+  drop(window, bar, new window.File(['x'], 'clip.mp4', { type: 'video/mp4' }));
+  assert.equal(thumb.title, 'clip.mp4');
+  const img = thumb.querySelector('img');
+  const video = thumb.querySelector('video');
+  assert.equal(img.hidden, true);
+  assert.equal(img.getAttribute('src'), null);
+  assert.equal(video.hidden, false);
+  assert.notEqual(video.getAttribute('src'), null);
+});
+
+test('a dropped video is released with load() when an image replaces it or × removes it', () => {
+  const { window, document, bar } = page();
+  const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
+  const video = thumb.querySelector('video');
+  let loads = 0;
+  video.load = () => {
+    loads += 1;
+  };
+  drop(window, bar, new window.File(['x'], 'clip.mp4', { type: 'video/mp4' }));
+  drop(window, bar, new window.File(['y'], 'cat.png', { type: 'image/png' }));
+  assert.equal(loads, 1, 'the image replacing the video released it');
+  thumb.querySelector('.tdf-attach-remove').click();
+  assert.equal(loads, 1, 'no video was held, so × has nothing to release');
+  drop(window, bar, new window.File(['x'], 'clip.mp4', { type: 'video/mp4' }));
+  thumb.querySelector('.tdf-attach-remove').click();
+  assert.equal(loads, 2, '× released the pending video');
+  assert.equal(video.getAttribute('src'), null);
+});
+
+test('the upload POST waits longer for a larger file; the form GET keeps 30 s', async () => {
+  const { window, bar, win } = page();
+  stubShare(win);
+  /** @type {number[]} */
+  const limits = [];
+  win.AbortSignal.timeout = (/** @type {number} */ ms) => {
+    limits.push(ms);
+    return new win.AbortController().signal;
+  };
+  drop(window, bar, new window.File([new Uint8Array(128 * 1000)], 'clip.mp4', { type: 'video/mp4' }));
+  enter(window, bar, false);
+  await settle();
+  assert.deepEqual(limits, [30000, 31000]);
+});
+
 test('with no Send button the text goes out through addMessage', async () => {
   const { window, document, bar, win } = page();
   document.getElementById('optionsSend')?.remove();
@@ -962,7 +1070,7 @@ test('a file that cannot attach says why on the hint line', async () => {
   const { window, document, bar, win } = page();
   const hint = /** @type {any} */ (document.querySelector('.tdf-attach-hint'));
   drop(window, bar, new window.File(['x'], 'notes.txt', { type: 'text/plain' }));
-  assert.equal(hint.textContent, 'Only images can be attached: notes.txt');
+  assert.equal(hint.textContent, 'Only images and videos can be attached: notes.txt');
   assert.equal(hint.classList.contains('tdf-attach-refused'), true);
 
   win.fetch = () => new Promise(() => {});
@@ -970,7 +1078,7 @@ test('a file that cannot attach says why on the hint line', async () => {
   enter(window, bar, false);
   await settle();
   drop(window, bar, new window.File(['y'], 'other.png', { type: 'image/png' }));
-  assert.equal(hint.textContent, 'An image is still uploading');
+  assert.equal(hint.textContent, 'A file is still uploading');
 });
 
 test('a drop of several images keeps the first and says so', () => {
@@ -980,7 +1088,7 @@ test('a drop of several images keeps the first and says so', () => {
   Object.defineProperty(event, 'dataTransfer', { value: { files } });
   bar.dispatchEvent(event);
   assert.equal(/** @type {any} */ (document.querySelector('.tdf-attach-thumb')).title, 'a.png');
-  assert.equal(document.querySelector('.tdf-attach-hint')?.textContent, 'One image at a time: the first was kept');
+  assert.equal(document.querySelector('.tdf-attach-hint')?.textContent, 'One file at a time: the first was kept');
 });
 
 test('before the theme mounts nothing attaches and Enter reaches the engine', () => {
