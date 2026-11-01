@@ -1,7 +1,7 @@
 // Composer modifications on the engine's own textarea#optionsBar: Shift+Enter inserts a
 // newline, a URL pasted over a selection becomes a labelled link, and the composer is restyled
-// in place (composer.css, from data-tdf-theme on <html>) with a smiley picker, image attach and
-// a whisper chip. Text still goes out through the engine — the inline submitenter calls
+// in place (composer.css, from data-tdf-theme on <html>) with a smiley picker, image and video
+// attach and a whisper chip. Text still goes out through the engine — the inline submitenter calls
 // addMessage — so whisper, silence, the length limit and the repeat filter keep applying.
 
 import { MAIN_DIV } from '../../core/parse.js';
