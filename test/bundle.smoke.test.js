@@ -272,6 +272,40 @@ test('with Chat history at 0 days messages are shown but never stored, and nothi
   assert.deepEqual(shownIds(second.document), []);
 });
 
+test('replay reaches the whole Chat history window, and the view ages rows out as it moves (TDF-0033.1)', async () => {
+  const DAY = 86_400_000;
+  let clock = Date.now();
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('retentionDays', 1);
+  const base = { roomID: '1', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '', size: '', family: '', text: 'hi', ircFlag: '0', lineBreakFlag: '0' };
+  const t = db.transaction('messages', 'readwrite');
+  // More than the old 200-line cap, all inside the 1-day window; the oldest only just inside.
+  for (let i = 0; i < 250; i++) {
+    const mTime = String(1000 + i);
+    t.objectStore('messages').put({ ...base, id: `m${i}`, mTime, receivedAt: clock - DAY + 30_000 + i * 1000, orderKey: Number(mTime) * 1000 });
+  }
+  await new Promise((resolve) => (t.oncomplete = resolve));
+  db.close();
+
+  const { document, poll } = await page(await bundled(), indexedDB, {
+    beforeEval: (window) => {
+      window.Date.now = () => clock;
+    },
+  });
+  // 250 records take fake-indexeddb longer than one settle to read.
+  for (let i = 0; i < 100 && shownIds(document).length === 0; i++) await settle();
+  assert.equal(shownIds(document).length, 250, 'every stored line in the window replays');
+  // Two minutes on, the first 90 rows have left the window; a live message trims them.
+  clock += 120_000;
+  poll(um('9999', 'carol', 'live', '2000'));
+  await settle();
+  const shown = shownIds(document);
+  assert.equal(shown[0], 'm90');
+  assert.equal(shown.at(-1), '9999');
+  assert.equal(shown.length, 250 - 90 + 1);
+});
+
 test('a stored record that will not render is skipped with a notice; the rest replay', async () => {
   const indexedDB = new IDBFactory();
   const db = await openDb({ indexedDB });

@@ -3,7 +3,7 @@
 
 import { expand } from './expand.js';
 import { continuesGroup, groupTime, localDay, orderKey, timeLabel } from './group.js';
-import { DEFAULT_REPLAY_LIMIT } from './history.js';
+import { REPLAY_CEILING } from './history.js';
 import { renderAvatar } from './avatar.js';
 import { adapt, THEME_BG } from './ink.js';
 import { safeDecodeURIComponent } from './parse.js';
@@ -26,6 +26,9 @@ const POSTED_MIN_PX = 48;
 
 /** How long a new row takes to slide into view at the bottom. */
 const SLIDE_MS = 150;
+
+/** How far the Chat history window's start must advance before the trim scans for aged rows. */
+const AGE_PASS_MS = 60_000;
 
 /**
  * Tag a posted image once its size is known, so it takes the pointer and the hover fade.
@@ -70,10 +73,24 @@ function regroup(el) {
  *   css: string,
  *   avatars?: import('./avatarResolver.js').AvatarResolver | null,
  *   now?: () => number,
+ *   windowStart?: () => number | null,
+ *   ceiling?: number,
  * }} deps `avatars` looks up forum pictures for every sender, preferred over the chat avatar;
- *   `now` is the current time in seconds, which decides whether a time shows its date
+ *   `now` is the current time in seconds, which decides whether a time shows its date;
+ *   `windowStart` is the receipt time (ms) the Chat history window starts at, or null where no
+ *   window applies, read at each trim so a change in Settings moves it; `ceiling` is the most
+ *   rows the list keeps, REPLAY_CEILING unless a test sets a smaller one
  */
-export function createView({ doc, win, container, css, avatars = null, now = () => Date.now() / 1000 }) {
+export function createView({
+  doc,
+  win,
+  container,
+  css,
+  avatars = null,
+  now = () => Date.now() / 1000,
+  windowStart = () => null,
+  ceiling = REPLAY_CEILING,
+}) {
   const style = doc.createElement('style');
   style.id = 'tdf-chat-style';
   style.textContent = css;
@@ -317,6 +334,8 @@ export function createView({ doc, win, container, css, avatars = null, now = () 
     el.dataset.t = String(t);
     // The value a reload sorts by (TDF-0031), so a live row is placed where a replay puts it.
     el.dataset.order = String(orderKey(record));
+    // What the Chat history window ages by, as retention prunes on it (TDF-0033.1).
+    if (Number.isFinite(record.receivedAt)) el.dataset.received = String(record.receivedAt);
     const chat = record.kind === 'public' || record.kind === 'whisper';
 
     // Sender family and size are ignored: every message uses the UI font (theme.css).
@@ -492,7 +511,7 @@ export function createView({ doc, win, container, css, avatars = null, now = () 
   };
 
   // Scans walk the list's children, which are only its rows: indexing the live `shown`
-  // collection re-reads the DOM per access, quadratic over a 200-row list.
+  // collection re-reads the DOM per access, quadratic over a list of thousands of rows.
 
   // The oldest row: a problem notice or appended row at the top goes first, as it always has;
   // otherwise the row with the lowest order, the first of equals (TDF-0032).
@@ -520,9 +539,37 @@ export function createView({ doc, win, container, css, avatars = null, now = () 
     return null;
   }
 
-  // The list keeps no more than a replay shows; the oldest entries go first.
+  // The window start the last age pass removed rows before; null until one has run.
+  /** @type {number | null} */
+  let agedTo = null;
+
+  // Rows received before the Chat history window, as retention would delete them. Only
+  // ordered rows: problem notices and appended rows keep their count-only treatment. Scanned
+  // only once the window has moved on far enough to matter, not on every new row.
+  function ageOut() {
+    const start = windowStart();
+    if (start === null) return;
+    if (agedTo !== null && start < agedTo + AGE_PASS_MS) {
+      // A widened window leaves nothing new to remove; the gate follows it back.
+      if (start < agedTo) agedTo = start;
+      return;
+    }
+    agedTo = start;
+    /** @type {HTMLElement[]} */
+    const aged = [];
+    for (let el = list.firstElementChild; el; el = el.nextElementSibling) {
+      const row = /** @type {HTMLElement} */ (el);
+      const received = row.dataset.received;
+      if (orderOf(row) !== null && received !== undefined && Number(received) < start) aged.push(row);
+    }
+    for (const row of aged) remove(row);
+  }
+
+  // The list keeps the Chat history window, and never more than the ceiling; the oldest
+  // entries go first (TDF-0033.1).
   function trim() {
-    while (shown.length > DEFAULT_REPLAY_LIMIT) remove(oldest());
+    ageOut();
+    while (shown.length > ceiling) remove(oldest());
   }
 
   /**

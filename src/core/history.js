@@ -28,7 +28,12 @@ import { isExpired } from './reconcile.js';
  * @property {'pending' | 'unconfirmed'} [confirm] absent on server records
  */
 
-export const DEFAULT_REPLAY_LIMIT = 200;
+/**
+ * A safety ceiling on how many rows replay shows and the view keeps. The Chat history window
+ * is the real bound (TDF-0033.1); this binds only past it, or where no window applies (a
+ * legacy null keeps everything).
+ */
+export const REPLAY_CEILING = 5000;
 
 let lastReceivedAt = 0;
 
@@ -199,9 +204,12 @@ export function createHistory(db) {
      * mTime second keep their first-seen arrival order.
      * @param {string} roomID
      * @param {number} [limit]
+     * @param {number | null} [since] records received before this time are skipped: the Chat
+     *   history window, applied here because the load-time prune may not have run yet. Order
+     *   is by message time, not receipt, so the walk skips rather than stops at an old record.
      * @returns {Promise<MessageRecord[]>}
      */
-    async recent(roomID, limit = DEFAULT_REPLAY_LIMIT) {
+    async recent(roomID, limit = REPLAY_CEILING, since = null) {
       const t = tx('readonly');
       const index = t.objectStore(STORES.messages).index('roomID_orderKey');
       const range = IDBKeyRange.bound([roomID, -Infinity, -Infinity], [roomID, Infinity, Infinity]);
@@ -213,7 +221,9 @@ export function createHistory(db) {
         req.onsuccess = () => {
           const cursor = req.result;
           if (!cursor || out.length >= limit) return resolve(undefined);
-          out.push(cursor.value);
+          /** @type {MessageRecord} */
+          const record = cursor.value;
+          if (since === null || record.receivedAt >= since) out.push(record);
           cursor.continue();
         };
       });

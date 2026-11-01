@@ -4,7 +4,9 @@
 
 import { safeDecodeURIComponent } from '../../core/parse.js';
 
-export const DAY_MS = 86_400_000;
+// The cutoff rule lives in core, which replay and the view's trim read too; one copy.
+export { DAY_MS, historyCutoff } from '../../core/retention.js';
+
 export const MB_BYTES = 1_048_576;
 
 /**
@@ -12,19 +14,6 @@ export const MB_BYTES = 1_048_576;
  * @template T
  * @typedef {{ ok: true, value: T } | { ok: false }} Parsed
  */
-
-/**
- * Messages received before the returned time are deleted. 0 keeps none (every line), a stored
- * legacy null keeps everything.
- * @param {number | null} days
- * @param {number} now
- * @returns {number | null} null when nothing expires
- */
-export function historyCutoff(days, now) {
-  if (days === null) return null;
-  if (days === 0) return Infinity;
-  return now - days * DAY_MS;
-}
 
 /**
  * Chat history (days): a whole number, 0 or more.

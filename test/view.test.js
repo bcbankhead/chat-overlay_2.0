@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
 import { timeLabel } from '../src/core/group.js';
-import { DEFAULT_REPLAY_LIMIT } from '../src/core/history.js';
 import { createView } from '../src/core/view.js';
 
 /**
@@ -67,7 +66,11 @@ function stubResize(win) {
 // The local day the pinned record times fall on (2 Jan 2026), so those times read HH:MM.
 const NOW = new Date(2026, 0, 2, 12, 0).getTime() / 1000;
 
-async function setup({ autoScroll = true, reducedMotion = false, globals = {}, now = () => NOW } = {}) {
+// The view's row ceiling in these tests: REPLAY_CEILING itself makes a full list too slow to
+// build under happy-dom, and the trim's behaviour does not depend on its size.
+const CEILING = 200;
+
+async function setup({ autoScroll = true, reducedMotion = false, globals = {}, now = () => NOW, windowStart, ceiling = CEILING } = {}) {
   const win = new Window({ url: 'https://example.test/chat/' });
   const frames = stubFrames(win);
   const resizes = stubResize(win);
@@ -79,7 +82,7 @@ async function setup({ autoScroll = true, reducedMotion = false, globals = {}, n
   const whispered = [];
   win.whisperUser = (name) => whispered.push(name);
   const container = doc.getElementById('chatContainer');
-  const view = createView({ doc, win, container, css: '#tdf-chat{}', now });
+  const view = createView({ doc, win, container, css: '#tdf-chat{}', now, windowStart, ceiling });
   const root = doc.getElementById('tdf-chat');
   return { win, doc, view, root, container, whispered, frames, resizes };
 }
@@ -276,10 +279,10 @@ test('removing or trimming a group\'s first message leaves the next one heading 
   assert.equal(msgs(root)[0].dataset.id, '2');
 
   const capped = await setup();
-  capped.view.replay(Array.from({ length: DEFAULT_REPLAY_LIMIT }, (_, i) => rec({ id: `r${i}`, mTime: String(1000 + i) })));
+  capped.view.replay(Array.from({ length: CEILING }, (_, i) => rec({ id: `r${i}`, mTime: String(1000 + i) })));
   assert.equal(heads(capped.root)[0], 'h');
   assert.equal(heads(capped.root)[1], 'c');
-  capped.view.append(rec({ id: 'x', mTime: String(1000 + DEFAULT_REPLAY_LIMIT) }));
+  capped.view.append(rec({ id: 'x', mTime: String(1000 + CEILING) }));
   assert.equal(msgs(capped.root)[0].dataset.id, 'r1');
   assert.equal(heads(capped.root)[0], 'h');
 });
@@ -388,21 +391,21 @@ test('clear empties every row and notice, keeps the scrollbar, and leaves nothin
 
 test('the list is capped: the oldest entries are trimmed and lookups still work', async () => {
   const { view, root } = await setup();
-  const over = DEFAULT_REPLAY_LIMIT + 5;
-  view.replay(Array.from({ length: DEFAULT_REPLAY_LIMIT }, (_, i) => rec({ id: `r${i}`, mTime: `${i}` })));
+  const over = CEILING + 5;
+  view.replay(Array.from({ length: CEILING }, (_, i) => rec({ id: `r${i}`, mTime: `${i}` })));
   for (let i = 0; i < over; i++) {
     view.append(rec({ id: `local-${i}`, mTime: '', confirm: 'pending' }));
-    assert.ok(msgs(root).length <= DEFAULT_REPLAY_LIMIT);
+    assert.ok(msgs(root).length <= CEILING);
   }
   view.notice('Chat history not saved: x');
-  assert.equal(msgs(root).length, DEFAULT_REPLAY_LIMIT);
+  assert.equal(msgs(root).length, CEILING);
   assert.equal(root.querySelector('[data-id^="r"]'), null);
   assert.equal(root.querySelector('[data-id="local-0"]'), null);
 
   view.confirm('local-0', rec({ id: 'gone', mTime: '900' })); // trimmed: nothing to confirm
   view.removeByMTime('3'); // trimmed: nothing to remove
   assert.equal(root.querySelector('[data-id="gone"]'), null);
-  assert.equal(msgs(root).length, DEFAULT_REPLAY_LIMIT);
+  assert.equal(msgs(root).length, CEILING);
 
   view.confirm(`local-${over - 1}`, rec({ id: '77', mTime: '300' }));
   view.markUnconfirmed(`local-${over - 2}`);
@@ -1083,7 +1086,7 @@ test('every record row carries its replay order; a problem notice carries none',
 
 test('a backlog re-delivered after the replay is trimmed; the newest rows stay', async () => {
   const { view, root } = await setup();
-  const newest = Array.from({ length: DEFAULT_REPLAY_LIMIT }, (_, i) => rec({ id: `n${i}`, mTime: `${10_000 + i}` }));
+  const newest = Array.from({ length: CEILING }, (_, i) => rec({ id: `n${i}`, mTime: `${10_000 + i}` }));
   view.replay(newest);
   // The engine's first poll: the server backlog, oldest first, overlapping the replay.
   // The overlap re-delivers the replayed records themselves, under their own ids.
@@ -1092,7 +1095,7 @@ test('a backlog re-delivered after the replay is trimmed; the newest rows stay',
     view.place(rec({ id: mTime >= 10_000 ? `n${mTime - 10_000}` : `b${i}`, mTime: `${mTime}` }));
   }
   const shown = ids(root);
-  assert.equal(shown.length, DEFAULT_REPLAY_LIMIT);
+  assert.equal(shown.length, CEILING);
   assert.deepEqual(shown, newest.map((r) => r.id), 'exactly the replayed window, in order');
 });
 
@@ -1198,9 +1201,9 @@ test('a row inserted above does not move a user scrolled up', async () => {
 test('a problem notice at the top is trimmed first, ahead of a lower-ordered row below it', async () => {
   const { view, root } = await setup();
   view.notice('trouble');
-  view.replay(Array.from({ length: DEFAULT_REPLAY_LIMIT }, (_, i) => rec({ id: `r${i}`, mTime: `${1000 - i}` })));
+  view.replay(Array.from({ length: CEILING }, (_, i) => rec({ id: `r${i}`, mTime: `${1000 - i}` })));
   const shown = ids(root);
-  assert.equal(shown.length, DEFAULT_REPLAY_LIMIT);
+  assert.equal(shown.length, CEILING);
   assert.equal(shown[0], 'r0', 'the notice went, every record stayed');
   assert.ok(!root.querySelector('.tdf-notice'));
 });
@@ -1224,11 +1227,11 @@ test('a row placed into a list holding only notices goes below them', async () =
 
 test('an own message ordered by a slow clock survives the trim of a full list', async () => {
   const { view, root } = await setup();
-  view.replay(Array.from({ length: DEFAULT_REPLAY_LIMIT }, (_, i) => rec({ id: `n${i}`, mTime: `${10_000 + i}` })));
+  view.replay(Array.from({ length: CEILING }, (_, i) => rec({ id: `n${i}`, mTime: `${10_000 + i}` })));
   // Before the first poll: no skew correction, and the device clock reads far behind the server.
   view.append(rec({ id: 'own', mTime: '', user: 'alice', receivedAt: 1000, confirm: 'pending' }));
   const shown = ids(root);
-  assert.equal(shown.length, DEFAULT_REPLAY_LIMIT);
+  assert.equal(shown.length, CEILING);
   assert.equal(shown.at(-1), 'own');
   assert.equal(shown[0], 'n1', 'the oldest ordered row went instead');
   view.confirm('own', rec({ id: '9', mTime: '20000', user: 'alice' }));
@@ -1257,4 +1260,84 @@ test('a server message lands below an own message its confirm re-ordered later',
   view.confirm('local-1', rec({ id: '2', mTime: '130', user: 'alice' }));
   view.place(rec({ id: '3', mTime: '110' }));
   assert.deepEqual(ids(root), ['1', '2', '3']);
+});
+
+// The Chat history window (TDF-0033.1): the trim ages rows out by receipt time, and the count
+// ceiling binds only past the window or where there is none.
+
+test('the age trim removes only ordered rows received before the window', async () => {
+  let start = 500;
+  const { view, root } = await setup({ windowStart: () => start });
+  view.replay([
+    rec({ id: 'old', mTime: '1000', receivedAt: 100 }),
+    rec({ id: 'edge', mTime: '1001', receivedAt: 500 }),
+    rec({ id: 'new', mTime: '1002', receivedAt: 900 }),
+  ]);
+  view.notice('trouble');
+  view.append(rec({ id: 'local-1', mTime: '', confirm: 'pending', receivedAt: 50 }));
+  assert.deepEqual(ids(root), ['edge', 'new', '-', 'local-1']);
+  assert.equal(root.querySelector('[data-id="edge"]').dataset.received, '500');
+  start = 900 + 60_000;
+  view.place(rec({ id: 'later', mTime: '1003', receivedAt: 100_000 }));
+  assert.deepEqual(ids(root), ['-', 'local-1', 'later'], 'notices and appended rows are not aged');
+});
+
+test('live appends do not trim replayed rows still inside the window', async () => {
+  // Past the old 200-row cap, which trimmed replayed rows as live ones arrived.
+  const { view, root } = await setup({ windowStart: () => 0, ceiling: 300 });
+  const replayed = Array.from({ length: 250 }, (_, i) => rec({ id: `r${i}`, mTime: `${1000 + i}`, receivedAt: 10 + i }));
+  view.replay(replayed);
+  for (let i = 0; i < 20; i++) view.append(rec({ id: `local-${i}`, mTime: '', confirm: 'pending', receivedAt: 5000 + i }));
+  assert.equal(msgs(root).length, 270);
+  assert.ok(root.querySelector('[data-id="r0"]'), 'the oldest replayed row is still shown');
+});
+
+test('with no window (0 days or a legacy null) only the ceiling binds', async () => {
+  const { view, root } = await setup({ windowStart: () => null, ceiling: 250 });
+  view.replay(Array.from({ length: 260 }, (_, i) => rec({ id: `r${i}`, mTime: `${1000 + i}`, receivedAt: i })));
+  const shown = ids(root);
+  assert.equal(shown.length, 250, 'the ceiling, not the old 200');
+  assert.equal(shown[0], 'r10', 'the oldest went first');
+});
+
+test('the window binds before the ceiling does', async () => {
+  const { view, root } = await setup({ windowStart: () => 100 });
+  view.replay(Array.from({ length: CEILING + 10 }, (_, i) => rec({ id: `r${i}`, mTime: `${1000 + i}`, receivedAt: i })));
+  const shown = ids(root);
+  assert.equal(shown.length, CEILING + 10 - 100);
+  assert.equal(shown[0], 'r100');
+});
+
+test('the age pass waits until the window start has advanced a minute', async () => {
+  let start = 1_000_000;
+  const { view, root } = await setup({ windowStart: () => start });
+  view.replay([
+    rec({ id: 'a', mTime: '1000', receivedAt: 1_000_000 + 30_000 }),
+    rec({ id: 'b', mTime: '1001', receivedAt: 1_000_000 + 120_000 }),
+  ]);
+  assert.deepEqual(ids(root), ['a', 'b']);
+  start = 1_000_000 + 59_000; // 'a' is now outside, but the pass is not due
+  view.place(rec({ id: 'c', mTime: '1002', receivedAt: 2_000_000 }));
+  assert.deepEqual(ids(root), ['a', 'b', 'c']);
+  start = 1_000_000 + 60_000;
+  view.place(rec({ id: 'd', mTime: '1003', receivedAt: 2_000_000 }));
+  assert.deepEqual(ids(root), ['b', 'c', 'd']);
+});
+test('a widened window moves the age gate back with it', async () => {
+  let start = 1_000_000;
+  const { view, root } = await setup({ windowStart: () => start });
+  view.replay([rec({ id: 'a', mTime: '1000', receivedAt: 2_000_000 })]);
+  start = 900_000; // Chat history raised: nothing to remove, the gate follows
+  view.place(rec({ id: 'b', mTime: '1001', receivedAt: 940_000 }));
+  assert.deepEqual(ids(root), ['a', 'b']);
+  start = 960_000; // a minute past the widened start, not past the first one
+  view.place(rec({ id: 'c', mTime: '1002', receivedAt: 2_000_000 }));
+  assert.deepEqual(ids(root), ['a', 'c']);
+});
+
+test('a row with no receipt time carries none and is never aged out', async () => {
+  const { view, root } = await setup({ windowStart: () => 1_000_000 });
+  view.replay([rec({ id: 'a', mTime: '1000', receivedAt: undefined })]);
+  assert.equal(root.querySelector('[data-id="a"]').dataset.received, undefined);
+  assert.deepEqual(ids(root), ['a']);
 });

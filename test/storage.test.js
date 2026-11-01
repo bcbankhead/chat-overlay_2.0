@@ -425,6 +425,30 @@ test('recent orders by message time; one mTime second keeps first-seen arrival o
   );
 });
 
+test('recent with a window start skips records received before it, keeping order and limit', async () => {
+  const h = createHistory(await fresh());
+  // Message time and receipt time disagree on purpose: the window is by receipt.
+  await h.put(msg({ id: 'old-late', mTime: '400', receivedAt: 100 }));
+  await h.put(msg({ id: 'a', mTime: '100', receivedAt: 600 }));
+  await h.put(msg({ id: 'b', mTime: '200', receivedAt: 500 }));
+  await h.put(msg({ id: 'old', mTime: '250', receivedAt: 499 }));
+  await h.put(msg({ id: 'c', mTime: '300', receivedAt: 700 }));
+  assert.deepEqual(
+    (await h.recent('1', Infinity, 500)).map((r) => r.id),
+    ['a', 'b', 'c'],
+    'an old record newer by message time is skipped, not a stop',
+  );
+  assert.deepEqual((await h.recent('1', 2, 500)).map((r) => r.id), ['b', 'c']);
+  assert.deepEqual((await h.recent('1', Infinity, null)).map((r) => r.id), ['a', 'b', 'old', 'c', 'old-late']);
+  assert.deepEqual(await h.recent('1', Infinity, Infinity), [], 'a cutoff of Infinity keeps nothing');
+});
+
+test('recent by default reaches past the old 200-record cap', async () => {
+  const h = createHistory(await fresh());
+  for (let i = 0; i < 250; i++) await h.put(msg({ id: `m${i}`, mTime: String(1000 + i), receivedAt: i + 1 }));
+  assert.equal((await h.recent('1')).length, 250);
+});
+
 test('a pending echo orders by receipt time, then takes its server time once confirmed', async () => {
   const db = await fresh();
   const h = createHistory(db);
