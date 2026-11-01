@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
+import { IDBFactory, IDBKeyRange, IDBObjectStore } from 'fake-indexeddb';
 import { Window } from 'happy-dom';
 import { build } from '../build.mjs';
 import { CLOAK_FADE_MS, CLOAK_ID, CLOAK_MS } from '../src/core/cloak.js';
@@ -789,6 +789,67 @@ test('with Chat history at 0 days a block still toggles, but its state is not st
   head.click();
   await settle();
   assert.equal(head.getAttribute('aria-expanded'), 'false');
+  assert.equal(await storedBlockStates(indexedDB), undefined);
+  await shell.window.happyDOM.close();
+});
+
+/**
+ * Make one IDBObjectStore method throw for the block-state row until the returned restore runs.
+ * @param {'get' | 'put'} method
+ */
+const failBlockState = (method) => {
+  const original = IDBObjectStore.prototype[method];
+  IDBObjectStore.prototype[method] = function (...args) {
+    const key = method === 'get' ? args[0] : args[0]?.key;
+    if (key === 'serverHistoryBlocks') throw new DOMException('injected', 'UnknownError');
+    return original.apply(this, args);
+  };
+  return () => {
+    IDBObjectStore.prototype[method] = original;
+  };
+};
+const noticeTexts = (document) => [...document.querySelectorAll('#tdf-chat .tdf-notice')].map((el) => el.textContent);
+
+test('a failed block-state read shows blocks expanded with a notice saying why', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const restore = failBlockState('get');
+  let shell;
+  try {
+    shell = await page(bundle, indexedDB);
+    historyPoll(shell, um('1', 'bob', 'old', '100'));
+    await settle();
+  } finally {
+    restore();
+  }
+  assert.ok(
+    noticeTexts(shell.document).some((t) => /Server history blocks shown expanded: their state was not read \(injected\)/.test(t)),
+  );
+  const head = blockHeadOf(shell.document);
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  head.click();
+  await settle();
+  assert.equal(head.getAttribute('aria-expanded'), 'false', 'blocks still toggle');
+  await shell.window.happyDOM.close();
+});
+
+test('a failed block-state write raises a notice, and the block still toggles', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const shell = await page(bundle, indexedDB);
+  historyPoll(shell, um('1', 'bob', 'old', '100'));
+  await settle();
+  const head = blockHeadOf(shell.document);
+  // The throw lands in the read-modify-write callback, so the transaction aborts (AbortError).
+  const restore = failBlockState('put');
+  try {
+    head.click();
+    await settle();
+  } finally {
+    restore();
+  }
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+  assert.ok(noticeTexts(shell.document).some((t) => /Server history block state not saved: \S/.test(t)));
   assert.equal(await storedBlockStates(indexedDB), undefined);
   await shell.window.happyDOM.close();
 });

@@ -7,6 +7,7 @@
 
 import { createBlockState } from '../../core/blockState.js';
 import { STORES, done, request } from '../../core/db.js';
+import { describeError } from '../../core/errors.js';
 import { emitDeleted } from '../../core/events.js';
 import { historyCutoff, megabytesToBytes } from './selectors.js';
 
@@ -61,8 +62,7 @@ export function createLimits({ db, gallery, now = Date.now }) {
       await forgetBlocks(range === null ? null : touched);
     } catch (err) {
       // The lines are gone and announced; say so, so the failure is not read as theirs.
-      const cause = err instanceof Error ? err.message : JSON.stringify(err);
-      throw new Error(`lines deleted, but their server-history block state was not cleared: ${cause}`);
+      throw new Error(`lines deleted, but their server-history block state was not cleared: ${describeError(err)}`);
     }
     return ids;
   };

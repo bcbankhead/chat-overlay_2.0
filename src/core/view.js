@@ -510,6 +510,7 @@ export function createView({
    */
   function remove(el) {
     const next = el.nextElementSibling;
+    if (/** @type {HTMLElement} */ (el).dataset.block) blocksDirty = true;
     unindex(el);
     resized?.unobserve(el);
     el.remove();
@@ -525,8 +526,8 @@ export function createView({
   const appended = new WeakSet();
 
   /**
-   * A row's replay order, or null for a problem notice, which has none, and for an appended row,
-   * which is passed over the same way.
+   * A row's replay order, or null for a problem notice or a block header, which have none, and
+   * for an appended row, which is passed over the same way.
    * @param {Element} el
    */
   const orderOf = (el) => {
@@ -535,7 +536,8 @@ export function createView({
     return order === undefined ? null : Number(order);
   };
 
-  // Scans walk the list's children, which are only its rows: indexing the live `shown`
+  // Scans walk the list's children, its rows plus any server-history block headers, which every
+  // scan passes over (orderOf is null for them, isHead skips them): indexing the live `shown`
   // collection re-reads the DOM per access, quadratic over a list of thousands of rows.
 
   /** @param {Element | null} el */
@@ -610,8 +612,9 @@ export function createView({
   const heads = new Map();
   /** @type {Map<string, boolean>} states toggled this load, ahead of the stored ones */
   const toggled = new Map();
-  // Set when a block row is rendered; with no header up and nothing rendered, there is nothing
-  // to sync and the scan is skipped.
+  // Set when a block row is rendered or removed, or a block is toggled; otherwise no header can
+  // need moving, relabelling or hiding, and the scan is skipped, so a live row with no block
+  // costs no walk of the list.
   let blocksDirty = false;
 
   /** @param {string} id */
@@ -629,7 +632,7 @@ export function createView({
   // Place, label and remove headers to match the rows now in the list, and hide the rows of
   // collapsed blocks.
   function syncBlocks() {
-    if (!blocksDirty && heads.size === 0) return;
+    if (!blocksDirty) return;
     blocksDirty = false;
     /** @type {HTMLElement[]} */
     const rows = [];
