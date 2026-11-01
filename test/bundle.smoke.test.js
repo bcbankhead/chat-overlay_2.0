@@ -306,6 +306,42 @@ test('replay reaches the whole Chat history window, and the view ages rows out a
   assert.equal(shown.length, 250 - 90 + 1);
 });
 
+for (const [label, value] of /** @type {const} */ ([
+  ['a legacy no-limit setting', null],
+  ['a stored value no cutoff can be made from', 'x'],
+])) {
+  test(`with ${label}, old lines replay and nothing ages out (TDF-0033.1)`, async () => {
+    const DAY = 86_400_000;
+    let clock = Date.now();
+    const indexedDB = new IDBFactory();
+    const db = await openDb({ indexedDB });
+    const s = db.transaction('settings', 'readwrite');
+    s.objectStore('settings').put({ key: 'retentionDays', value });
+    await new Promise((resolve) => (s.oncomplete = resolve));
+    const base = { roomID: '1', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '', size: '', family: '', text: 'hi', ircFlag: '0', lineBreakFlag: '0' };
+    const t = db.transaction('messages', 'readwrite');
+    // Ten days old: outside any window a days value would set.
+    for (let i = 0; i < 5; i++) {
+      const mTime = String(1000 + i);
+      t.objectStore('messages').put({ ...base, id: `m${i}`, mTime, receivedAt: clock - 10 * DAY + i * 1000, orderKey: Number(mTime) * 1000 });
+    }
+    await new Promise((resolve) => (t.oncomplete = resolve));
+    db.close();
+
+    const { document, poll } = await page(await bundled(), indexedDB, {
+      beforeEval: (window) => {
+        window.Date.now = () => clock;
+      },
+    });
+    for (let i = 0; i < 20 && shownIds(document).length === 0; i++) await settle();
+    assert.deepEqual(shownIds(document), ['m0', 'm1', 'm2', 'm3', 'm4']);
+    clock += 120_000;
+    poll(um('9999', 'carol', 'live', '2000'));
+    await settle();
+    assert.deepEqual(shownIds(document), ['m0', 'm1', 'm2', 'm3', 'm4', '9999']);
+  });
+}
+
 test('a stored record that will not render is skipped with a notice; the rest replay', async () => {
   const indexedDB = new IDBFactory();
   const db = await openDb({ indexedDB });

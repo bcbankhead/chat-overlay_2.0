@@ -136,14 +136,16 @@ async function start(lift, coreReady) {
       }),
     );
     const { expired, pending } = await history.expirePending(roomID);
+    // Where the window starts now, read from the live setting so a change in Settings moves it.
+    // At 0 days, for a legacy null and for a stored value no cutoff can be made from (which
+    // the Options feature reports) there is no window, and only the ceiling bounds the view.
+    const windowStart = () =>
+      typeof retentionDays === 'number' && Number.isFinite(retentionDays) && retentionDays > 0
+        ? historyCutoff(retentionDays, Date.now())
+        : null;
     // Replay reaches the whole Chat history window (TDF-0033.1), filtered here rather than
     // left to the Options feature's load-time prune, which may finish after this read.
-    const records =
-      retentionDays === 0 ? [] : await history.recent(roomID, REPLAY_CEILING, historyCutoff(retentionDays, Date.now()));
-    // Where the window starts now, read from the live setting so a change in Settings moves it.
-    // At 0 days and for a legacy null there is no window, and only the ceiling bounds the view.
-    const windowStart = () =>
-      retentionDays === 0 || retentionDays === null ? null : historyCutoff(retentionDays, Date.now());
+    const records = retentionDays === 0 ? [] : await history.recent(roomID, REPLAY_CEILING, windowStart());
 
     // Published for the rail and the profile flyout, which show the same avatars.
     const avatars = createAvatarResolver({ win, db });
