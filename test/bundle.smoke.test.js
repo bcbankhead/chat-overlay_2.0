@@ -879,6 +879,7 @@ test('a failed read of Collapse server history automatically starts anyway, bloc
     ),
   );
   assert.equal(blockHeadOf(shell.document).getAttribute('aria-expanded'), 'true');
+  assert.equal(await storedBlockStates(indexedDB), undefined, 'a fallback state is not stored as a choice');
   await shell.window.happyDOM.close();
 });
 

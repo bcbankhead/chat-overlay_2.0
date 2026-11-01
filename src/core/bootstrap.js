@@ -1,5 +1,5 @@
 // Entry point. The double-load guard is the first statement (TDF-0009 Shared Contract): a
-// second copy — userscript plus site include — sets up nothing. Features open their own
+// second copy â€” userscript plus site include â€” sets up nothing. Features open their own
 // database connections, wrap engine globals and write the DOM themselves, so each guards
 // itself with its own `__tdfChat2*` flag; build.mjs's checkSecondCopyInert verifies that a
 // second copy touches nothing past those flags. The flag is set at once, but the start waits
@@ -179,9 +179,10 @@ async function start(lift, coreReady) {
       collapsed: (id) => blockStates[id],
       toggle: storeBlock,
       // A block's first state is stored too, so a later change of the setting does not flip it
-      // (TDF-0033.3); not after a failed read, where it would overwrite a state never read.
+      // (TDF-0033.3); not after a failed block-state read, where it would overwrite a state never
+      // read, nor after a failed read of the setting, whose fallback is no member's choice.
       settle: (id, collapsed) => {
-        if (blockStatesFailed === null) storeBlock(id, collapsed);
+        if (blockStatesFailed === null && autoCollapseFailed === null) storeBlock(id, collapsed);
       },
     };
     // Whether a block with no stored state arrives collapsed (TDF-0033.3), followed live; every
