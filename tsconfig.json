@@ -32,6 +32,7 @@
     "src/features/profile/textStyle.js",
     "src/features/gallery/shareParse.js",
     "src/features/gallery/hash.js",
+    "src/features/gallery/roster.js",
     "src/features/tagging/reactions.js",
     "src/features/tagging/infer.js",
     "src/features/tagging/queue.js",

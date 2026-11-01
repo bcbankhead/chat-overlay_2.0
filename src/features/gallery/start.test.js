@@ -93,7 +93,51 @@ test('with Include my images on, only the signed-in user\'s own share, named by 
   }
 });
 
-test('clicking a Gallery tile opens its share URL in a new tab through win.open', async () => {
+test('with Use media quickview off, clicking a Gallery tile opens its share URL in a new tab through win.open', async () => {
+  const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
+  const doc = win.document;
+  /** @type {unknown[][]} */
+  const calls = [];
+  win.open = (/** @type {unknown[]} */ ...args) => {
+    calls.push(args);
+    return {};
+  };
+  /** @type {string[]} */
+  const fetched = [];
+  win.fetch = async (/** @type {unknown} */ input) => {
+    fetched.push(String(input));
+    return new Response('gone', { status: 404 });
+  };
+  const logged = console.error;
+  console.error = () => {};
+  try {
+    const indexedDB = new IDBFactory();
+    await createImageStore(await openDb({ indexedDB })).put(
+      /** @type {any} */ ({ id: ID, messageId: '7', user: 'alice', mTime: '100', roomID: '1', receivedAt: 1, contentType: 'image/png', thumb: null, bytes: 0, favorite: false, broken: false }),
+    );
+    await createSettings(await openDb({ indexedDB })).set('useMediaQuickview', false);
+    startGallery({ win, doc, css: '', indexedDB });
+    const panel = listPanels().find((p) => p.id === 'gallery');
+    assert.ok(panel);
+    const body = doc.createElement('div');
+    const cleanup = panel.render(body);
+    await settle();
+    const tile = /** @type {HTMLElement | null} */ (body.querySelector('.tdf-gallery-tile'));
+    assert.ok(tile);
+    tile.click();
+    assert.deepEqual(calls, [[shareUrl(ID, win.location.href), '_blank']]);
+    await settle();
+    assert.deepEqual(fetched, [shareUrl(ID, win.location.href)], 'the background probe goes through win.fetch');
+    const store = createImageStore(await openDb({ indexedDB }));
+    assert.equal((await store.list())[0].brokenReason, 'HTTP 404', 'and marks a dead copy broken');
+    if (typeof cleanup === 'function') cleanup();
+  } finally {
+    console.error = logged;
+    clearGalleryErrors();
+  }
+});
+
+test('by default a Gallery tile opens the media popover, whose zoom opens the share URL through win.open', async () => {
   const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   const doc = win.document;
   /** @type {unknown[][]} */
@@ -124,11 +168,16 @@ test('clicking a Gallery tile opens its share URL in a new tab through win.open'
     const tile = /** @type {HTMLElement | null} */ (body.querySelector('.tdf-gallery-tile'));
     assert.ok(tile);
     tile.click();
+    assert.deepEqual(calls, [], 'no tab opens on the tile click');
+    const stageImg = /** @type {HTMLElement | null} */ (doc.querySelector('.tdf-lb .tdf-lb-image'));
+    assert.ok(stageImg, 'the popover shows the image');
+    stageImg.click();
     assert.deepEqual(calls, [[shareUrl(ID, win.location.href), '_blank']]);
     await settle();
     assert.deepEqual(fetched, [shareUrl(ID, win.location.href)], 'the background probe goes through win.fetch');
     const store = createImageStore(await openDb({ indexedDB }));
     assert.equal((await store.list())[0].brokenReason, 'HTTP 404', 'and marks a dead copy broken');
+    /** @type {HTMLElement} */ (doc.querySelector('.tdf-lb-close')).click();
     if (typeof cleanup === 'function') cleanup();
   } finally {
     console.error = logged;

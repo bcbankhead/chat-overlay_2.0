@@ -8,7 +8,7 @@ import { openDb } from '../../core/db.js';
 import { describeError } from '../../core/errors.js';
 import { onConfirmChange, onDeleted, onInbound } from '../../core/events.js';
 import { createHistory } from '../../core/history.js';
-import { createSettings, DEFAULTS } from '../../core/settings.js';
+import { createSettings, DEFAULTS, followSetting } from '../../core/settings.js';
 import { engineSend, resetRepeat } from './engineSend.js';
 import { createReactionQueue } from './queue.js';
 import { toHexColor } from './reactions.js';
@@ -170,14 +170,18 @@ export function startTagging({ win, doc, css, indexedDB = win.indexedDB }) {
     doc.head.appendChild(style);
   }
 
-  const ready = openDb({ indexedDB }).then(async (db) => {
+  const opened = openDb({ indexedDB });
+  // Read at each image click (ui.js), which cannot await; a failed open is reported through
+  // ready below, a failed read through fail.
+  const quickview = followSetting(opened.then(createSettings), 'useMediaQuickview', fail);
+  const ready = opened.then(async (db) => {
     interval = await createSettings(db).get('likeIntervalSeconds');
     const created = createTagStore({ db, history: createHistory(db), roomID, me, codes });
     // The store holds inbound until its first rebuild completes.
     store = created;
     for (const fn of early.splice(0)) fn(created).catch(fail);
     await created.rebuildRoom();
-    installReactionUi({ doc, win, store: created, queue, codes });
+    installReactionUi({ doc, win, store: created, queue, codes, quickview, report: fail });
   });
   ready.catch(fail);
   return ready;

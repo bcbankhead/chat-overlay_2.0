@@ -30,8 +30,8 @@ const row = ({ kind = 'public', href = `plugins/share/view.php?id=${A}`, id = '1
 const textRow = (body, { kind = 'public', id = '5' } = {}) =>
   `<div class="tdf-msg tdf-kind-${kind}" data-id="${id}"><span class="tdf-line"><span class="tdf-body">${body}</span></span></div>`;
 
-/** @param {{ likes?: import('./infer.js').LikeCount, accept?: boolean, request?: import('./queue.js').SendRequest | null, codes?: string[], user?: string, me?: string }} [opts] */
-function page({ likes = NONE, accept = true, request = null, codes = [...CODES], user = 'alice', me = 'me' } = {}) {
+/** @param {{ likes?: import('./infer.js').LikeCount, accept?: boolean, request?: import('./queue.js').SendRequest | null, codes?: string[], user?: string, me?: string, quickview?: { on: boolean }, blocked?: boolean }} [opts] */
+function page({ likes = NONE, accept = true, request = null, codes = [...CODES], user = 'alice', me = 'me', quickview, blocked = false } = {}) {
   const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   const doc = win.document;
   win.mySmiliesImg = CODES.map((c, i) => `<img src='smilies/${i}.gif' alt='${c}'>`);
@@ -39,7 +39,9 @@ function page({ likes = NONE, accept = true, request = null, codes = [...CODES],
   doc.body.innerHTML = `<div id="tdf-chat"><div class="tdf-list">${row({ user })}</div></div>`;
   /** @type {unknown[]} */
   const opened = [];
-  win.open = (/** @type {unknown[]} */ ...args) => opened.push(args);
+  win.open = (/** @type {unknown[]} */ ...args) => (opened.push(args), blocked ? null : {});
+  /** @type {unknown[]} */
+  const reports = [];
 
   /** @type {Set<() => void>} */
   const storeListeners = new Set();
@@ -82,6 +84,8 @@ function page({ likes = NONE, accept = true, request = null, codes = [...CODES],
     queue,
     codes,
     burst: (_doc, _win, anchor) => bursts.push(anchor),
+    ...(quickview ? { quickview: () => quickview.on } : {}),
+    report: (err) => reports.push(err),
   });
   /** @param {Element} el @param {string} [type] */
   const mouse = (el, type = 'click', x = 50, y = 60) => {
@@ -111,7 +115,7 @@ function page({ likes = NONE, accept = true, request = null, codes = [...CODES],
       timers.shift()?.();
     }
   };
-  return { win, doc, store, queue, opened, sent, timers, bursts, run, click, rightClick, posted, frame, like, stack, stackSize, state, uninstall };
+  return { win, doc, store, queue, opened, reports, sent, timers, bursts, run, click, rightClick, posted, frame, like, stack, stackSize, state, uninstall };
 }
 
 test('a posted image with a share id sits in a frame holding a like button and a stack, beside its link', () => {
@@ -460,4 +464,149 @@ test('uninstall detaches the click handler and the like listener', () => {
   assert.equal(p.click(p.posted()).defaultPrevented, false);
   p.store.like(A, 'bob');
   assert.deepEqual(p.bursts, []);
+});
+
+const B = '100000000222222';
+const C = '100000000333333';
+/** @param {string} id */
+const shareHref = (id) => `https://chat.example.com/forum/chat/plugins/share/view.php?id=${id}`;
+
+/** Three share rows: public A, a whisper with B, public C, then A again. */
+const roster = () =>
+  row({ id: '1' }) +
+  row({ kind: 'whisper', id: '2', href: `plugins/share/view.php?id=${B}` }) +
+  textRow('hello', { id: '3' }) +
+  row({ id: '4', href: `plugins/share/view.php?id=${C}` }) +
+  row({ id: '5' });
+
+test('quickview on: a posted image opens the media popover over the chat\'s shares in chat order, not a tab', () => {
+  const p = page({ quickview: { on: true } });
+  p.doc.querySelector('.tdf-list').innerHTML = roster();
+  p.store.set(NONE);
+  const imgs = [...p.doc.querySelectorAll('img.tdf-posted')];
+  p.click(imgs[3]);
+  assert.equal(p.doc.querySelector('.tdf-lb-count')?.textContent, '1 / 3', 'the repeat of A opens at A');
+  const event = p.click(imgs[2]);
+  assert.equal(event.defaultPrevented, true);
+  assert.deepEqual(p.opened, [], 'no tab opens');
+  const layer = p.doc.querySelector('.tdf-lb');
+  assert.ok(layer, 'the popover opens');
+  assert.equal(p.doc.querySelector('.tdf-lb-count')?.textContent, '3 / 3', 'A, B, C: the repeat of A is not listed twice');
+  assert.equal(p.doc.querySelector('.tdf-lb-stage img')?.getAttribute('src'), shareHref(C));
+  // Zoom opens the share in a new tab inside the click, as the off path does.
+  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-stage img')).click();
+  assert.deepEqual(p.opened, [[shareHref(C), '_blank', 'noopener']]);
+  p.run();
+  assert.deepEqual(p.sent, [], 'opening likes nothing');
+  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-close')).click();
+});
+
+test('quickview on: a whispered share opens the popover at itself; like frames stay public-only', () => {
+  const p = page({ quickview: { on: true } });
+  p.doc.querySelector('.tdf-list').innerHTML = roster();
+  p.store.set(NONE);
+  const whisper = /** @type {Element} */ (p.doc.querySelector('.tdf-kind-whisper img'));
+  assert.equal(whisper.closest('.tdf-rx-frame'), null, 'a whisper gets no like frame');
+  assert.equal(p.doc.querySelectorAll('.tdf-rx-frame').length, 3);
+  const event = p.click(whisper);
+  assert.equal(event.defaultPrevented, true, 'the whisper link is not followed');
+  assert.equal(p.doc.querySelector('.tdf-lb-count')?.textContent, '2 / 3');
+  assert.deepEqual(p.opened, []);
+  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-close')).click();
+});
+
+test('quickview off: a posted image opens its tab inside the click and a whisper keeps following its link', () => {
+  const p = page({ quickview: { on: false } });
+  p.doc.querySelector('.tdf-list').innerHTML = roster();
+  p.store.set(NONE);
+  const event = p.click(/** @type {Element} */ (p.doc.querySelector('.tdf-kind-public img')));
+  assert.equal(event.defaultPrevented, true);
+  assert.deepEqual(p.opened, [[shareHref(A), '_blank', 'noopener']], 'opened synchronously, within the click');
+  assert.equal(p.doc.querySelector('.tdf-lb'), null);
+  assert.equal(p.click(/** @type {Element} */ (p.doc.querySelector('.tdf-kind-whisper img'))).defaultPrevented, false);
+  assert.equal(p.doc.querySelector('.tdf-lb'), null);
+});
+
+test('the quickview setting is read at each click, so a toggle applies without reinstalling', () => {
+  const setting = { on: false };
+  const p = page({ quickview: setting });
+  p.click(p.posted());
+  assert.equal(p.opened.length, 1);
+  assert.equal(p.doc.querySelector('.tdf-lb'), null);
+  setting.on = true;
+  p.click(p.posted());
+  assert.equal(p.opened.length, 1, 'no second tab');
+  assert.ok(p.doc.querySelector('.tdf-lb'));
+  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-close')).click();
+  setting.on = false;
+  p.click(p.posted());
+  assert.equal(p.opened.length, 2);
+});
+
+test('quickview on: the corner heart still likes and opens nothing', () => {
+  const p = page({ quickview: { on: true } });
+  p.click(p.like());
+  assert.deepEqual(p.state(), ['mine queued']);
+  assert.equal(p.doc.querySelector('.tdf-lb'), null);
+});
+
+test('quickview on: a zoom the browser blocks is reported, not dropped', () => {
+  const p = page({ quickview: { on: true }, blocked: true });
+  p.click(p.posted());
+  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-stage img')).click();
+  assert.equal(p.opened.length, 1, 'the tab was attempted');
+  assert.equal(p.reports.length, 1);
+  assert.ok(p.reports[0] instanceof Error);
+  assert.equal(/** @type {Error} */ (p.reports[0]).message, 'gallery: the browser blocked the new tab');
+  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-close')).click();
+});
+
+test('quickview on: a zoom that opens its tab reports nothing', () => {
+  const p = page({ quickview: { on: true } });
+  p.click(p.posted());
+  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-stage img')).click();
+  assert.equal(p.opened.length, 1);
+  assert.deepEqual(p.reports, []);
+  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-close')).click();
+});
+
+test('quickview on: a share image the chat could not render gives no thumbnail; the others keep theirs', () => {
+  const p = page({ quickview: { on: true } });
+  p.doc.querySelector('.tdf-list').innerHTML = roster();
+  p.store.set(NONE);
+  // happy-dom loads no image: say which rendered and which did not.
+  for (const img of p.doc.querySelectorAll('img.tdf-posted')) {
+    const broken = img.closest('.tdf-kind-whisper') !== null;
+    Object.defineProperty(img, 'complete', { value: true });
+    Object.defineProperty(img, 'naturalWidth', { value: broken ? 0 : 100 });
+  }
+  p.click(/** @type {Element} */ (p.doc.querySelector('.tdf-kind-public img')));
+  const cells = [...p.doc.querySelectorAll('.tdf-lb-thumb')];
+  assert.equal(cells.length, 3);
+  assert.deepEqual(
+    cells.map((c) => c.querySelector('img')?.getAttribute('src') ?? null),
+    [shareHref(A), null, shareHref(C)],
+  );
+  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-close')).click();
+});
+
+test('quickview on: a popover that fails to open is reported, and the click still opens no tab', () => {
+  const p = page({ quickview: { on: true } });
+  const boom = new Error('popover broke');
+  p.doc.getElementById = () => {
+    throw boom;
+  };
+  const event = p.click(p.posted());
+  assert.equal(event.defaultPrevented, true);
+  assert.deepEqual(p.reports, [boom]);
+  assert.deepEqual(p.opened, []);
+  assert.equal(p.doc.querySelector('.tdf-lb'), null);
+});
+
+test('uninstall closes a popover the install opened', () => {
+  const p = page({ quickview: { on: true } });
+  p.click(p.posted());
+  assert.ok(p.doc.querySelector('.tdf-lb'));
+  p.uninstall();
+  assert.equal(p.doc.querySelector('.tdf-lb'), null);
 });

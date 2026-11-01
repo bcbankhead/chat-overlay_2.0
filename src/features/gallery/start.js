@@ -6,7 +6,7 @@
 import { openDb } from '../../core/db.js';
 import { onInbound, onLiked } from '../../core/events.js';
 import { createHistory } from '../../core/history.js';
-import { createSettings } from '../../core/settings.js';
+import { createSettings, followSetting } from '../../core/settings.js';
 import { registerRailPanel, registerUserMenuAction } from '../rail/api.js';
 import { startCapture } from './capture.js';
 import { openImage, retryImage } from './open.js';
@@ -38,6 +38,9 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
   const storeReady = ready.then((r) => r.store);
   // Reported once, above; a flyout opened later reports it again from its own load.
   storeReady.catch(() => {});
+  // Read at each tile click (view.js), which cannot await; a failed open is reported above, a
+  // failed read through report.
+  const quickview = followSetting(ready.then((r) => r.settings), 'useMediaQuickview', report);
 
   startCapture({
     ready,
@@ -73,6 +76,7 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
         report,
         open: (item) => openImage(item, { win, store: storeReady, fetch, report }),
         retry: (item) => retryImage(item, { win, store: storeReady, fetch }),
+        quickview,
       }),
   });
 

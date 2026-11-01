@@ -482,6 +482,33 @@ test('the first press outside an open flyout only closes it; panel icons switch 
   await t.teardown();
 });
 
+test('a press inside the media popover layer neither closes the flyout nor is swallowed', async () => {
+  const t = setup();
+  let cleaned = 0;
+  const off = registerRailPanel({ id: 'a', title: 'A', icon: 'A', render: () => () => cleaned++ });
+  t.icon('a').click();
+  const layer = t.doc.createElement('div');
+  layer.className = 'tdf-lb';
+  const next = t.doc.createElement('button');
+  next.className = 'tdf-lb-next';
+  next.append('Next');
+  layer.append(next);
+  t.doc.body.append(layer);
+  let clicks = 0;
+  next.addEventListener('click', () => clicks++);
+  const down = t.press(next);
+  assert.equal(down.defaultPrevented, false);
+  assert.equal(t.isOpen(), true);
+  assert.equal(cleaned, 0);
+  assert.equal(clicks, 1, 'the click reached the popover');
+  // A press on a text node inside the layer counts as inside too.
+  t.press(next.firstChild);
+  assert.equal(t.isOpen(), true);
+  layer.remove();
+  off();
+  await t.teardown();
+});
+
 test('a press that is never clicked does not swallow the next click', async () => {
   const t = setup();
   const off = registerRailPanel({ id: 'a', title: 'A', icon: 'A', render() {} });
@@ -854,4 +881,12 @@ test('a user with online.gif shows the initials tile, then the forum picture fou
   for (const img of made.filter((i) => i.getAttribute('src') === 'https://f/alice.jpg')) img.dispatchEvent(new t.win.Event('load'));
   assert.equal(alice().querySelector('img').getAttribute('src'), 'https://f/alice.jpg');
   await t.teardown();
+});
+
+test("the popover class the rail exempts matches the lightbox's own layer class", () => {
+  const rail = readFileSync(new URL('./rail.js', import.meta.url), 'utf8');
+  const lightbox = readFileSync(new URL('../gallery/lightbox.js', import.meta.url), 'utf8');
+  const layer = /const LAYER = '([^']+)';/.exec(lightbox)?.[1];
+  assert.ok(layer, 'lightbox.js declares its LAYER class');
+  assert.ok(rail.includes(`closest('.${layer}')`), `rail.js exempts .${layer}`);
 });

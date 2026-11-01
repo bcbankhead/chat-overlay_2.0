@@ -323,3 +323,164 @@
     transition: none !important;
   }
 }
+
+/* The media popover (TDF-0035, lightbox.js): a fixed layer on <body>, kept to #tdf-chat's
+   rect, above the rail (z-index 10) and its menu (11) so an open Gallery flyout does not cover
+   it. The backdrop is dark in both themes, so the current thumbnail's white border reads. */
+.tdf-lb {
+  position: fixed;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  padding: 8px;
+  gap: 8px;
+  overflow: hidden;
+  color: #ffffff;
+  background: rgba(10, 12, 16, 0.9);
+  border-radius: 10px;
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.tdf-lb button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.tdf-lb-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.tdf-lb-count {
+  flex: 1;
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+
+.tdf-lb :is(.tdf-lb-close, .tdf-lb-tab, .tdf-lb-prev, .tdf-lb-next) {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 6px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 0;
+  border-radius: 50%;
+}
+
+.tdf-lb :is(.tdf-lb-close, .tdf-lb-tab, .tdf-lb-prev, .tdf-lb-next):hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.tdf-lb :is(.tdf-lb-prev, .tdf-lb-next):disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.tdf-lb :is(button, .tdf-lb-media):focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+.tdf-lb svg {
+  width: 100%;
+  height: 100%;
+}
+
+.tdf-lb-tab[hidden] {
+  display: none;
+}
+
+.tdf-lb-main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.tdf-lb-stage {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
+.tdf-lb-media {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+.tdf-lb-image {
+  cursor: zoom-in;
+}
+
+.tdf-lb-unavailable {
+  max-width: 260px;
+  padding: 16px;
+  text-align: center;
+  opacity: 0.8;
+  cursor: pointer;
+}
+
+/* The filmstrip fills the width and scrolls sideways; the current item is outlined white. */
+.tdf-lb-strip {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  padding: 4px 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.tdf-lb-strip[hidden] {
+  display: none;
+}
+
+.tdf-lb-thumb {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  border: 2px solid transparent;
+  border-radius: 6px;
+  opacity: 0.65;
+}
+
+.tdf-lb-thumb:hover {
+  opacity: 1;
+}
+
+.tdf-lb-thumb.tdf-current {
+  border-color: #ffffff;
+  opacity: 1;
+}
+
+.tdf-lb-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tdf-lb-glyph {
+  width: 24px;
+  height: 24px;
+  opacity: 0.85;
+}

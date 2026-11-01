@@ -1,7 +1,7 @@
 // The Settings flyout (UI design 2026-10-27, Flyouts → Settings). Chat: the Auto-scroll switch
 // over the engine's #autoScrollID, and Clear chat buffer. Storage: Chat history (days), Clear
 // history now and Delete messages by user (TDF-0010), Gallery size limit (MB), Include my images
-// (TDF-0009.13) and Store images offline. A hint under each field says what the typed value
+// (TDF-0009.13) and Store images offline. Media: Use media quickview (TDF-0035). A hint under each field says what the typed value
 // would delete; the setting is written, and the deletion runs, only when the value is committed
 // (change: Enter or leaving the field). The two deletions ask first, inline. The rail gives the
 // flyout body its scrollbar.
@@ -291,7 +291,7 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
 
   /**
    * A checkbox row over a boolean setting, written on change; its hint shows only a failure.
-   * @param {'includeMyImages' | 'storeImagesOffline'} key
+   * @param {'includeMyImages' | 'storeImagesOffline' | 'useMediaQuickview'} key
    * @param {string} label
    */
   const check = (key, label) => {
@@ -323,6 +323,11 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   // Store images offline: whether capture also keeps each new image's full copy, not only its
   // thumbnail, from the next share.
   check('storeImagesOffline', 'Store images offline');
+
+  // Use media quickview: a shared image or gallery tile opens in the in-chat popover; off opens
+  // a new tab. Read at each click, so it applies without a reload (TDF-0035).
+  root.append(el('div', 'tdf-opt-section', 'Media'));
+  check('useMediaQuickview', 'Use media quickview');
 
   container.appendChild(root);
 

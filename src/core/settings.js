@@ -16,6 +16,9 @@ export const DEFAULTS = Object.freeze({
   likeIntervalSeconds: 15,
   // The chosen theme; null follows the system until the first toggle.
   theme: /** @type {'light' | 'dark' | null} */ (null),
+  // Whether a shared image or a gallery tile opens in the in-chat media popover (TDF-0035)
+  // rather than a new tab.
+  useMediaQuickview: true,
 });
 
 /** @typedef {keyof typeof DEFAULTS} SettingKey */
@@ -63,3 +66,34 @@ export function createSettings(db) {
 }
 
 /** @typedef {ReturnType<typeof createSettings>} Settings */
+
+/**
+ * A synchronous view of one setting, for a reader that cannot await: a click handler whose
+ * `win.open` must run inside the click. Its default until the stored value is read, then that
+ * value, kept current by every later committed `set`. A set heard before the read resolves
+ * wins over the read.
+ * @template {SettingKey} K
+ * @param {Promise<Settings>} ready  its rejection is the caller's to report, as the caller's own
+ *   open failure; it leaves the default
+ * @param {K} key
+ * @param {(err: unknown) => void} onError  the stored value could not be read; the default stays
+ * @returns {() => (typeof DEFAULTS)[K]}
+ */
+export function followSetting(ready, key, onError) {
+  /** @type {(typeof DEFAULTS)[K]} */
+  let value = DEFAULTS[key];
+  let heard = false;
+  onSettingChange((changed, next) => {
+    if (changed !== key) return;
+    value = /** @type {(typeof DEFAULTS)[K]} */ (next);
+    heard = true;
+  });
+  ready.then(
+    (settings) =>
+      settings.get(key).then((stored) => {
+        if (!heard) value = stored;
+      }, onError),
+    () => {},
+  );
+  return () => value;
+}
