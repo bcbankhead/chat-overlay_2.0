@@ -92,7 +92,7 @@ function userscriptBanner(root, match) {
   return [
     '// ==UserScript==',
     '// @name         TDF Chat 2.0',
-    '// @namespace    https://github.com/bcbankhead/chat-overlay_2.0',
+    '// @namespace    tdf-chat-2',
     `// @version      ${version(root)}`,
     '// @description  Modern message view with local chat history for the TDF chat',
     `// @match        ${match}`,
@@ -104,12 +104,12 @@ function userscriptBanner(root, match) {
 
 /** @param {string} root */
 function includeBanner(root) {
-  return `// TDF Chat 2.0 v${version(root)} — site include build (https://github.com/bcbankhead/chat-overlay_2.0)`;
+  return `// TDF Chat 2.0 v${version(root)} — site include build (source available upon request)`;
 }
 
 /** @param {string} root */
 function forumBanner(root) {
-  return `// TDF Forum sticky header v${forumVersion(root)} — site include build (https://github.com/bcbankhead/chat-overlay_2.0)`;
+  return `// TDF Forum sticky header v${forumVersion(root)} — site include build (source available upon request)`;
 }
 
 /**

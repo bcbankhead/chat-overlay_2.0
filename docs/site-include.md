@@ -1,8 +1,8 @@
 # TDF Chat 2.0 — site include
 
 For the site admin. This loads TDF Chat 2.0 for every member, with no browser extension
-needed. It is the same script as the userscript, built from the same source by the same
-command.
+needed. The same source and command also build a userscript copy, which is for local
+development only; members are not expected to install it.
 
 ## Build
 
@@ -20,7 +20,7 @@ npm run build
 This writes three files:
 
 - `dist/tdf-chat.js`: the site include. `npm run deploy` uploads this one.
-- `dist/tdf-chat.user.js`: the userscript, for members who install it with Tampermonkey.
+- `dist/tdf-chat.user.js`: the userscript, for local development only.
 - `dist/tdf-forum-sticky-header.js`: the forum pages' include (see
   [Forum sticky header](#forum-sticky-header)). `npm run deploy` uploads this one too.
 
@@ -82,12 +82,18 @@ Nothing on the server. Every member's history, settings and theme are kept in th
 member's own browser (IndexedDB, database `tdf-chat-2`). The server serves only the static
 file. Clearing site data in the browser clears that member's history.
 
-## Members who also run the userscript
+## Running the userscript locally
 
-They are not affected. Whichever copy runs first sets `window.__tdfChat2Loaded`, and the
-other copy does nothing, so the interface is created only once. The userscript runs with
-`@grant none` so that both copies share the same `window` and see the same flag. The build
-checks this.
+A developer running the userscript on a page that also loads the include gets one interface.
+Whichever copy runs first sets `window.__tdfChat2Loaded`, and the other copy does nothing. The
+userscript runs with `@grant none` so that both copies share the same `window` and see the same
+flag. The build checks this.
+
+The userscript's `@namespace` is `tdf-chat-2`. Userscript managers identify a script by its
+`@name` and `@namespace`, so a copy installed under the earlier GitHub namespace is not updated
+in place: installing the new build adds a second script, and the old one, if it runs first, sets
+the flag and the new one does nothing. Remove the old copy in Tampermonkey before installing the
+new build.
 
 ## Updating
 
