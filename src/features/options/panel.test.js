@@ -18,6 +18,7 @@ function stubSettings(values = {}, { fail = false } = {}) {
     galleryLimitMB: null,
     includeMyImages: false,
     storeImagesOffline: false,
+    compressStoredImages: false,
     useMediaQuickview: true,
     ...values,
   };
@@ -398,19 +399,37 @@ test('Store images offline is a checkbox row after Include my images, showing an
   assert.equal(/** @type {HTMLElement} */ (row.nextElementSibling).textContent, 'Could not apply: write failed');
 });
 
+test('Compress stored images is a checkbox row after Store images offline, showing and writing the setting', async () => {
+  for (const on of [true, false]) {
+    const settings = stubSettings({ compressStoredImages: on });
+    const { win, container } = setup({ settings });
+    await settle();
+    const boxes = /** @type {HTMLInputElement[]} */ ([...container.querySelectorAll('input.tdf-opt-check')]);
+    const box = boxes[2];
+    const row = /** @type {HTMLElement} */ (box.closest('label.tdf-opt-row'));
+    assert.equal(row.textContent, 'Compress stored images');
+    assert.equal(row.previousElementSibling?.previousElementSibling, boxes[1].closest('label'));
+    assert.equal(box.checked, on);
+    box.checked = !on;
+    box.dispatchEvent(new win.Event('change'));
+    await settle();
+    assert.deepEqual(settings.writes, [['compressStoredImages', !on]]);
+  }
+});
+
 test('Use media quickview is a checkbox row under a Media section, after Store images offline, showing and writing it', async () => {
   for (const on of [true, false]) {
     const settings = stubSettings({ useMediaQuickview: on });
     const { win, container } = setup({ settings });
     await settle();
     const boxes = /** @type {HTMLInputElement[]} */ ([...container.querySelectorAll('input.tdf-opt-check')]);
-    assert.equal(boxes.length, 3);
-    const box = boxes[2];
+    assert.equal(boxes.length, 4);
+    const box = boxes[3];
     const row = /** @type {HTMLElement} */ (box.closest('label.tdf-opt-row'));
     assert.equal(row.textContent, 'Use media quickview');
     assert.equal(row.previousElementSibling?.textContent, 'Media');
     assert.ok(row.previousElementSibling?.classList.contains('tdf-opt-section'));
-    assert.equal(row.previousElementSibling?.previousElementSibling?.previousElementSibling, boxes[1].closest('label'));
+    assert.equal(row.previousElementSibling?.previousElementSibling?.previousElementSibling, boxes[2].closest('label'));
     assert.equal(box.checked, on);
     box.checked = !on;
     box.dispatchEvent(new win.Event('change'));

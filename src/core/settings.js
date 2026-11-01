@@ -10,6 +10,9 @@ export const DEFAULTS = Object.freeze({
   // The gallery's size limit in MB; null is no limit.
   galleryLimitMB: /** @type {number | null} */ (null),
   storeImagesOffline: false,
+  // Whether a stored original is re-encoded as a smaller JPEG at its own dimensions (TDF-0036),
+  // at capture and by a one-time backfill of those already stored.
+  compressStoredImages: false,
   // Whether the gallery captures the signed-in user's own shares.
   includeMyImages: false,
   // The reaction queue's spacing; an internal tunable, with no Settings control.

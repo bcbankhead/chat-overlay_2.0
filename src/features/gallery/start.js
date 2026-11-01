@@ -1,16 +1,19 @@
 // The gallery's wiring, apart from index.js's double-load guard so a test can drive it.
 // Capture subscribes at once, so no live share or like is missed while the database opens; the
 // Gallery button joins the sidebar's icon row through registerRailPanel, and "View images"
-// joins every user's menu, opening the flyout filtered to that sender.
+// joins every user's menu, opening the flyout filtered to that sender. With Compress stored
+// images on, originals stored before are compressed in the background once the database opens,
+// and again from the moment the setting is switched on (TDF-0036).
 
 import { openDb } from '../../core/db.js';
 import { onInbound, onLiked } from '../../core/events.js';
 import { createHistory } from '../../core/history.js';
-import { createSettings, followSetting } from '../../core/settings.js';
+import { createSettings, followSetting, onSettingChange } from '../../core/settings.js';
 import { registerRailPanel, registerUserMenuAction } from '../rail/api.js';
 import { startCapture } from './capture.js';
 import { openImage, retryImage } from './open.js';
 import { reportGalleryError } from './errors.js';
+import { compressOriginal } from './reencode.js';
 import { createImageStore } from './store.js';
 import { makeThumb } from './thumb.js';
 import { renderGallery } from './view.js';
@@ -42,7 +45,7 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
   // failed read through report.
   const quickview = followSetting(ready.then((r) => r.settings), 'useMediaQuickview', report);
 
-  startCapture({
+  const capture = startCapture({
     ready,
     onInbound,
     onLiked,
@@ -54,6 +57,18 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
     report,
     // The form engine-hook.js compares to mUser, which is what images.user stores.
     self: () => String(/** @type {any} */ (win).userName ?? ''),
+    compress: (blob) => compressOriginal(blob),
+  });
+  const backfill = () => capture.backfill().catch(report);
+  ready.then(
+    async ({ settings }) => {
+      if (await settings.get('compressStoredImages')) await backfill();
+    },
+    // Reported once, above.
+    () => {},
+  ).catch(report);
+  onSettingChange((key, value) => {
+    if (key === 'compressStoredImages' && value === true) backfill();
   });
 
   if (!doc.getElementById('tdf-gallery-style')) {
