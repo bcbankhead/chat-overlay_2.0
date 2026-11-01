@@ -850,6 +850,89 @@ test('a failed block-state write raises a notice, and the block still toggles', 
   }
   assert.equal(head.getAttribute('aria-expanded'), 'false');
   assert.ok(noticeTexts(shell.document).some((t) => /Server history block state not saved: \S/.test(t)));
-  assert.equal(await storedBlockStates(indexedDB), undefined);
+  // Only the block's first state, settled expanded when it rendered (TDF-0033.3), was stored;
+  // the failed collapse never reached the store.
+  assert.deepEqual(Object.values((await storedBlockStates(indexedDB)) ?? {}), [false]);
+  await shell.window.happyDOM.close();
+});
+
+test('with Collapse server history automatically stored on, a new block arrives collapsed and is stored so', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('autoCollapseServerHistory', true);
+  db.close();
+  const shell = await page(bundle, indexedDB);
+  historyPoll(shell, um('1', 'bob', 'old', '100'));
+  await settle();
+  assert.equal(blockHeadOf(shell.document).getAttribute('aria-expanded'), 'false');
+  assert.deepEqual(Object.values((await storedBlockStates(indexedDB)) ?? {}), [true]);
+  await shell.window.happyDOM.close();
+});
+
+/** Open the rail's Settings flyout and return the Collapse server history automatically box. */
+const autoCollapseBox = async (shell) => {
+  shell.document.querySelector('.tdf-rail-icon-btn[data-panel="settings"]').click();
+  await settle();
+  const row = [...shell.document.querySelectorAll('label.tdf-opt-row')].find(
+    (r) => r.textContent === 'Collapse server history automatically',
+  );
+  return row.querySelector('input');
+};
+
+test('ticking Collapse server history automatically collapses the open blocks live; unticking leaves them', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  // A user list, so the rail mounts and its Settings flyout opens.
+  const shell = await page(bundle, indexedDB, {
+    body: '<div id="chatContainer" style="height:300px"></div><input type="checkbox" id="autoScrollID" checked><div id="userContainer"></div>',
+  });
+  historyPoll(shell, um('1', 'bob', 'old', '100'));
+  await settle();
+  const head = blockHeadOf(shell.document);
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  const box = await autoCollapseBox(shell);
+  assert.equal(box.checked, false, 'off on a fresh profile');
+  box.checked = true;
+  box.dispatchEvent(new shell.window.Event('change'));
+  await settle();
+  assert.equal(head.getAttribute('aria-expanded'), 'false', 'collapsed without a reload');
+  assert.deepEqual(Object.values((await storedBlockStates(indexedDB)) ?? {}), [true]);
+  // A hand toggle after the tick wins; unticking changes no block.
+  head.click();
+  await settle();
+  box.checked = false;
+  box.dispatchEvent(new shell.window.Event('change'));
+  await settle();
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  head.click();
+  await settle();
+  box.checked = false;
+  box.dispatchEvent(new shell.window.Event('change'));
+  await settle();
+  assert.equal(head.getAttribute('aria-expanded'), 'false', 'unticking does not expand a block left collapsed');
+  await shell.window.happyDOM.close();
+});
+
+test('a failed block-state read with auto-collapse on shows blocks collapsed, says so, and stores no first state', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('autoCollapseServerHistory', true);
+  db.close();
+  const restore = failBlockState('get');
+  let shell;
+  try {
+    shell = await page(bundle, indexedDB);
+    historyPoll(shell, um('1', 'bob', 'old', '100'));
+    await settle();
+  } finally {
+    restore();
+  }
+  assert.ok(
+    noticeTexts(shell.document).some((t) => /Server history blocks shown collapsed: their state was not read \(injected\)/.test(t)),
+  );
+  assert.equal(blockHeadOf(shell.document).getAttribute('aria-expanded'), 'false');
+  assert.equal(await storedBlockStates(indexedDB), undefined, 'a state never read is not overwritten');
   await shell.window.happyDOM.close();
 });

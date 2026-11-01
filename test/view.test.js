@@ -70,7 +70,7 @@ const NOW = new Date(2026, 0, 2, 12, 0).getTime() / 1000;
 // build under happy-dom, and the trim's behaviour does not depend on its size.
 const CEILING = 200;
 
-async function setup({ autoScroll = true, reducedMotion = false, globals = {}, now = () => NOW, windowStart, ceiling = CEILING, blocks } = {}) {
+async function setup({ autoScroll = true, reducedMotion = false, globals = {}, now = () => NOW, windowStart, ceiling = CEILING, blocks, autoCollapse } = {}) {
   const win = new Window({ url: 'https://example.test/chat/' });
   const frames = stubFrames(win);
   const resizes = stubResize(win);
@@ -82,7 +82,7 @@ async function setup({ autoScroll = true, reducedMotion = false, globals = {}, n
   const whispered = [];
   win.whisperUser = (name) => whispered.push(name);
   const container = doc.getElementById('chatContainer');
-  const view = createView({ doc, win, container, css: '#tdf-chat{}', now, windowStart, ceiling, blocks });
+  const view = createView({ doc, win, container, css: '#tdf-chat{}', now, windowStart, ceiling, blocks, autoCollapse });
   const root = doc.getElementById('tdf-chat');
   return { win, doc, view, root, container, whispered, frames, resizes };
 }
@@ -1420,4 +1420,99 @@ test('a live row from the same sender after a block heads its own group', async 
   assert.deepEqual(heads(root), ['h', 'c', 'h']);
   blockHead(root).dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
   assert.deepEqual(heads(root), ['h', 'c', 'h'], 'collapsing changes no grouping');
+});
+
+// TDF-0033.3: blocks arrive in the auto-collapse setting's state, and a tick collapses the open ones.
+/** A block store over a plain object, recording each toggle and each first settle. */
+function blockStore(stored = {}) {
+  const states = { ...stored };
+  const toggles = [];
+  const settles = [];
+  return {
+    states,
+    toggles,
+    settles,
+    collapsed: (id) => states[id],
+    toggle: (id, c) => {
+      states[id] = c;
+      toggles.push([id, c]);
+    },
+    settle: (id, c) => {
+      states[id] = c;
+      settles.push([id, c]);
+    },
+  };
+}
+
+test('a new block arrives collapsed when auto-collapse is on, expanded when off, and that state is stored', async () => {
+  for (const on of [true, false]) {
+    const blocks = blockStore();
+    const { view, root } = await setup({ blocks, autoCollapse: () => on });
+    view.replay([blockRec({ id: 'b1', mTime: '50' }), rec({ id: 'a', mTime: '100' })]);
+    assert.equal(blockHead(root).getAttribute('aria-expanded'), String(!on));
+    assert.equal(root.querySelector('[data-id="b1"]').classList.contains('tdf-block-hidden'), on);
+    assert.deepEqual(blocks.settles, [['load-1', on]], 'stored once, when first rendered');
+    assert.deepEqual(blocks.toggles, []);
+  }
+});
+
+test('a block keeps its first state when the setting changes later', async () => {
+  let on = false;
+  const blocks = blockStore();
+  const { view, root } = await setup({ blocks, autoCollapse: () => on });
+  view.replay([blockRec({ id: 'b1', mTime: '50' })]);
+  on = true;
+  view.place(blockRec({ id: 'b2', mTime: '60' }));
+  assert.equal(blockHead(root).getAttribute('aria-expanded'), 'true');
+  view.place(blockRec({ id: 'x1', mTime: '70', backlogBlock: 'load-2' }));
+  const [, h2] = root.querySelectorAll('.tdf-block-head');
+  assert.equal(h2.getAttribute('aria-expanded'), 'false', 'a block arriving after the change takes it');
+});
+
+test('a block with a stored state ignores auto-collapse', async () => {
+  const blocks = blockStore({ 'load-1': false });
+  const { view, root } = await setup({ blocks, autoCollapse: () => true });
+  view.replay([blockRec({ id: 'b1', mTime: '50' })]);
+  assert.equal(blockHead(root).getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(blocks.settles, []);
+});
+
+test('collapseAll collapses and stores every open block, leaving collapsed ones alone', async () => {
+  const blocks = blockStore({ 'load-2': true });
+  const { win, view, root } = await setup({ blocks });
+  view.replay([
+    blockRec({ id: 'b1', mTime: '50' }),
+    blockRec({ id: 'x1', mTime: '55', backlogBlock: 'load-2' }),
+    blockRec({ id: 'y1', mTime: '60', backlogBlock: 'load-3' }),
+    rec({ id: 'a', mTime: '100' }),
+  ]);
+  view.collapseAll();
+  const heads3 = [...root.querySelectorAll('.tdf-block-head')];
+  assert.deepEqual(heads3.map((h) => h.getAttribute('aria-expanded')), ['false', 'false', 'false']);
+  assert.deepEqual(
+    msgs(root).map((el) => el.classList.contains('tdf-block-hidden')),
+    [true, true, true, false],
+  );
+  assert.deepEqual(blocks.toggles, [
+    ['load-1', true],
+    ['load-3', true],
+  ]);
+  // A manual toggle after the tick wins, and a second collapseAll collapses it again.
+  heads3[0].dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  assert.equal(heads3[0].getAttribute('aria-expanded'), 'true');
+  view.collapseAll();
+  assert.equal(heads3[0].getAttribute('aria-expanded'), 'false');
+  assert.deepEqual(blocks.toggles.slice(2), [
+    ['load-1', false],
+    ['load-1', true],
+  ]);
+});
+
+test('collapseAll with no blocks open stores nothing', async () => {
+  const blocks = blockStore({ 'load-1': true });
+  const { view } = await setup({ blocks });
+  view.collapseAll();
+  view.replay([blockRec({ id: 'b1', mTime: '50' })]);
+  view.collapseAll();
+  assert.deepEqual(blocks.toggles, []);
 });

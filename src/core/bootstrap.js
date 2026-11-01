@@ -154,7 +154,8 @@ async function start(lift, coreReady) {
     // Each server-history block's collapsed state (TDF-0033.2), read once; a toggle updates the
     // loaded copy and stores it, except at 0 days, when the block's records are not stored.
     const blockState = createBlockState(db);
-    // A failed read is not worth failing the start over: blocks arrive expanded, and say why.
+    // A failed read is not worth failing the start over: blocks arrive in the setting's state,
+    // and say why.
     /** @type {string | null} */
     let blockStatesFailed = null;
     /** @type {import('./blockState.js').BlockStates} */
@@ -164,20 +165,49 @@ async function start(lift, coreReady) {
     });
     /** @type {import('./view.js').View | null} */
     let blockView = null;
+    /** @param {string} id @param {boolean} collapsed */
+    const storeBlock = (id, collapsed) => {
+      blockStates[id] = collapsed;
+      if (retentionDays === 0) return;
+      blockState
+        .set(id, collapsed)
+        .catch((err) => blockView?.notice(`Server history block state not saved: ${describeError(err)}`));
+    };
     /** @type {import('./view.js').BlockStates} */
     const blocks = {
       collapsed: (id) => blockStates[id],
-      toggle: (id, collapsed) => {
-        blockStates[id] = collapsed;
-        if (retentionDays === 0) return;
-        blockState
-          .set(id, collapsed)
-          .catch((err) => blockView?.notice(`Server history block state not saved: ${describeError(err)}`));
+      toggle: storeBlock,
+      // A block's first state is stored too, so a later change of the setting does not flip it
+      // (TDF-0033.3); not after a failed read, where it would overwrite a state never read.
+      settle: (id, collapsed) => {
+        if (blockStatesFailed === null) storeBlock(id, collapsed);
       },
     };
-    const view = createView({ doc: document, win, container, css, avatars, windowStart, blocks });
+    // Whether a block with no stored state arrives collapsed (TDF-0033.3), followed live; every
+    // tick collapses the blocks now open, and unticking leaves every block as it is.
+    let autoCollapse = await settings.get('autoCollapseServerHistory');
+    unsubscribe.push(
+      onSettingChange((key, value) => {
+        if (key !== 'autoCollapseServerHistory') return;
+        autoCollapse = value === true;
+        if (autoCollapse) blockView?.collapseAll();
+      }),
+    );
+    const view = createView({
+      doc: document,
+      win,
+      container,
+      css,
+      avatars,
+      windowStart,
+      blocks,
+      autoCollapse: () => autoCollapse,
+    });
     blockView = view;
-    if (blockStatesFailed !== null) view.notice(`Server history blocks shown expanded: their state was not read (${blockStatesFailed})`);
+    if (blockStatesFailed !== null) {
+      const shownAs = autoCollapse ? 'collapsed' : 'expanded';
+      view.notice(`Server history blocks shown ${shownAs}: their state was not read (${blockStatesFailed})`);
+    }
     unsubscribe.push(
       onDeleted((ids) => view.removeById(ids)),
       onClearView(() => view.clear()),

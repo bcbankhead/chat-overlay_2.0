@@ -1,5 +1,6 @@
 // The Settings flyout (UI design 2026-10-27, Flyouts → Settings). Chat: the Auto-scroll switch
-// over the engine's #autoScrollID, and Clear chat buffer. Storage: Chat history (days), Clear
+// over the engine's #autoScrollID, Clear chat buffer and Collapse server history automatically
+// (TDF-0033.3). Storage: Chat history (days), Clear
 // history now and Delete messages by user (TDF-0010), Gallery size limit (MB), Include my images
 // (TDF-0009.13) and Store images offline. A hint under each field says what the typed value
 // would delete; the setting is written, and the deletion runs, only when the value is committed
@@ -59,6 +60,40 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   if (failure !== null) {
     root.append(el('div', 'tdf-opt-hint tdf-warn', `The storage limits did not run on load: ${failure}`));
   }
+
+  /**
+   * A checkbox row over a boolean setting, written on change, appended where it is called. An
+   * optional static hint says what the box does; a second hint shows only a failure.
+   * @param {'autoCollapseServerHistory' | 'includeMyImages' | 'storeImagesOffline'} key
+   * @param {string} label
+   * @param {string} [about]
+   */
+  const check = (key, label, about) => {
+    const row = el('label', 'tdf-opt-row');
+    const box = el('input', 'tdf-opt-check');
+    box.type = 'checkbox';
+    row.append(el('span', '', label), box);
+    root.append(row);
+    if (about !== undefined) root.append(el('div', 'tdf-opt-hint', about));
+    const hint = el('div', 'tdf-opt-hint tdf-warn');
+    hint.setAttribute('aria-live', 'polite');
+    root.append(hint);
+    /** @param {string} text */
+    const failed = (text) => {
+      if (!closed) hint.textContent = text;
+    };
+    box.addEventListener('change', () => {
+      hint.textContent = '';
+      settings.set(key, box.checked).catch((err) => failed(`Could not apply: ${describeError(err)}`));
+    });
+    settings.get(key).then(
+      (on) => {
+        if (!closed) box.checked = on;
+      },
+      (err) => failed(`Could not read settings: ${describeError(err)}`),
+    );
+  };
+
   root.append(el('div', 'tdf-opt-section tdf-opt-first', 'Chat'));
 
   // Auto-scroll: the engine's own checkbox, both ways; the engine reads it on every line.
@@ -96,8 +131,10 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     scrollRow,
     clear,
     el('div', 'tdf-opt-hint', 'Empties the message view. Saved history is kept and returns on reload.'),
-    el('div', 'tdf-opt-section', 'Storage'),
   );
+  // Collapse server history automatically (TDF-0033.3): core follows the setting live.
+  check('autoCollapseServerHistory', 'Collapse server history automatically', 'Server-history blocks arrive collapsed.');
+  root.append(el('div', 'tdf-opt-section', 'Storage'));
 
   /**
    * @param {string} label
@@ -288,35 +325,6 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   refreshSenders();
   const gallery = field('Gallery size limit (MB)', 'No limit');
   gallery.input.min = '1';
-
-  /**
-   * A checkbox row over a boolean setting, written on change; its hint shows only a failure.
-   * @param {'includeMyImages' | 'storeImagesOffline'} key
-   * @param {string} label
-   */
-  const check = (key, label) => {
-    const row = el('label', 'tdf-opt-row');
-    const box = el('input', 'tdf-opt-check');
-    box.type = 'checkbox';
-    row.append(el('span', '', label), box);
-    const hint = el('div', 'tdf-opt-hint tdf-warn');
-    hint.setAttribute('aria-live', 'polite');
-    root.append(row, hint);
-    /** @param {string} text */
-    const failed = (text) => {
-      if (!closed) hint.textContent = text;
-    };
-    box.addEventListener('change', () => {
-      hint.textContent = '';
-      settings.set(key, box.checked).catch((err) => failed(`Could not apply: ${describeError(err)}`));
-    });
-    settings.get(key).then(
-      (on) => {
-        if (!closed) box.checked = on;
-      },
-      (err) => failed(`Could not read settings: ${describeError(err)}`),
-    );
-  };
 
   // Include my images: whether capture keeps the user's own shares, from the next share.
   check('includeMyImages', 'Include my images');

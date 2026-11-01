@@ -13,7 +13,14 @@ const settle = () => new Promise((r) => setTimeout(r, 20));
 /** A settings stand-in over a plain object; `fail` makes every read reject. */
 function stubSettings(values = {}, { fail = false } = {}) {
   /** @type {Record<string, unknown>} */
-  const store = { retentionDays: 30, galleryLimitMB: null, includeMyImages: false, storeImagesOffline: false, ...values };
+  const store = {
+    retentionDays: 30,
+    galleryLimitMB: null,
+    includeMyImages: false,
+    storeImagesOffline: false,
+    autoCollapseServerHistory: false,
+    ...values,
+  };
   /** @type {unknown[][]} */
   const writes = [];
   return {
@@ -28,6 +35,16 @@ function stubSettings(values = {}, { fail = false } = {}) {
       store[key] = value;
     },
   };
+}
+
+/**
+ * The checkbox of the row with this label: rows are told apart by label, not position.
+ * @param {HTMLElement} container
+ * @param {string} label
+ */
+function boxFor(container, label) {
+  const row = [...container.querySelectorAll('label.tdf-opt-row')].find((r) => r.textContent === label);
+  return /** @type {HTMLInputElement} */ (row?.querySelector('input.tdf-opt-check'));
 }
 
 /**
@@ -305,7 +322,7 @@ test('Include my images is a checkbox row after the gallery limit, showing the s
   for (const on of [false, true]) {
     const { container } = setup({ settings: stubSettings({ includeMyImages: on }) });
     await settle();
-    const box = /** @type {HTMLInputElement} */ (container.querySelector('input.tdf-opt-check'));
+    const box = /** @type {HTMLInputElement} */ (boxFor(container, 'Include my images'));
     assert.equal(box.type, 'checkbox');
     assert.equal(box.classList.contains('tdf-opt-switch'), false);
     assert.equal(box.checked, on);
@@ -322,7 +339,7 @@ test('toggling Include my images writes the setting; a failed write says so', as
   const settings = stubSettings();
   const { win, container } = setup({ settings });
   await settle();
-  const box = /** @type {HTMLInputElement} */ (container.querySelector('input.tdf-opt-check'));
+  const box = /** @type {HTMLInputElement} */ (boxFor(container, 'Include my images'));
   box.checked = true;
   box.dispatchEvent(new win.Event('change'));
   await settle();
@@ -341,7 +358,7 @@ test('toggling Include my images writes the setting; a failed write says so', as
 test('an Include my images read that fails says so under the checkbox row', async () => {
   const { container } = setup({ settings: stubSettings({}, { fail: true }) });
   await settle();
-  const box = /** @type {HTMLInputElement} */ (container.querySelector('input.tdf-opt-check'));
+  const box = /** @type {HTMLInputElement} */ (boxFor(container, 'Include my images'));
   const hint = /** @type {HTMLElement} */ (box.closest('label')?.nextElementSibling);
   assert.equal(hint.textContent, 'Could not read settings: read failed');
 });
@@ -357,7 +374,7 @@ test('an Include my images read or failed write that settles after close is not 
   settings.set = () => new Promise((_, reject) => (rejectWrite = reject));
   const { win, container, cleanup } = setup({ settings });
   await settle();
-  const box = /** @type {HTMLInputElement} */ (container.querySelector('input.tdf-opt-check'));
+  const box = /** @type {HTMLInputElement} */ (boxFor(container, 'Include my images'));
   const hint = /** @type {HTMLElement} */ (box.closest('label')?.nextElementSibling);
   box.dispatchEvent(new win.Event('change'));
   cleanup();
@@ -372,7 +389,8 @@ test('Store images offline is a checkbox row after Include my images, showing an
   const settings = stubSettings({ storeImagesOffline: true });
   const { win, container } = setup({ settings });
   await settle();
-  const [mine, offline] = /** @type {HTMLInputElement[]} */ ([...container.querySelectorAll('input.tdf-opt-check')]);
+  const mine = boxFor(container, 'Include my images');
+  const offline = boxFor(container, 'Store images offline');
   const row = /** @type {HTMLElement} */ (offline.closest('label.tdf-opt-row'));
   assert.equal(row.textContent, 'Store images offline');
   assert.equal(row.previousElementSibling?.previousElementSibling, mine.closest('label'));
@@ -799,4 +817,53 @@ test('a count, deletion or sender read that fails after close writes nothing', a
   failSenders(new Error('read failed'));
   await settle();
   assert.equal(senderControl(third.container).hint.textContent, '');
+});
+
+// TDF-0033.3: Collapse server history automatically.
+const AUTO_COLLAPSE = 'Collapse server history automatically';
+
+test('Collapse server history automatically sits in the Chat section, with its hint', async () => {
+  const { container } = setup();
+  await settle();
+  const box = boxFor(container, AUTO_COLLAPSE);
+  assert.equal(box.type, 'checkbox');
+  const row = /** @type {HTMLElement} */ (box.closest('label.tdf-opt-row'));
+  // After the Clear chat buffer hint, and ahead of the Storage header.
+  assert.match(String(row.previousElementSibling?.textContent), /Empties the message view/);
+  const about = /** @type {HTMLElement} */ (row.nextElementSibling);
+  assert.equal(about.className, 'tdf-opt-hint');
+  assert.equal(about.textContent, 'Server-history blocks arrive collapsed.');
+  const failure = /** @type {HTMLElement} */ (about.nextElementSibling);
+  assert.ok(failure.classList.contains('tdf-warn'));
+  assert.equal(failure.textContent, '');
+  assert.equal(failure.nextElementSibling?.textContent, 'Storage');
+  const sections = [...container.querySelectorAll('.tdf-opt-section')].map((s) => s.textContent);
+  assert.deepEqual(sections.slice(0, 2), ['Chat', 'Storage']);
+});
+
+test('Collapse server history automatically shows the stored value and writes on change', async () => {
+  for (const on of [false, true]) {
+    const settings = stubSettings({ autoCollapseServerHistory: on });
+    const { win, container } = setup({ settings });
+    await settle();
+    const box = boxFor(container, AUTO_COLLAPSE);
+    assert.equal(box.checked, on);
+    box.checked = !on;
+    box.dispatchEvent(new win.Event('change'));
+    await settle();
+    assert.deepEqual(settings.writes, [['autoCollapseServerHistory', !on]]);
+  }
+});
+
+test('the Storage checkboxes still read and write their own settings beside the Chat one', async () => {
+  const settings = stubSettings({ includeMyImages: true, storeImagesOffline: false, autoCollapseServerHistory: false });
+  const { win, container } = setup({ settings });
+  await settle();
+  assert.equal(boxFor(container, 'Include my images').checked, true);
+  assert.equal(boxFor(container, 'Store images offline').checked, false);
+  const offline = boxFor(container, 'Store images offline');
+  offline.checked = true;
+  offline.dispatchEvent(new win.Event('change'));
+  await settle();
+  assert.deepEqual(settings.writes, [['storeImagesOffline', true]]);
 });

@@ -56,7 +56,10 @@ function groupKey(row) {
  * @typedef {object} BlockStates
  * @property {(id: string) => boolean | undefined} collapsed  the stored state; undefined when
  *   none is stored
- * @property {(id: string, collapsed: boolean) => void} toggle  the member toggled the block
+ * @property {(id: string, collapsed: boolean) => void} toggle  the member toggled the block, or
+ *   ticked the setting that collapses every open block
+ * @property {(id: string, collapsed: boolean) => void} [settle]  a block with no stored state
+ *   first rendered in this state, so a later change of the setting does not flip it
  */
 
 /** The header button heading a server-history block. */
@@ -94,12 +97,14 @@ function regroup(el) {
  *   windowStart?: () => number | null,
  *   ceiling?: number,
  *   blocks?: BlockStates | null,
+ *   autoCollapse?: () => boolean,
  * }} deps `avatars` looks up forum pictures for every sender, preferred over the chat avatar;
  *   `now` is the current time in seconds, which decides whether a time shows its date;
  *   `windowStart` is the receipt time (ms) the Chat history window starts at, or null where no
  *   window applies, read at each trim so a change in Settings moves it; `ceiling` is the most
  *   rows the list keeps, REPLAY_CEILING unless a test sets a smaller one; `blocks` holds each
- *   server-history block's stored collapsed state and is told of each toggle
+ *   server-history block's stored collapsed state and is told of each toggle; `autoCollapse`
+ *   is whether a block with no stored state arrives collapsed, read when it first renders
  */
 export function createView({
   doc,
@@ -111,6 +116,7 @@ export function createView({
   windowStart = () => null,
   ceiling = REPLAY_CEILING,
   blocks = null,
+  autoCollapse = () => false,
 }) {
   const style = doc.createElement('style');
   style.id = 'tdf-chat-style';
@@ -610,15 +616,24 @@ export function createView({
   // button just before its first row, and a collapsed block's rows are hidden by class.
   /** @type {Map<string, HTMLButtonElement>} */
   const heads = new Map();
-  /** @type {Map<string, boolean>} states toggled this load, ahead of the stored ones */
+  /** @type {Map<string, boolean>} states toggled or first settled this load, ahead of the stored ones */
   const toggled = new Map();
   // Set when a block row is rendered or removed, or a block is toggled; otherwise no header can
   // need moving, relabelling or hiding, and the scan is skipped, so a live row with no block
   // costs no walk of the list.
   let blocksDirty = false;
 
+  // A block with no stored state takes the setting's state when first asked for, and keeps it:
+  // stored at once, so a later change of the setting never flips it (TDF-0033.3).
   /** @param {string} id */
-  const isCollapsed = (id) => toggled.get(id) ?? blocks?.collapsed(id) ?? false;
+  function isCollapsed(id) {
+    const held = toggled.get(id) ?? blocks?.collapsed(id);
+    if (held !== undefined) return held;
+    const initial = autoCollapse();
+    toggled.set(id, initial);
+    blocks?.settle?.(id, initial);
+    return initial;
+  }
 
   /** @param {string} id */
   function makeHead(id) {
@@ -678,11 +693,16 @@ export function createView({
     blocksDirty = true;
     syncBlocks();
     blocks?.toggle(id, collapsed);
+    keepPinned();
+  });
+
+  // A block's rows hidden or shown change the list's height; a pinned view stays at its bottom.
+  function keepPinned() {
     if (pinned && autoOn()) {
       stopSlide();
       toBottom();
     }
-  });
+  }
 
   /**
    * The row a record of this order goes after: the last row ordered at or below it, problem
@@ -829,6 +849,23 @@ export function createView({
     removeById(ids) {
       for (const id of ids) for (const el of entries('id', id)) remove(el);
       syncBlocks();
+    },
+
+    /**
+     * Collapse every server-history block now expanded and store each collapsed: the setting
+     * was ticked (TDF-0033.3). Collapsed blocks are left alone.
+     */
+    collapseAll() {
+      syncBlocks();
+      /** @type {string[]} */
+      const open = [];
+      for (const id of heads.keys()) if (!isCollapsed(id)) open.push(id);
+      if (open.length === 0) return;
+      for (const id of open) toggled.set(id, true);
+      blocksDirty = true;
+      syncBlocks();
+      for (const id of open) blocks?.toggle(id, true);
+      keepPinned();
     },
 
     /** Empty the list: every entry, notice and block header goes. */

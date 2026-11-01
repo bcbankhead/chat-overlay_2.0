@@ -602,6 +602,7 @@ test('settings return the contract defaults for absent keys', async () => {
   assert.equal(await s.get('includeMyImages'), false);
   assert.equal(await s.get('likeIntervalSeconds'), 15);
   assert.equal(await s.get('theme'), null);
+  assert.equal(await s.get('autoCollapseServerHistory'), false);
   await s.set('theme', 'dark');
   assert.equal(await s.get('theme'), 'dark');
   await assert.rejects(s.set('nope', 1), /unknown setting/);

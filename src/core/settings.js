@@ -16,6 +16,8 @@ export const DEFAULTS = Object.freeze({
   likeIntervalSeconds: 15,
   // The chosen theme; null follows the system until the first toggle.
   theme: /** @type {'light' | 'dark' | null} */ (null),
+  // Whether server-history blocks arrive collapsed; ticking it collapses the open ones (TDF-0033.3).
+  autoCollapseServerHistory: false,
 });
 
 /** @typedef {keyof typeof DEFAULTS} SettingKey */
