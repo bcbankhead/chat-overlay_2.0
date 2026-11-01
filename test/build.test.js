@@ -25,6 +25,7 @@ test('build emits the userscript banner and discovers feature modules', async ()
     assert.deepEqual(features, ['stub']);
     const out = readFileSync(outfile, 'utf8');
     assert.ok(out.startsWith('// ==UserScript=='));
+    assert.ok(out.split('\n').includes('// @namespace    tdf-chat-2'));
     assert.match(out, /^\/\/ @match\s+https:\/\/chat\.example\.com\/forum\/chat\/\*$/m);
     assert.match(out, /@grant\s+none/);
     assert.ok(out.includes('STUB_FEATURE_MARKER'));
@@ -56,7 +57,11 @@ test('one build emits the site include beside the userscript, from the same bund
     const userscript = readFileSync(outputs.userscript, 'utf8');
     const include = readFileSync(outputs.include, 'utf8');
     assert.ok(!include.includes('==UserScript=='));
-    assert.match(include.split('\n')[0], /^\/\/ TDF Chat 2\.0 v\d+\.\d+\.\d+ — site include build/);
+    const { version } = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+    assert.equal(include.split('\n')[0], `// TDF Chat 2.0 v${version} — site include build (source available upon request)`);
+    for (const file of [outputs.include, outputs.userscript, outputs.forum]) {
+      assert.ok(!readFileSync(file, 'utf8').includes('github.com/bcbankhead'), file);
+    }
     const body = (code, skip) => code.split('\n').slice(skip).join('\n');
     assert.equal(body(include, 1), body(userscript, userscript.split('\n').indexOf('// ==/UserScript==') + 1));
   } finally {
@@ -263,7 +268,7 @@ test('the forum include is written beside the chat files, with its own banner an
     assert.equal(outputs.forum, path.join(root, 'dist', 'tdf-forum-sticky-header.js'));
     const { version } = JSON.parse(readFileSync(path.join(root, 'src', 'forum', 'version.json'), 'utf8'));
     const code = readFileSync(outputs.forum, 'utf8');
-    assert.equal(code.split('\n')[0], `// TDF Forum sticky header v${version} — site include build (https://github.com/bcbankhead/chat-overlay_2.0)`);
+    assert.equal(code.split('\n')[0], `// TDF Forum sticky header v${version} — site include build (source available upon request)`);
     assert.ok(code.includes('__tdfChat2ForumLoaded'));
     assert.ok(!code.includes('__tdfChat2Loaded'), 'the chat bootstrap is not in the forum bundle');
   } finally {
