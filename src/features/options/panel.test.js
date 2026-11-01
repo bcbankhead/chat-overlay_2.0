@@ -13,7 +13,14 @@ const settle = () => new Promise((r) => setTimeout(r, 20));
 /** A settings stand-in over a plain object; `fail` makes every read reject. */
 function stubSettings(values = {}, { fail = false } = {}) {
   /** @type {Record<string, unknown>} */
-  const store = { retentionDays: 30, galleryLimitMB: null, includeMyImages: false, storeImagesOffline: false, ...values };
+  const store = {
+    retentionDays: 30,
+    galleryLimitMB: null,
+    includeMyImages: false,
+    storeImagesOffline: false,
+    useMediaQuickview: true,
+    ...values,
+  };
   /** @type {unknown[][]} */
   const writes = [];
   return {
@@ -389,6 +396,27 @@ test('Store images offline is a checkbox row after Include my images, showing an
   offline.dispatchEvent(new win.Event('change'));
   await settle();
   assert.equal(/** @type {HTMLElement} */ (row.nextElementSibling).textContent, 'Could not apply: write failed');
+});
+
+test('Use media quickview is a checkbox row under a Media section, after Store images offline, showing and writing it', async () => {
+  for (const on of [true, false]) {
+    const settings = stubSettings({ useMediaQuickview: on });
+    const { win, container } = setup({ settings });
+    await settle();
+    const boxes = /** @type {HTMLInputElement[]} */ ([...container.querySelectorAll('input.tdf-opt-check')]);
+    assert.equal(boxes.length, 3);
+    const box = boxes[2];
+    const row = /** @type {HTMLElement} */ (box.closest('label.tdf-opt-row'));
+    assert.equal(row.textContent, 'Use media quickview');
+    assert.equal(row.previousElementSibling?.textContent, 'Media');
+    assert.ok(row.previousElementSibling?.classList.contains('tdf-opt-section'));
+    assert.equal(row.previousElementSibling?.previousElementSibling?.previousElementSibling, boxes[1].closest('label'));
+    assert.equal(box.checked, on);
+    box.checked = !on;
+    box.dispatchEvent(new win.Event('change'));
+    await settle();
+    assert.deepEqual(settings.writes, [['useMediaQuickview', !on]]);
+  }
 });
 
 /** @param {HTMLElement} container @param {string} text */

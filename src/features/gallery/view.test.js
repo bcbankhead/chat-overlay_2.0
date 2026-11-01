@@ -30,11 +30,11 @@ const image = (over = {}) => ({
 
 /**
  * @param {unknown} [arg]
- * @param {{ storeFails?: boolean, blocked?: boolean, openThrows?: boolean, retryFails?: string }} [opts]
+ * @param {{ storeFails?: boolean, blocked?: boolean, openThrows?: boolean, retryFails?: string, quickview?: { on: boolean } }} [opts]
  *   retryFails: the reason a retry's probe fails with; without it, a retry loads and repairs
  */
-async function open(arg, { storeFails = false, blocked = false, openThrows = false, retryFails } = {}) {
-  const win = /** @type {any} */ (new Window());
+async function open(arg, { storeFails = false, blocked = false, openThrows = false, retryFails, quickview } = {}) {
+  const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   const doc = win.document;
   const store = createImageStore(await openDb({ name: `gallery-view-${++n}` }));
   const container = doc.createElement('div');
@@ -62,6 +62,7 @@ async function open(arg, { storeFails = false, blocked = false, openThrows = fal
         throw new Error(`still unavailable: ${retryFails}`);
       },
       report: (err) => errors.push(err),
+      ...(quickview ? { quickview: () => quickview.on } : {}),
     });
   const tiles = () => [...container.querySelectorAll('.tdf-gallery-tile')];
   return { win, store, container, mount, tiles, errors, opened, retried };
@@ -435,4 +436,152 @@ test('each tile shows its size on disk, orange from 1 MB, refreshed when a repai
   assert.equal(chip('b').classList.contains('tdf-large'), false);
   cleanup();
   assert.deepEqual(g.errors, []);
+});
+
+test('quickview on: a tile opens the media popover over the shown tiles in display order; zoom is the tile\'s open', async () => {
+  const g = await open(undefined, { quickview: { on: true } });
+  g.win.document.body.insertAdjacentHTML('afterbegin', '<div id="tdf-chat"></div>');
+  await g.store.put(image({ id: 'a', receivedAt: 1 }));
+  await g.store.put(image({ id: 'b', receivedAt: 2, favorite: true }));
+  await g.store.put(image({ id: 'c', receivedAt: 3, thumb: new Blob([new Uint8Array(4)], { type: 'image/png' }) }));
+  const cleanup = g.mount();
+  await settle();
+  const doc = g.win.document;
+  g.tiles()[1].click();
+  assert.deepEqual(g.opened, [], 'no tab opens on the tile click');
+  assert.equal(doc.querySelector('.tdf-lb-count')?.textContent, '2 / 3', 'b, in display order c, b, a');
+  const thumbs = [...doc.querySelectorAll('.tdf-lb-thumb')];
+  assert.match(String(thumbs[0].querySelector('img')?.getAttribute('src')), /^blob:/, 'thumbnails are the tiles\' object URLs');
+  assert.match(String(doc.querySelector('.tdf-lb-stage img')?.getAttribute('src')), /view\.php\?id=b$/);
+  /** @type {HTMLElement} */ (doc.querySelector('.tdf-lb-stage img')).click();
+  assert.deepEqual(g.opened, ['b'], 'zoom calls the existing open, inside the click');
+  /** @type {HTMLElement} */ (doc.querySelector('.tdf-lb-close')).click();
+
+  // The favourites filter narrows the roster to the tiles shown.
+  /** @type {HTMLElement} */ (g.container.querySelector('.tdf-gallery-favfilter')).click();
+  await settle();
+  g.tiles()[0].click();
+  assert.equal(doc.querySelector('.tdf-lb-count')?.textContent, '1 / 1');
+  /** @type {HTMLElement} */ (doc.querySelector('.tdf-lb-close')).click();
+  cleanup();
+  assert.deepEqual(g.errors, []);
+});
+
+test('quickview on: an unavailable tile still retries rather than opening the popover', async () => {
+  const g = await open(undefined, { quickview: { on: true } });
+  await g.store.put(image({ id: 'a', broken: true, brokenReason: 'HTTP 404' }));
+  const cleanup = g.mount();
+  await settle();
+  g.tiles()[0].click();
+  await settle();
+  assert.deepEqual(g.retried, ['a']);
+  assert.equal(g.win.document.querySelector('.tdf-lb'), null);
+  cleanup();
+});
+
+test('the quickview setting is read at each tile click; off opens the tab inside the click', async () => {
+  const setting = { on: false };
+  const g = await open(undefined, { quickview: setting });
+  await g.store.put(image({ id: 'a' }));
+  const cleanup = g.mount();
+  await settle();
+  g.tiles()[0].click();
+  assert.deepEqual(g.opened, ['a'], 'off: opened synchronously');
+  assert.equal(g.win.document.querySelector('.tdf-lb'), null);
+  setting.on = true;
+  g.tiles()[0].click();
+  assert.deepEqual(g.opened, ['a']);
+  assert.ok(g.win.document.querySelector('.tdf-lb'));
+  /** @type {HTMLElement} */ (g.win.document.querySelector('.tdf-lb-close')).click();
+  assert.equal(g.win.document.activeElement, g.tiles()[0], 'closing returns focus to the tile');
+  cleanup();
+});
+
+/** @param {any} win stubs object URLs so each is named and its revoke recorded */
+function trackUrls(win) {
+  /** @type {string[]} */
+  const revoked = [];
+  let made = 0;
+  win.URL.createObjectURL = (/** @type {Blob} */ blob) => `blob:${blob.type || 'none'}-${made++}`;
+  win.URL.revokeObjectURL = (/** @type {string} */ url) => void revoked.push(url);
+  return revoked;
+}
+
+test('quickview: a stored raster original is the stage, an SVG one is not; the gallery closing closes the popover, then revokes', async () => {
+  const g = await open(undefined, { quickview: { on: true } });
+  const revoked = trackUrls(g.win);
+  const thumb = new Blob([new Uint8Array(4)], { type: 'image/webp' });
+  await g.store.put(image({ id: 'a', receivedAt: 2, broken: true, thumb, blob: new Blob(['x'], { type: 'image/png' }) }));
+  await g.store.put(image({ id: 'b', receivedAt: 1, thumb, blob: new Blob(['<svg/>'], { type: 'image/svg+xml' }) }));
+  const cleanup = g.mount();
+  await settle();
+  const doc = g.win.document;
+  g.tiles()[0].click();
+  assert.equal(doc.querySelector('.tdf-lb-stage img')?.getAttribute('src'), 'blob:image/png-2', 'the stored original');
+  /** @type {HTMLElement} */ (doc.querySelector('.tdf-lb-next')).click();
+  assert.match(String(doc.querySelector('.tdf-lb-stage img')?.getAttribute('src')), /view\.php\?id=b$/, 'an SVG opens from the share URL');
+  assert.deepEqual(revoked, []);
+  cleanup();
+  assert.equal(doc.querySelector('.tdf-lb'), null, 'the popover closes with the gallery');
+  assert.deepEqual(revoked.sort(), ['blob:image/png-2', 'blob:image/webp-0', 'blob:image/webp-1']);
+  assert.deepEqual(g.errors, []);
+});
+
+test('quickview: a tile dropped while the popover is open keeps its thumbnail until the popover closes; zoom still opens it', async () => {
+  const g = await open(undefined, { quickview: { on: true } });
+  const revoked = trackUrls(g.win);
+  const thumb = new Blob([new Uint8Array(4)], { type: 'image/webp' });
+  await g.store.put(image({ id: 'a', receivedAt: 2, thumb }));
+  await g.store.put(image({ id: 'b', receivedAt: 1, thumb }));
+  const cleanup = g.mount();
+  await settle();
+  const doc = g.win.document;
+  g.tiles()[0].click();
+  await g.store.remove('b');
+  await settle();
+  assert.equal(g.tiles().length, 1);
+  assert.deepEqual(revoked, [], 'the filmstrip still shows b');
+  /** @type {HTMLElement} */ (doc.querySelector('.tdf-lb-thumb[data-index="1"]')).click();
+  assert.equal(doc.querySelector('.tdf-lb-thumb[data-index="1"] img')?.getAttribute('src'), 'blob:image/webp-1');
+  /** @type {HTMLElement} */ (doc.querySelector('.tdf-lb-stage img')).click();
+  assert.deepEqual(g.opened, ['b'], 'zoom falls back to the record as it was when the popover opened');
+
+  /** @type {HTMLElement} */ (doc.querySelector('.tdf-lb-close')).click();
+  await g.store.put(image({ id: 'c', receivedAt: 3 }));
+  await settle();
+  assert.deepEqual(revoked, [], 'a refresh that drops nothing keeps them');
+  await g.store.remove('c');
+  await settle();
+  assert.deepEqual(revoked, ['blob:image/webp-1'], 'the next drop, once the popover has closed, gives it back');
+  cleanup();
+  assert.deepEqual(revoked, ['blob:image/webp-1', 'blob:image/webp-0']);
+  assert.deepEqual(g.errors, []);
+});
+
+test('quickview: a new popover from the gallery gives back the last one\'s object URLs', async () => {
+  const g = await open(undefined, { quickview: { on: true } });
+  const revoked = trackUrls(g.win);
+  await g.store.put(image({ id: 'a', blob: new Blob(['x'], { type: 'image/png' }) }));
+  const cleanup = g.mount();
+  await settle();
+  g.tiles()[0].click();
+  g.tiles()[0].click();
+  assert.deepEqual(revoked, ['blob:image/png-0']);
+  assert.equal(g.win.document.querySelectorAll('.tdf-lb').length, 1);
+  cleanup();
+  assert.deepEqual(revoked, ['blob:image/png-0', 'blob:image/png-1']);
+});
+
+test('quickview: a popover that fails to open is reported, not thrown out of the click', async () => {
+  const g = await open(undefined, { quickview: { on: true } });
+  await g.store.put(image({ id: 'a' }));
+  const cleanup = g.mount();
+  await settle();
+  g.win.document.getElementById = () => {
+    throw new Error('popover broke');
+  };
+  assert.doesNotThrow(() => g.tiles()[0].click());
+  assert.deepEqual(g.errors.map((e) => /** @type {Error} */ (e).message), ['popover broke']);
+  assert.deepEqual(g.opened, []);
+  cleanup();
 });

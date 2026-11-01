@@ -261,6 +261,9 @@ export function mountRail({ doc, win, target, raise = 0, shell }) {
     const node = /** @type {Node | null} */ (event.target);
     if (!open || !node || flyout.contains(node)) return;
     if (iconButtons().some((b) => b.contains(node))) return;
+    // The media popover a panel opens is a layer on <body>, outside the flyout, but part of it.
+    const el = node.nodeType === 1 ? /** @type {Element} */ (node) : node.parentElement;
+    if (el?.closest('.tdf-lb')) return;
     close();
     event.preventDefault();
     swallowClick = true;
