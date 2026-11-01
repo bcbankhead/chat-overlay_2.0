@@ -619,3 +619,52 @@ test('a committed set is announced to setting-change listeners, through any Sett
   await createSettings(db).set('theme', 'dark');
   assert.deepEqual(seen, [['retentionDays', 0], ['theme', 'light']]);
 });
+
+// TDF-0033.2: the backlog tag is first-seen, and block state lives in one settings row.
+
+test('a record first stored from the backlog keeps its tag; a re-delivery keeps it too', async () => {
+  const history = createHistory(await fresh());
+  await history.put(msg({ id: '50', source: 'backlog', backlogBlock: 'load-a' }));
+  await history.put(msg({ id: '50', source: 'backlog', backlogBlock: 'load-b', receivedAt: 9 }));
+  const got = await history.get('50');
+  assert.equal(got.source, 'backlog');
+  assert.equal(got.backlogBlock, 'load-a', 'the first block keeps the record');
+});
+
+test('a record stored live is never tagged by a later backlog re-delivery', async () => {
+  const history = createHistory(await fresh());
+  await history.put(msg({ id: '51' }));
+  await history.put(msg({ id: '51', source: 'backlog', backlogBlock: 'load-a', receivedAt: 9 }));
+  const got = await history.get('51');
+  assert.equal(got.source, undefined);
+  assert.equal(got.backlogBlock, undefined);
+  assert.equal(got.receivedAt, 1);
+});
+
+test('a live re-delivery of a backlog record does not untag it', async () => {
+  const history = createHistory(await fresh());
+  await history.put(msg({ id: '52', source: 'backlog', backlogBlock: 'load-a' }));
+  await history.put(msg({ id: '52' }));
+  assert.equal((await history.get('52')).backlogBlock, 'load-a');
+});
+
+test('block state round-trips, merges per block, prunes and clears', async () => {
+  const { createBlockState, BLOCK_STATE_KEY } = await import('../src/core/blockState.js');
+  const db = await fresh();
+  const a = createBlockState(db);
+  const b = createBlockState(db);
+  assert.deepEqual(await a.load(), {});
+  await Promise.all([a.set('x', true), b.set('y', false)]);
+  assert.deepEqual(await a.load(), { x: true, y: false }, 'two writers keep both blocks');
+  await a.set('x', false);
+  assert.deepEqual(await b.load(), { x: false, y: false });
+  await a.prune([]);
+  assert.deepEqual(await a.load(), { x: false, y: false }, 'pruning nothing changes nothing');
+  await a.prune(['x']);
+  assert.deepEqual(await a.load(), { y: false });
+  await a.clear();
+  assert.deepEqual(await a.load(), {});
+  const settings = createSettings(db);
+  assert.equal(Object.hasOwn(DEFAULTS, BLOCK_STATE_KEY), false, 'not a member setting');
+  assert.ok(settings);
+});

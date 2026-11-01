@@ -27,6 +27,7 @@
     "src/core/cloak.js",
     "src/core/reveal.js",
     "src/core/retention.js",
+    "src/core/blockGroups.js",
     "src/features/composer/link.js",
     "src/features/composer/sharetext.js",
     "src/features/composer/refocus.js",

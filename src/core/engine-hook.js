@@ -50,6 +50,8 @@ export function engineAvailable(win) {
  * @property {EngineCall} call
  * @property {ServerMessage | undefined} server the poll's record paired with the call
  * @property {boolean} inPoll
+ * @property {boolean} backlog the call came from the page load's history poll
+ *   (`showHistory` set when the engine entered `handleMessages`)
  * @property {boolean} rendered
  * @property {number} at epoch ms of the call
  * @property {Send | null} send the main-div send the call echoes, when it followed one
@@ -83,6 +85,16 @@ const UNPAIRED_NOTICE =
   'A message was shown but not saved: no server record in its poll matched its time and sender';
 
 /**
+ * A page-load id, unique across tabs.
+ * @param {any} win
+ * @returns {string}
+ */
+function newLoadBlock(win) {
+  const uuid = win.crypto?.randomUUID?.();
+  return typeof uuid === 'string' ? uuid : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
  * Wrap the engine globals. Calls observed before `attach` are buffered, so messages the
  * engine renders during the overlay's async startup are not lost.
  * @param {{ win: any, roomID: string }} deps
@@ -102,6 +114,10 @@ export function installEngineHook({ win, roomID }) {
   /** @type {ServerMessage[]} */
   let queue = [];
   let inPoll = false;
+  /** Whether the poll being handled is the page load's history poll. */
+  let inHistoryPoll = false;
+  /** This page load's block id: tags every record first stored from its history poll. */
+  const loadBlock = newLoadBlock(win);
   let seq = 0;
   /** @type {MessageRecord[]} pending own messages awaiting their send's outcome */
   let pendings = [];
@@ -276,14 +292,25 @@ export function installEngineHook({ win, roomID }) {
         parseUserMessage(/** @type {Element} */ (node).textContent ?? ''),
       );
       inPoll = true;
+      // The engine sends history=1 on the first poll only and clears the flag at the end of
+      // this same call, so it is read here, on entry.
+      inHistoryPoll = Boolean(win.showHistory);
     }
     try {
       return origHandle.apply(this, args);
     } finally {
       inPoll = false;
+      inHistoryPoll = false;
       queue = [];
     }
   };
+  const wrappedHandle = win.handleMessages;
+
+  // The engine binds a poll's handler when it opens the request, so a history poll already in
+  // flight at install would reach the unwrapped handler. Rebind it; one already completed is
+  // missed, and that load shows no block.
+  const inFlight = win.receiveMesReq;
+  if (inFlight.readyState < 4 && inFlight.onreadystatechange === origHandle) inFlight.onreadystatechange = wrappedHandle;
 
   win.createMessageDiv = function (
     /** @type {unknown} */ mStatus,
@@ -317,14 +344,22 @@ export function installEngineHook({ win, roomID }) {
     const before = win.showMessages;
     const result = origCreate.apply(this, arguments);
     /** @type {Observed} */
-    const observed = { call, server, inPoll, rendered: win.showMessages > before, at: Date.now(), send };
+    const observed = {
+      call,
+      server,
+      inPoll,
+      backlog: inPoll && inHistoryPoll,
+      rendered: win.showMessages > before,
+      at: Date.now(),
+      send,
+    };
     if (buffered) buffered.push(observed);
     else safeObserve(observed);
     return result;
   };
 
   /** @param {Observed} observed */
-  function observe({ call, server, inPoll: polled, rendered, at: now, send }) {
+  function observe({ call, server, inPoll: polled, backlog, rendered, at: now, send }) {
     if (call.mDiv !== MAIN_DIV) return; // private windows are out of scope (A6)
 
     const target = isDelete(safeDecodeURI(String(call.message ?? '')));
@@ -355,6 +390,9 @@ export function installEngineHook({ win, roomID }) {
         kind,
         ...body,
         receivedAt: nextReceivedAt(now),
+        // Facts, not display: the view groups and collapses from them. Storage keeps a record
+        // already stored live untagged (first seen wins).
+        ...(backlog ? { source: /** @type {const} */ ('backlog'), backlogBlock: loadBlock } : {}),
       };
       // A server copy of an own message (only a self-whisper is ever delivered back) replaces
       // its local record, pending or already confirmed by its send. The engine's duplicate

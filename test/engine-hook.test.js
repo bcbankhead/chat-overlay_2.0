@@ -762,3 +762,125 @@ test('a stored pending own message orders by its corrected orderAt', async (t) =
   assert.equal(own.confirm, 'pending');
   assert.equal(own.orderKey, own.receivedAt - skew);
 });
+
+// TDF-0033.2: server-history blocks.
+
+/** The engine's history flag: set for the first poll, cleared at the end of that call. */
+function withHistoryFlag(win) {
+  win.showHistory = 1;
+  const handle = win.handleMessages;
+  win.handleMessages = function () {
+    try {
+      return handle.apply(this, arguments);
+    } finally {
+      win.showHistory = 0;
+    }
+  };
+  return win;
+}
+
+test('only records from the history poll are tagged, all with one page-load block id', () => {
+  const win = withHistoryFlag(fakeEngine());
+  const calls = [];
+  const history = new Proxy({}, { get: (_, op) => async (...args) => calls.push([op, ...args]) });
+  const view = new Proxy({}, { get: (_, op) => (...args) => calls.push([`view.${op}`, ...args]) });
+  installEngineHook({ win, roomID: '1' }).attach({ history, view });
+  const poll = (...messages) => {
+    win.receiveMesReq.responseXML = xml(...messages);
+    win.handleMessages();
+  };
+  poll(um('1001', 'bob', 'old one', '1600'), um('1002', 'carol', 'old two', '1601'));
+  poll(um('1003', 'bob', 'live', '1700'));
+  const puts = calls.filter((c) => c[0] === 'put').map((c) => c[1]);
+  assert.equal(puts[0].source, 'backlog');
+  assert.equal(typeof puts[0].backlogBlock, 'string');
+  assert.ok(puts[0].backlogBlock.length > 0);
+  assert.equal(puts[1].backlogBlock, puts[0].backlogBlock);
+  assert.equal(puts[2].source, undefined);
+  assert.equal(puts[2].backlogBlock, undefined);
+  const placed = calls.filter((c) => c[0] === 'view.place').map((c) => c[1].backlogBlock);
+  assert.deepEqual(placed, [puts[0].backlogBlock, puts[0].backlogBlock, undefined]);
+});
+
+test('without the history flag no record is tagged', () => {
+  const { calls, poll } = setup();
+  poll(um('1010', 'bob', 'hello', '1700'));
+  assert.equal(calls.find((c) => c[0] === 'put')[1].source, undefined);
+});
+
+test('each page load gets its own block id', () => {
+  const ids = [];
+  for (let i = 0; i < 2; i++) {
+    const win = withHistoryFlag(fakeEngine());
+    const calls = [];
+    const history = new Proxy({}, { get: (_, op) => async (...args) => calls.push([op, ...args]) });
+    const view = new Proxy({}, { get: () => () => {} });
+    installEngineHook({ win, roomID: '1' }).attach({ history, view });
+    win.receiveMesReq.responseXML = xml(um('1020', 'bob', 'old', '1600'));
+    win.handleMessages();
+    ids.push(calls.find((c) => c[0] === 'put')[1].backlogBlock);
+  }
+  assert.notEqual(ids[0], ids[1]);
+});
+
+test('a history poll handled before attach keeps its tag through the buffer', () => {
+  const win = withHistoryFlag(fakeEngine());
+  const calls = [];
+  const history = new Proxy({}, { get: (_, op) => async (...args) => calls.push([op, ...args]) });
+  const view = new Proxy({}, { get: () => () => {} });
+  const hook = installEngineHook({ win, roomID: '1' });
+  win.receiveMesReq.responseXML = xml(um('1030', 'bob', 'early', '1600'));
+  win.handleMessages();
+  win.receiveMesReq.responseXML = xml(um('1031', 'bob', 'live', '1700'));
+  win.handleMessages();
+  hook.attach({ history, view });
+  const puts = calls.filter((c) => c[0] === 'put').map((c) => [c[1].id, c[1].source]);
+  assert.deepEqual(puts, [
+    ['1030', 'backlog'],
+    ['1031', undefined],
+  ]);
+});
+
+test('a history poll in flight at install is rebound to the wrapper and tagged', () => {
+  const win = fakeEngine();
+  win.showHistory = 1;
+  const engineHandle = win.handleMessages;
+  win.receiveMesReq = { readyState: 1, responseXML: null, onreadystatechange: engineHandle };
+  const calls = [];
+  const history = new Proxy({}, { get: (_, op) => async (...args) => calls.push([op, ...args]) });
+  const view = new Proxy({}, { get: () => () => {} });
+  installEngineHook({ win, roomID: '1' }).attach({ history, view });
+  assert.notEqual(win.receiveMesReq.onreadystatechange, engineHandle);
+  assert.equal(win.receiveMesReq.onreadystatechange, win.handleMessages);
+  win.receiveMesReq.readyState = 4;
+  win.receiveMesReq.responseXML = xml(um('1040', 'bob', 'old', '1600'));
+  win.receiveMesReq.onreadystatechange();
+  assert.equal(calls.find((c) => c[0] === 'put')[1].source, 'backlog');
+});
+
+test('a history poll completed before install is left alone and yields no tag', () => {
+  const win = fakeEngine();
+  const engineHandle = win.handleMessages;
+  win.showHistory = 0; // the engine cleared it after handling the history poll
+  win.receiveMesReq = { readyState: 4, responseXML: null, onreadystatechange: engineHandle };
+  const calls = [];
+  const history = new Proxy({}, { get: (_, op) => async (...args) => calls.push([op, ...args]) });
+  const view = new Proxy({}, { get: () => () => {} });
+  installEngineHook({ win, roomID: '1' }).attach({ history, view });
+  assert.equal(win.receiveMesReq.onreadystatechange, engineHandle);
+  win.receiveMesReq.responseXML = xml(um('1050', 'bob', 'next poll', '1700'));
+  win.handleMessages();
+  assert.equal(calls.find((c) => c[0] === 'put')[1].source, undefined);
+});
+
+test("the page-load block id comes from the browser's randomUUID where it has one", () => {
+  const win = withHistoryFlag(fakeEngine());
+  win.crypto = { randomUUID: () => 'uuid-1' };
+  const calls = [];
+  const history = new Proxy({}, { get: (_, op) => async (...args) => calls.push([op, ...args]) });
+  const view = new Proxy({}, { get: () => () => {} });
+  installEngineHook({ win, roomID: '1' }).attach({ history, view });
+  win.receiveMesReq.responseXML = xml(um('1060', 'bob', 'old', '1600'));
+  win.handleMessages();
+  assert.equal(calls.find((c) => c[0] === 'put')[1].backlogBlock, 'uuid-1');
+});

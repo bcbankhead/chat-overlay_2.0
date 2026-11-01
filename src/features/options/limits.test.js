@@ -215,3 +215,50 @@ test('cleared lines leave the open view through onDeleted', async (t) => {
   await limits.clearHistory();
   assert.equal(doc.querySelectorAll('#tdf-chat .tdf-msg').length, 0);
 });
+
+// TDF-0033.2: a server-history block's stored state goes with its last line.
+
+test("retention deleting a block's last line drops its state; a block with lines left keeps it", async (t) => {
+  const { createBlockState } = await import('../../core/blockState.js');
+  const { db, limits } = await setup(t);
+  await seed(db, 'messages', [
+    { ...msg('b-old', 3), backlogBlock: 'gone' },
+    { ...msg('k-old', 3), backlogBlock: 'kept' },
+    { ...msg('k-new', 0.5), backlogBlock: 'kept' },
+  ]);
+  const state = createBlockState(db);
+  await state.set('gone', true);
+  await state.set('kept', true);
+  await state.set('other', false);
+  await limits.pruneHistory(1);
+  assert.deepEqual(await state.load(), { kept: true, other: false });
+});
+
+test('a deletion touching no block line leaves block state alone', async (t) => {
+  const { createBlockState } = await import('../../core/blockState.js');
+  const { db, limits } = await setup(t);
+  const state = createBlockState(db);
+  await state.set('gone', true);
+  await limits.pruneHistory(1);
+  assert.deepEqual(await state.load(), { gone: true });
+});
+
+test('delete-by-sender drops the state of a block it emptied', async (t) => {
+  const { createBlockState } = await import('../../core/blockState.js');
+  const { db, limits } = await setup(t);
+  await seed(db, 'messages', [{ ...msg('z1', 0.1), user: 'zed', backlogBlock: 'zb' }]);
+  const state = createBlockState(db);
+  await state.set('zb', true);
+  await limits.deleteByUser('zed');
+  assert.deepEqual(await state.load(), {});
+});
+
+test('Clear history clears every block state', async (t) => {
+  const { createBlockState } = await import('../../core/blockState.js');
+  const { db, limits } = await setup(t);
+  const state = createBlockState(db);
+  await state.set('a', true);
+  await state.set('b', false);
+  await limits.clearHistory();
+  assert.deepEqual(await state.load(), {});
+});

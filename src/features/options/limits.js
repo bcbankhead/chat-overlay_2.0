@@ -5,6 +5,7 @@
 // deletion here touches images or tags. Limits run on load and on commit; Clear history and
 // delete-by-sender run when the user confirms them.
 
+import { createBlockState } from '../../core/blockState.js';
 import { STORES, done, request } from '../../core/db.js';
 import { emitDeleted } from '../../core/events.js';
 import { historyCutoff, megabytesToBytes } from './selectors.js';
@@ -24,6 +25,8 @@ import { historyCutoff, megabytesToBytes } from './selectors.js';
  * @param {{ db: IDBDatabase, gallery: GalleryLimit, now?: () => number }} deps
  */
 export function createLimits({ db, gallery, now = Date.now }) {
+  const blockState = createBlockState(db);
+
   /**
    * Delete the lines in `range` of `indexName` (every line when null) in one transaction; then
    * announce them, so they leave the open view and their tags.
@@ -37,6 +40,8 @@ export function createLimits({ db, gallery, now = Date.now }) {
     const source = indexName === null ? store : store.index(indexName);
     /** @type {string[]} */
     const ids = [];
+    /** @type {Set<string>} server-history blocks a deleted line belonged to */
+    const touched = new Set();
     await new Promise((resolve, reject) => {
       const req = source.openCursor(range);
       req.onerror = () => reject(req.error);
@@ -44,13 +49,47 @@ export function createLimits({ db, gallery, now = Date.now }) {
         const cursor = req.result;
         if (!cursor) return resolve(undefined);
         ids.push(/** @type {string} */ (cursor.primaryKey));
+        const block = cursor.value?.backlogBlock;
+        if (block) touched.add(block);
         cursor.delete();
         cursor.continue();
       };
     });
     await done(t);
     if (ids.length) emitDeleted(ids);
+    try {
+      await forgetBlocks(range === null ? null : touched);
+    } catch (err) {
+      // The lines are gone and announced; say so, so the failure is not read as theirs.
+      const cause = err instanceof Error ? err.message : JSON.stringify(err);
+      throw new Error(`lines deleted, but their server-history block state was not cleared: ${cause}`);
+    }
     return ids;
+  };
+
+  /**
+   * Drop the stored collapsed state of blocks with no line left (TDF-0033.2): every block after
+   * Clear history (null), else those of `touched` no stored line still carries. A deletion that
+   * touched no block line reads nothing more.
+   * @param {Set<string> | null} touched
+   */
+  const forgetBlocks = async (touched) => {
+    if (touched === null) return blockState.clear();
+    if (!touched.size) return;
+    const left = new Set(touched);
+    const t = db.transaction(STORES.messages, 'readonly');
+    await new Promise((resolve, reject) => {
+      const req = t.objectStore(STORES.messages).openCursor();
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor || !left.size) return resolve(undefined);
+        const block = cursor.value?.backlogBlock;
+        if (block) left.delete(block);
+        cursor.continue();
+      };
+    });
+    await blockState.prune(left);
   };
 
   return {

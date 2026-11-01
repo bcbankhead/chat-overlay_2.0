@@ -8,6 +8,7 @@
 // feature have reported ready (reveal.js), then fades in (cloak.js).
 
 import { createAvatarResolver } from './avatarResolver.js';
+import { createBlockState } from './blockState.js';
 import { CLOAK_MS, cloak } from './cloak.js';
 import { openDb } from './db.js';
 import { installEngineHook } from './engine-hook.js';
@@ -150,7 +151,33 @@ async function start(lift, coreReady) {
     // Published for the rail and the profile flyout, which show the same avatars.
     const avatars = createAvatarResolver({ win, db });
     win.__tdfChat2Avatars = avatars;
-    const view = createView({ doc: document, win, container, css, avatars, windowStart });
+    // Each server-history block's collapsed state (TDF-0033.2), read once; a toggle updates the
+    // loaded copy and stores it, except at 0 days, when the block's records are not stored.
+    const blockState = createBlockState(db);
+    // A failed read is not worth failing the start over: blocks arrive expanded, and say why.
+    /** @type {string | null} */
+    let blockStatesFailed = null;
+    /** @type {import('./blockState.js').BlockStates} */
+    const blockStates = await blockState.load().catch((err) => {
+      blockStatesFailed = describeError(err);
+      return {};
+    });
+    /** @type {import('./view.js').View | null} */
+    let blockView = null;
+    /** @type {import('./view.js').BlockStates} */
+    const blocks = {
+      collapsed: (id) => blockStates[id],
+      toggle: (id, collapsed) => {
+        blockStates[id] = collapsed;
+        if (retentionDays === 0) return;
+        blockState
+          .set(id, collapsed)
+          .catch((err) => blockView?.notice(`Server history block state not saved: ${describeError(err)}`));
+      },
+    };
+    const view = createView({ doc: document, win, container, css, avatars, windowStart, blocks });
+    blockView = view;
+    if (blockStatesFailed !== null) view.notice(`Server history blocks shown expanded: their state was not read (${blockStatesFailed})`);
     unsubscribe.push(
       onDeleted((ids) => view.removeById(ids)),
       onClearView(() => view.clear()),

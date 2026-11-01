@@ -1,6 +1,7 @@
 // The message view: a linear list overlaid on #chatContainer. The engine's container stays
 // in the DOM, hidden, so its scrolling and trimming keep working underneath.
 
+import { blockHeads, blockLabel } from './blockGroups.js';
 import { expand } from './expand.js';
 import { continuesGroup, groupTime, localDay, orderKey, timeLabel } from './group.js';
 import { REPLAY_CEILING } from './history.js';
@@ -51,6 +52,20 @@ function groupKey(row) {
 }
 
 /**
+ * Each server-history block's collapsed state, as the view reads and reports it.
+ * @typedef {object} BlockStates
+ * @property {(id: string) => boolean | undefined} collapsed  the stored state; undefined when
+ *   none is stored
+ * @property {(id: string, collapsed: boolean) => void} toggle  the member toggled the block
+ */
+
+/** The header button heading a server-history block. */
+const BLOCK_HEAD = 'tdf-block-head';
+
+/** A row of a collapsed block. */
+const BLOCK_HIDDEN = 'tdf-block-hidden';
+
+/**
  * Mark a chat row `tdf-head` or `tdf-cont` from the row before it. Notices carry neither,
  * and break the group for the row after them.
  * @param {Element | null} el
@@ -60,7 +75,10 @@ function regroup(el) {
   const key = row && groupKey(row);
   if (!row || !key || (key.kind !== 'public' && key.kind !== 'whisper')) return;
   const prev = /** @type {HTMLElement | null} */ (row.previousElementSibling);
-  const cont = continuesGroup(prev && groupKey(prev), key);
+  // A group never continues across a server-history block's edge, so the first row after a
+  // collapsed block keeps its sender's name (TDF-0033.2).
+  const sameBlock = (prev?.dataset.block ?? '') === (row.dataset.block ?? '');
+  const cont = sameBlock && continuesGroup(prev && groupKey(prev), key);
   row.classList.toggle('tdf-cont', cont);
   row.classList.toggle('tdf-head', !cont);
 }
@@ -75,11 +93,13 @@ function regroup(el) {
  *   now?: () => number,
  *   windowStart?: () => number | null,
  *   ceiling?: number,
+ *   blocks?: BlockStates | null,
  * }} deps `avatars` looks up forum pictures for every sender, preferred over the chat avatar;
  *   `now` is the current time in seconds, which decides whether a time shows its date;
  *   `windowStart` is the receipt time (ms) the Chat history window starts at, or null where no
  *   window applies, read at each trim so a change in Settings moves it; `ceiling` is the most
- *   rows the list keeps, REPLAY_CEILING unless a test sets a smaller one
+ *   rows the list keeps, REPLAY_CEILING unless a test sets a smaller one; `blocks` holds each
+ *   server-history block's stored collapsed state and is told of each toggle
  */
 export function createView({
   doc,
@@ -90,6 +110,7 @@ export function createView({
   now = () => Date.now() / 1000,
   windowStart = () => null,
   ceiling = REPLAY_CEILING,
+  blocks = null,
 }) {
   const style = doc.createElement('style');
   style.id = 'tdf-chat-style';
@@ -336,6 +357,10 @@ export function createView({
     el.dataset.order = String(orderKey(record));
     // What the Chat history window ages by, as retention prunes on it (TDF-0033.1).
     if (Number.isFinite(record.receivedAt)) el.dataset.received = String(record.receivedAt);
+    if (record.backlogBlock) {
+      el.dataset.block = record.backlogBlock;
+      blocksDirty = true;
+    }
     const chat = record.kind === 'public' || record.kind === 'whisper';
 
     // Sender family and size are ignored: every message uses the UI font (theme.css).
@@ -513,10 +538,16 @@ export function createView({
   // Scans walk the list's children, which are only its rows: indexing the live `shown`
   // collection re-reads the DOM per access, quadratic over a list of thousands of rows.
 
+  /** @param {Element | null} el */
+  const isHead = (el) => Boolean(el?.classList.contains(BLOCK_HEAD));
+
   // The oldest row: a problem notice or appended row at the top goes first, as it always has;
-  // otherwise the row with the lowest order, the first of equals (TDF-0032).
+  // otherwise the row with the lowest order, the first of equals (TDF-0032). Block headers are
+  // not rows and are passed over.
   function oldest() {
-    const first = /** @type {HTMLElement} */ (list.firstElementChild);
+    let start = list.firstElementChild;
+    while (isHead(start)) start = /** @type {Element} */ (start).nextElementSibling;
+    const first = /** @type {HTMLElement} */ (start);
     let min = orderOf(first);
     if (min === null) return first;
     let pick = first;
@@ -570,7 +601,85 @@ export function createView({
   function trim() {
     ageOut();
     while (shown.length > ceiling) remove(oldest());
+    syncBlocks();
   }
+
+  // Server-history blocks (TDF-0033.2). Rows stay flat in the list; each block gets one header
+  // button just before its first row, and a collapsed block's rows are hidden by class.
+  /** @type {Map<string, HTMLButtonElement>} */
+  const heads = new Map();
+  /** @type {Map<string, boolean>} states toggled this load, ahead of the stored ones */
+  const toggled = new Map();
+  // Set when a block row is rendered; with no header up and nothing rendered, there is nothing
+  // to sync and the scan is skipped.
+  let blocksDirty = false;
+
+  /** @param {string} id */
+  const isCollapsed = (id) => toggled.get(id) ?? blocks?.collapsed(id) ?? false;
+
+  /** @param {string} id */
+  function makeHead(id) {
+    const head = doc.createElement('button');
+    head.type = 'button';
+    head.className = BLOCK_HEAD;
+    head.dataset.headOf = id;
+    return head;
+  }
+
+  // Place, label and remove headers to match the rows now in the list, and hide the rows of
+  // collapsed blocks.
+  function syncBlocks() {
+    if (!blocksDirty && heads.size === 0) return;
+    blocksDirty = false;
+    /** @type {HTMLElement[]} */
+    const rows = [];
+    for (let el = list.firstElementChild; el; el = el.nextElementSibling) {
+      if (!isHead(el)) rows.push(/** @type {HTMLElement} */ (el));
+    }
+    const found = blockHeads(rows.map((row) => row.dataset.block));
+    const live = new Set(found.map((b) => b.block));
+    for (const [id, head] of heads) {
+      if (live.has(id)) continue;
+      const next = head.nextElementSibling;
+      head.remove();
+      heads.delete(id);
+      regroup(next);
+    }
+    for (const { block, index, count } of found) {
+      const first = rows[index];
+      let head = heads.get(block);
+      if (!head) heads.set(block, (head = makeHead(block)));
+      if (head.nextElementSibling !== first) {
+        const oldNext = head.parentNode ? head.nextElementSibling : null;
+        first.before(head);
+        regroup(oldNext);
+      }
+      const collapsed = isCollapsed(block);
+      const label = blockLabel(count);
+      if (head.textContent !== label) head.textContent = label;
+      head.setAttribute('aria-expanded', String(!collapsed));
+    }
+    for (const row of rows) {
+      const block = row.dataset.block;
+      row.classList.toggle(BLOCK_HIDDEN, Boolean(block) && isCollapsed(/** @type {string} */ (block)));
+    }
+  }
+
+  // Clicking a header, or Enter or Space on it, collapses or expands its block and stores that.
+  list.addEventListener('click', (event) => {
+    const head = /** @type {Element} */ (event.target).closest?.(`.${BLOCK_HEAD}`);
+    const id = /** @type {HTMLElement | null} */ (head)?.dataset.headOf;
+    if (!id) return;
+    const collapsed = !isCollapsed(id);
+    toggled.set(id, collapsed);
+    blocksDirty = true;
+    syncBlocks();
+    blocks?.toggle(id, collapsed);
+    if (pinned && autoOn()) {
+      stopSlide();
+      toBottom();
+    }
+  });
 
   /**
    * The row a record of this order goes after: the last row ordered at or below it, problem
@@ -707,6 +816,7 @@ export function createView({
         a.compareDocumentPosition(b) & 4 /* DOCUMENT_POSITION_FOLLOWING */ ? -1 : 1,
       );
       if (first) remove(first);
+      syncBlocks();
     },
 
     /**
@@ -715,14 +825,18 @@ export function createView({
      */
     removeById(ids) {
       for (const id of ids) for (const el of entries('id', id)) remove(el);
+      syncBlocks();
     },
 
-    /** Empty the list: every entry and notice goes. */
+    /** Empty the list: every entry, notice and block header goes. */
     clear() {
       for (const el of [...shown]) {
         resized?.unobserve(el);
         el.remove();
       }
+      for (const head of heads.values()) head.remove();
+      heads.clear();
+      blocksDirty = false;
       byKey.id.clear();
       byKey.mtime.clear();
       stopSlide();

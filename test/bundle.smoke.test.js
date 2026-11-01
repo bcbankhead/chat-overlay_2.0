@@ -727,3 +727,68 @@ test('placed at the end of the body the include still mounts without a cloak', a
   assert.equal(cloaked(document), false);
   assert.equal(added, false, 'no cloak was ever inserted');
 });
+
+// TDF-0033.2: server-history blocks, through the built bundle.
+
+/** Poll as the engine's first, history poll: `showHistory` set on entry, cleared by its end. */
+const historyPoll = (shell, ...raw) => {
+  shell.window.showHistory = 1;
+  shell.poll(...raw);
+  shell.window.showHistory = 0;
+};
+const blockHeadOf = (document) => document.querySelector('#tdf-chat .tdf-block-head');
+const storedBlockStates = async (indexedDB) => {
+  const db = await openDb({ indexedDB });
+  const row = await new Promise((resolve) => {
+    const req = db.transaction('settings').objectStore('settings').get('serverHistoryBlocks');
+    req.onsuccess = () => resolve(req.result);
+  });
+  db.close();
+  return row?.value;
+};
+
+test('the history poll shows as one block whose collapsed state survives a reload', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const first = await page(bundle, indexedDB);
+  historyPoll(first, um('1', 'bob', 'old', '100'), um('2', 'carol', 'older', '101'));
+  first.poll(um('3', 'bob', 'live', '102'));
+  await settle();
+  const head = blockHeadOf(first.document);
+  assert.equal(head.textContent, "From the chat's server history (2)");
+  assert.equal(head.nextElementSibling.dataset.id, '1');
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  head.click();
+  await settle();
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+  const block = first.document.querySelector('#tdf-chat [data-id="1"]').dataset.block;
+  assert.deepEqual(await storedBlockStates(indexedDB), { [block]: true });
+
+  // A reload replays the block collapsed; this load's own history poll re-delivers nothing new.
+  const second = await page(bundle, indexedDB);
+  historyPoll(second, um('1', 'bob', 'old', '100'));
+  await settle();
+  const heads = second.document.querySelectorAll('#tdf-chat .tdf-block-head');
+  assert.equal(heads.length, 1, 'a re-delivered record keeps its first block');
+  assert.equal(heads[0].getAttribute('aria-expanded'), 'false');
+  assert.ok(second.document.querySelector('#tdf-chat [data-id="2"]').classList.contains('tdf-block-hidden'));
+  assert.ok(!second.document.querySelector('#tdf-chat [data-id="3"]').classList.contains('tdf-block-hidden'));
+  for (const { window } of [first, second]) await window.happyDOM.close();
+});
+
+test('with Chat history at 0 days a block still toggles, but its state is not stored', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('retentionDays', 0);
+  db.close();
+  const shell = await page(bundle, indexedDB);
+  historyPoll(shell, um('1', 'bob', 'old', '100'));
+  await settle();
+  const head = blockHeadOf(shell.document);
+  head.click();
+  await settle();
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+  assert.equal(await storedBlockStates(indexedDB), undefined);
+  await shell.window.happyDOM.close();
+});

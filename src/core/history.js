@@ -26,6 +26,10 @@ import { isExpired } from './reconcile.js';
  *   it: set on a pending own message or engine notice once a poll has supplied clock-skew
  *   samples, re-estimated when the send is confirmed; without it, receipt time orders it
  * @property {'pending' | 'unconfirmed'} [confirm] absent on server records
+ * @property {'backlog'} [source]   set only when first stored from the page load's server
+ *   history poll; absent means received live (seen). Never removed, never added later
+ * @property {string} [backlogBlock] the page-load id of that history poll, grouping its
+ *   records into one block in the view
  */
 
 /**
@@ -65,7 +69,9 @@ export function createHistory(db) {
     /**
      * Upsert on id: a re-delivered server message replaces its earlier copy, keeping that
      * copy's first-seen `receivedAt` (TDF-0031), so another tab's re-store of the server
-     * backlog neither reorders replay nor extends retention. Read and write share one
+     * backlog neither reorders replay nor extends retention. The backlog tag is first-seen
+     * too: an existing record keeps its own `source`/`backlogBlock`, or their absence, so a
+     * message stored live is never tagged by a later backlog. Read and write share one
      * transaction, so two tabs' writes cannot interleave between them.
      * @param {MessageRecord} record its `orderKey` is computed here
      */
@@ -77,7 +83,13 @@ export function createHistory(db) {
         /** @type {MessageRecord | undefined} */
         const existing = req.result;
         const receivedAt = existing ? existing.receivedAt : record.receivedAt;
-        store.put({ ...record, receivedAt, orderKey: orderKey({ mTime: record.mTime, receivedAt }) });
+        const { source: _source, backlogBlock: _block, ...rest } = record;
+        const first = existing ?? record;
+        /** @type {MessageRecord} */
+        const stored = { ...rest, receivedAt, orderKey: orderKey({ mTime: record.mTime, receivedAt }) };
+        if (first.source) stored.source = first.source;
+        if (first.backlogBlock) stored.backlogBlock = first.backlogBlock;
+        store.put(stored);
       };
       await done(t);
     },

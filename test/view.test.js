@@ -70,7 +70,7 @@ const NOW = new Date(2026, 0, 2, 12, 0).getTime() / 1000;
 // build under happy-dom, and the trim's behaviour does not depend on its size.
 const CEILING = 200;
 
-async function setup({ autoScroll = true, reducedMotion = false, globals = {}, now = () => NOW, windowStart, ceiling = CEILING } = {}) {
+async function setup({ autoScroll = true, reducedMotion = false, globals = {}, now = () => NOW, windowStart, ceiling = CEILING, blocks } = {}) {
   const win = new Window({ url: 'https://example.test/chat/' });
   const frames = stubFrames(win);
   const resizes = stubResize(win);
@@ -82,7 +82,7 @@ async function setup({ autoScroll = true, reducedMotion = false, globals = {}, n
   const whispered = [];
   win.whisperUser = (name) => whispered.push(name);
   const container = doc.getElementById('chatContainer');
-  const view = createView({ doc, win, container, css: '#tdf-chat{}', now, windowStart, ceiling });
+  const view = createView({ doc, win, container, css: '#tdf-chat{}', now, windowStart, ceiling, blocks });
   const root = doc.getElementById('tdf-chat');
   return { win, doc, view, root, container, whispered, frames, resizes };
 }
@@ -1340,4 +1340,84 @@ test('a row with no receipt time carries none and is never aged out', async () =
   view.replay([rec({ id: 'a', mTime: '1000', receivedAt: undefined })]);
   assert.equal(root.querySelector('[data-id="a"]').dataset.received, undefined);
   assert.deepEqual(ids(root), ['a']);
+});
+// TDF-0033.2: server-history blocks.
+
+const blockRec = (over) => rec({ backlogBlock: 'load-1', source: 'backlog', ...over });
+const blockHead = (root) => root.querySelector('.tdf-block-head');
+
+test('a block header sits just before its first row in timestamp order, counting its rows', async () => {
+  const { view, root } = await setup();
+  view.replay([rec({ id: 'a', mTime: '100' })]);
+  view.place(blockRec({ id: 'b2', mTime: '60' }));
+  view.place(blockRec({ id: 'b1', mTime: '50' }));
+  const head = blockHead(root);
+  assert.ok(head);
+  assert.equal(head.textContent, "From the chat's server history (2)");
+  assert.equal(head.nextElementSibling.dataset.id, 'b1');
+  assert.equal(head.getAttribute('aria-expanded'), 'true', 'no stored state: expanded');
+  assert.deepEqual(msgs(root).map((el) => el.dataset.id), ['b1', 'b2', 'a']);
+  assert.equal(root.querySelectorAll('.tdf-block-head').length, 1);
+});
+
+test('clicking the header collapses its rows and tells the store; clicking again expands', async () => {
+  const toggles = [];
+  const { win, view, root } = await setup({ blocks: { collapsed: () => undefined, toggle: (id, c) => toggles.push([id, c]) } });
+  view.replay([blockRec({ id: 'b1', mTime: '50' }), blockRec({ id: 'b2', mTime: '60' }), rec({ id: 'a', mTime: '100' })]);
+  const head = blockHead(root);
+  head.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+  assert.deepEqual(
+    msgs(root).map((el) => el.classList.contains('tdf-block-hidden')),
+    [true, true, false],
+  );
+  head.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  assert.ok(msgs(root).every((el) => !el.classList.contains('tdf-block-hidden')));
+  assert.deepEqual(toggles, [
+    ['load-1', true],
+    ['load-1', false],
+  ]);
+});
+
+test('a block arrives in its stored state; rows placed later into it follow that state', async () => {
+  const { view, root } = await setup({ blocks: { collapsed: (id) => (id === 'load-1' ? true : undefined), toggle() {} } });
+  view.replay([blockRec({ id: 'b1', mTime: '50' }), blockRec({ id: 'x1', mTime: '55', backlogBlock: 'load-2' })]);
+  view.place(blockRec({ id: 'b2', mTime: '52' }));
+  const [h1, h2] = root.querySelectorAll('.tdf-block-head');
+  assert.equal(h1.getAttribute('aria-expanded'), 'false');
+  assert.equal(h2.getAttribute('aria-expanded'), 'true');
+  assert.ok(root.querySelector('[data-id="b2"]').classList.contains('tdf-block-hidden'));
+  assert.ok(!root.querySelector('[data-id="x1"]').classList.contains('tdf-block-hidden'));
+});
+
+test('the header follows removals and the trim, and goes with its last row', async () => {
+  const { view, root } = await setup({ ceiling: 3 });
+  view.replay([blockRec({ id: 'b1', mTime: '50' }), blockRec({ id: 'b2', mTime: '60' }), rec({ id: 'a', mTime: '100' })]);
+  assert.equal(blockHead(root).textContent, "From the chat's server history (2)");
+  view.append(rec({ id: 'local-1', mTime: '', confirm: 'pending' })); // trims b1, the oldest
+  assert.equal(blockHead(root).textContent, "From the chat's server history (1)");
+  assert.equal(blockHead(root).nextElementSibling.dataset.id, 'b2');
+  view.removeById(['b2']);
+  assert.equal(blockHead(root), null);
+  view.replay([blockRec({ id: 'b3', mTime: '40' })]);
+  view.clear();
+  assert.equal(blockHead(root), null);
+});
+
+test('the trim never takes a header for the oldest row', async () => {
+  const { view, root } = await setup({ ceiling: 2 });
+  view.replay([blockRec({ id: 'b1', mTime: '50' }), rec({ id: 'a', mTime: '100' })]);
+  view.append(rec({ id: 'local-1', mTime: '', confirm: 'pending' }));
+  assert.deepEqual(msgs(root).map((el) => el.dataset.id), ['a', 'local-1']);
+  assert.equal(blockHead(root), null);
+});
+
+test('a live row from the same sender after a block heads its own group', async () => {
+  const { win, view, root } = await setup();
+  view.replay([blockRec({ id: 'b1', mTime: '1000' }), blockRec({ id: 'b2', mTime: '1010' })]);
+  view.place(rec({ id: 'a', mTime: '1020' }));
+  assert.deepEqual(heads(root), ['h', 'c', 'h']);
+  blockHead(root).dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  assert.deepEqual(heads(root), ['h', 'c', 'h'], 'collapsing changes no grouping');
 });
