@@ -184,3 +184,70 @@ test('by default a Gallery tile opens the media popover, whose zoom opens the sh
     clearGalleryErrors();
   }
 });
+
+/**
+ * Stand-in canvas globals, so compressOriginal shrinks every opaque original to 4 bytes of JPEG.
+ * @returns {() => void} restore
+ */
+function fakeCanvas() {
+  const g = /** @type {any} */ (globalThis);
+  const saved = { createImageBitmap: g.createImageBitmap, OffscreenCanvas: g.OffscreenCanvas };
+  g.createImageBitmap = async () => ({ width: 2, height: 2, close() {} });
+  g.OffscreenCanvas = class {
+    getContext() {
+      return { drawImage() {}, getImageData: () => ({ data: new Uint8ClampedArray(16).fill(255) }) };
+    }
+    async convertToBlob() {
+      return new Blob([new Uint8Array(4)], { type: 'image/jpeg' });
+    }
+  };
+  return () => Object.assign(g, saved);
+}
+
+/** @param {IDBFactory} indexedDB */
+async function storeOriginal(indexedDB) {
+  await createImageStore(await openDb({ indexedDB })).put(
+    /** @type {any} */ ({
+      id: ID, messageId: '7', user: 'alice', mTime: '100', roomID: '1', receivedAt: 1, contentType: 'image/png',
+      thumb: null, blob: new Blob([new Uint8Array(500)], { type: 'image/png' }), bytes: 500, favorite: false, broken: false,
+    }),
+  );
+}
+
+test('with Compress stored images on, stored originals are compressed once the gallery starts', async () => {
+  const restore = fakeCanvas();
+  const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
+  try {
+    const indexedDB = new IDBFactory();
+    await storeOriginal(indexedDB);
+    await createSettings(await openDb({ indexedDB })).set('compressStoredImages', true);
+    startGallery({ win, doc: win.document, css: '', indexedDB });
+    await settle();
+    const row = (await createImageStore(await openDb({ indexedDB })).list())[0];
+    assert.deepEqual([row.blob?.size, row.contentType, row.bytes, row.compressChecked], [4, 'image/jpeg', 4, true]);
+  } finally {
+    restore();
+    clearGalleryErrors();
+  }
+});
+
+test('with Compress stored images off nothing is compressed, until it is switched on, without a reload', async () => {
+  const restore = fakeCanvas();
+  const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
+  try {
+    const indexedDB = new IDBFactory();
+    await storeOriginal(indexedDB);
+    startGallery({ win, doc: win.document, css: '', indexedDB });
+    await settle();
+    const store = createImageStore(await openDb({ indexedDB }));
+    const before = (await store.list())[0];
+    assert.deepEqual([before.blob?.size, before.compressChecked], [500, undefined]);
+    await createSettings(await openDb({ indexedDB })).set('compressStoredImages', true);
+    await settle();
+    const after = (await store.list())[0];
+    assert.deepEqual([after.blob?.size, after.contentType, after.compressChecked], [4, 'image/jpeg', true]);
+  } finally {
+    restore();
+    clearGalleryErrors();
+  }
+});

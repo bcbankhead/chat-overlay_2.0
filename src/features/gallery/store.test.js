@@ -190,3 +190,35 @@ test('repair stores the hash a retry computed', async () => {
   await store.repair('a', { hash: 'h1' });
   assert.equal((await store.findByHash('h1'))?.id, 'a');
 });
+
+/** @param {number} size @param {string} [type] */
+const blobOf = (size, type = 'image/png') => new Blob([new Uint8Array(size)], { type });
+
+test('pendingCompression lists records with a blob that are neither broken nor already checked', async () => {
+  const store = await fresh();
+  await store.put(image({ id: 'kept', blob: blobOf(10) }));
+  await store.put(image({ id: 'thumb-only' }));
+  await store.put(image({ id: 'broken', blob: blobOf(10), broken: true }));
+  await store.put(image({ id: 'checked', blob: blobOf(10), compressChecked: true }));
+  assert.deepEqual(await store.pendingCompression(), ['kept']);
+});
+
+test('recompress writes only while the stored blob is the one read, and keeps the favourite', async () => {
+  const store = await fresh();
+  await store.put(image({ id: 'a', blob: blobOf(100), bytes: 100, favorite: true }));
+  const fields = { blob: blobOf(40, 'image/jpeg'), bytes: 40, contentType: 'image/jpeg', compressChecked: true };
+  // The blob was replaced since it was read: left alone.
+  assert.equal(await store.recompress('a', 99, fields), false);
+  assert.equal((await get(store, 'a'))?.blob?.size, 100);
+  assert.equal(await store.recompress('a', 100, fields), true);
+  const row = await get(store, 'a');
+  assert.equal(row?.blob?.size, 40);
+  assert.equal(row?.bytes, 40);
+  assert.equal(row?.contentType, 'image/jpeg');
+  assert.equal(row?.compressChecked, true);
+  assert.equal(row?.favorite, true);
+  // A missing record is not created.
+  assert.equal(await store.recompress('gone', 100, fields), false);
+  assert.equal(await store.has('gone'), false);
+  assert.equal((await store.stats()).originals, 40, 'stats see the stored blob');
+});
