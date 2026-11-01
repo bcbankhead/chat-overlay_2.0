@@ -151,8 +151,9 @@ async function start(lift, coreReady) {
     // Published for the rail and the profile flyout, which show the same avatars.
     const avatars = createAvatarResolver({ win, db });
     win.__tdfChat2Avatars = avatars;
-    // Each server-history block's collapsed state (TDF-0033.2), read once; a toggle updates the
-    // loaded copy and stores it, except at 0 days, when the block's records are not stored.
+    // Each server-history block's collapsed state (TDF-0033.2), read once; a block's first state
+    // and each toggle update the loaded copy and store it, except at 0 days, when the block's
+    // records are not stored.
     const blockState = createBlockState(db);
     // A failed read is not worth failing the start over: blocks arrive in the setting's state,
     // and say why.
@@ -185,7 +186,16 @@ async function start(lift, coreReady) {
     };
     // Whether a block with no stored state arrives collapsed (TDF-0033.3), followed live; every
     // tick collapses the blocks now open, and unticking leaves every block as it is.
-    let autoCollapse = await settings.get('autoCollapseServerHistory');
+    // A failed read is not worth failing the start over either: blocks arrive expanded, and say why.
+    /** @type {string | null} */
+    let autoCollapseFailed = null;
+    let autoCollapse = await settings.get('autoCollapseServerHistory').then(
+      (value) => value === true,
+      (err) => {
+        autoCollapseFailed = describeError(err);
+        return false;
+      },
+    );
     unsubscribe.push(
       onSettingChange((key, value) => {
         if (key !== 'autoCollapseServerHistory') return;
@@ -204,6 +214,9 @@ async function start(lift, coreReady) {
       autoCollapse: () => autoCollapse,
     });
     blockView = view;
+    if (autoCollapseFailed !== null) {
+      view.notice(`Collapse server history automatically not read; blocks arrive expanded (${autoCollapseFailed})`);
+    }
     if (blockStatesFailed !== null) {
       const shownAs = autoCollapse ? 'collapsed' : 'expanded';
       view.notice(`Server history blocks shown ${shownAs}: their state was not read (${blockStatesFailed})`);

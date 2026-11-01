@@ -794,14 +794,16 @@ test('with Chat history at 0 days a block still toggles, but its state is not st
 });
 
 /**
- * Make one IDBObjectStore method throw for the block-state row until the returned restore runs.
+ * Make one IDBObjectStore method throw for one row (the block-state row by default) until the
+ * returned restore runs.
  * @param {'get' | 'put'} method
+ * @param {string} [row]
  */
-const failBlockState = (method) => {
+const failBlockState = (method, row = 'serverHistoryBlocks') => {
   const original = IDBObjectStore.prototype[method];
   IDBObjectStore.prototype[method] = function (...args) {
     const key = method === 'get' ? args[0] : args[0]?.key;
-    if (key === 'serverHistoryBlocks') throw new DOMException('injected', 'UnknownError');
+    if (key === row) throw new DOMException('injected', 'UnknownError');
     return original.apply(this, args);
   };
   return () => {
@@ -856,6 +858,30 @@ test('a failed block-state write raises a notice, and the block still toggles', 
   await shell.window.happyDOM.close();
 });
 
+test('a failed read of Collapse server history automatically starts anyway, blocks expanded, and says why', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('autoCollapseServerHistory', true);
+  db.close();
+  const restore = failBlockState('get', 'autoCollapseServerHistory');
+  let shell;
+  try {
+    shell = await page(bundle, indexedDB);
+    historyPoll(shell, um('1', 'bob', 'old', '100'));
+    await settle();
+  } finally {
+    restore();
+  }
+  assert.ok(
+    noticeTexts(shell.document).some((t) =>
+      /Collapse server history automatically not read; blocks arrive expanded \(injected\)/.test(t),
+    ),
+  );
+  assert.equal(blockHeadOf(shell.document).getAttribute('aria-expanded'), 'true');
+  await shell.window.happyDOM.close();
+});
+
 test('with Collapse server history automatically stored on, a new block arrives collapsed and is stored so', async () => {
   const bundle = await bundled();
   const indexedDB = new IDBFactory();
@@ -870,15 +896,31 @@ test('with Collapse server history automatically stored on, a new block arrives 
   await shell.window.happyDOM.close();
 });
 
-/** Open the rail's Settings flyout and return the Collapse server history automatically box. */
-const autoCollapseBox = async (shell) => {
+/** Open the rail's Settings flyout and return the checkbox labelled `label`. */
+const settingsBox = async (shell, label = 'Collapse server history automatically') => {
   shell.document.querySelector('.tdf-rail-icon-btn[data-panel="settings"]').click();
   await settle();
-  const row = [...shell.document.querySelectorAll('label.tdf-opt-row')].find(
-    (r) => r.textContent === 'Collapse server history automatically',
-  );
+  const row = [...shell.document.querySelectorAll('label.tdf-opt-row')].find((r) => r.textContent === label);
   return row.querySelector('input');
 };
+const autoCollapseBox = (shell) => settingsBox(shell);
+const withRail = {
+  body: '<div id="chatContainer" style="height:300px"></div><input type="checkbox" id="autoScrollID" checked><div id="userContainer"></div>',
+};
+
+test('ticking another Settings checkbox leaves the open blocks expanded', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const shell = await page(bundle, indexedDB, withRail);
+  historyPoll(shell, um('1', 'bob', 'old', '100'));
+  await settle();
+  const box = await settingsBox(shell, 'Include my images');
+  box.checked = true;
+  box.dispatchEvent(new shell.window.Event('change'));
+  await settle();
+  assert.equal(blockHeadOf(shell.document).getAttribute('aria-expanded'), 'true');
+  await shell.window.happyDOM.close();
+});
 
 test('ticking Collapse server history automatically collapses the open blocks live; unticking leaves them', async () => {
   const bundle = await bundled();
