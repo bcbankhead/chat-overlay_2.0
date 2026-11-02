@@ -16,7 +16,8 @@ import { installRefocus } from './refocus.js';
 import { installSmileyButton } from './smilies.js';
 import { installWhisper } from './whisper.js';
 
-const BAR = 'optionsBar';
+/** The message box's id; gallery/lightbox.js's MESSAGE_BOX_ID copies it, held by a drift test. */
+export const BAR = 'optionsBar';
 
 const win = /** @type {any} */ (window);
 if (!win.__tdfChat2Composer && !chat2Off(window)) {
