@@ -72,7 +72,7 @@ test('start registers the Settings gear at the end of the icon row and opens the
   assert.equal(body.querySelector('.tdf-opt-title')?.textContent, 'Settings');
   // Unbuilt, the version is 'dev'; the build defines the real one.
   assert.equal(body.querySelector('.tdf-opt-version')?.textContent, 'vdev');
-  const history = [...body.querySelectorAll('label.tdf-opt-row')].find((r) => r.textContent === 'Chat history (last 100)');
+  const history = [...body.querySelectorAll('label.tdf-opt-row')].find((r) => r.textContent === 'Chat history (last 25)');
   assert.equal(/** @type {HTMLInputElement} */ (history?.querySelector('input')).checked, true, 'on by default');
   if (typeof cleanup === 'function') cleanup();
 });

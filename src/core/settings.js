@@ -3,15 +3,16 @@
 // listeners, so core follows a value a feature's own connection wrote.
 
 import { STORES, done, request } from './db.js';
-import { countFromDays, parseHistoryCount } from './retention.js';
+import { HISTORY_ON, countFromDays, parseHistoryCount } from './retention.js';
 
 /** The retired Chat history (days) key; migrateHistory() turns it into `historyCount`. */
 const RETIRED_RETENTION_KEY = 'retentionDays';
 
 export const DEFAULTS = Object.freeze({
-  // Chat history (last 100, TDF-0033.5): 100 replays the newest 100 lines, 0 keeps and replays
-  // none. Read through parseHistoryCount, so nothing else is ever handed on.
-  historyCount: /** @type {import('./retention.js').HistoryCount} */ (100),
+  // Chat history (last HISTORY_ON, TDF-0033.5, TDF-0056): HISTORY_ON replays the newest
+  // HISTORY_ON lines, 0 keeps and replays none. Read through parseHistoryCount, so nothing else
+  // is ever handed on.
+  historyCount: /** @type {import('./retention.js').HistoryCount} */ (HISTORY_ON),
   // The gallery's size limit in MB; null is no limit.
   galleryLimitMB: /** @type {number | null} */ (null),
   storeImagesOffline: false,

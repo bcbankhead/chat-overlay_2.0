@@ -11,25 +11,25 @@ import {
   storageCutoff,
 } from './selectors.js';
 
-test('parseHistoryCount keeps 0 and 100 and reads anything else as 100', () => {
-  assert.equal(HISTORY_ON, 100);
+test('parseHistoryCount keeps 0 and 25 and reads anything else, the old 100 included, as 25', () => {
+  assert.equal(HISTORY_ON, 25);
   assert.equal(parseHistoryCount(0), 0);
-  assert.equal(parseHistoryCount(100), 100);
-  for (const other of [50, 30, -0.5, '0', '100', null, undefined, NaN, true, {}]) {
-    assert.equal(parseHistoryCount(other), 100, String(other));
+  assert.equal(parseHistoryCount(25), 25);
+  for (const other of [100, 50, 30, -0.5, '0', '100', null, undefined, NaN, true, {}]) {
+    assert.equal(parseHistoryCount(other), 25, String(other));
   }
 });
 
-test('countFromDays: 0 days becomes 0, any other value, null included, 100', () => {
+test('countFromDays: 0 days becomes 0, any other value, null included, 25', () => {
   assert.equal(countFromDays(0), 0);
-  for (const days of [30, 1, 365, null, undefined, NaN]) assert.equal(countFromDays(days), 100, String(days));
+  for (const days of [30, 1, 365, null, undefined, NaN]) assert.equal(countFromDays(days), 25, String(days));
 });
 
 test('storageCutoff: off deletes every line, on the fixed 30-day storage age', () => {
   const now = 100 * DAY_MS;
   assert.equal(STORAGE_AGE_DAYS, 30);
   assert.equal(storageCutoff(0, now), Infinity);
-  assert.equal(storageCutoff(100, now), now - 30 * DAY_MS);
+  assert.equal(storageCutoff(25, now), now - 30 * DAY_MS);
 });
 
 test('parseMegabytes: empty is no limit, whole numbers from 1, the rest refused', () => {

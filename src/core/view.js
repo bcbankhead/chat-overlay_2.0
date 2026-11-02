@@ -6,7 +6,7 @@ import { expand } from './expand.js';
 import { continuesGroup, groupTime, localDay, orderKey, timeLabel } from './group.js';
 import { renderAvatar } from './avatar.js';
 import { adapt, THEME_BG } from './ink.js';
-import { HISTORY_ON } from './retention.js';
+import { LIVE_CEILING } from './retention.js';
 import { safeDecodeURIComponent } from './parse.js';
 import { pickPreview, youtubeThumb } from './preview.js';
 import { sanitize } from './sanitize.js';
@@ -96,7 +96,7 @@ function regroup(el) {
  *   autoCollapse?: () => boolean,
  * }} deps `avatars` looks up forum pictures for every sender, preferred over the chat avatar;
  *   `now` is the current time in seconds, which decides whether a time shows its date;
- *   `ceiling` is the most rows the list keeps, HISTORY_ON unless a test sets a smaller one,
+ *   `ceiling` is the most rows the list keeps, LIVE_CEILING unless a test sets a smaller one,
  *   fixed whatever the Chat history setting, since live lines show with history off too;
  *   `blocks` holds each server-history block's stored collapsed state and is told of each
  *   toggle; `autoCollapse` is whether a block with no stored state arrives collapsed, read
@@ -109,7 +109,7 @@ export function createView({
   css,
   avatars = null,
   now = () => Date.now() / 1000,
-  ceiling = HISTORY_ON,
+  ceiling = LIVE_CEILING,
   blocks = null,
   autoCollapse = () => false,
 }) {

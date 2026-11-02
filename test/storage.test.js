@@ -447,12 +447,12 @@ test('recent skips records received before since, still newest by message time',
   assert.deepEqual((await h.recent('1', 2, 500)).map((r) => r.id), ['b', 'c']);
 });
 
-test('recent by default returns the newest 100 records', async () => {
+test('recent by default returns the newest 25 records', async () => {
   const h = createHistory(await fresh());
   for (let i = 0; i < 120; i++) await h.put(msg({ id: `m${i}`, mTime: String(1000 + i), receivedAt: i + 1 }));
   const recent = await h.recent('1');
-  assert.equal(recent.length, 100);
-  assert.equal(recent[0].id, 'm20');
+  assert.equal(recent.length, 25);
+  assert.equal(recent[0].id, 'm95');
   assert.equal(recent.at(-1).id, 'm119');
 });
 
@@ -603,7 +603,7 @@ test('deleteByMTime removes only the room\'s earliest-received record with that 
 
 test('settings return the contract defaults for absent keys', async () => {
   const s = createSettings(await fresh());
-  assert.equal(await s.get('historyCount'), 100);
+  assert.equal(await s.get('historyCount'), 25);
   assert.equal(await s.get('galleryLimitMB'), null);
   assert.equal(await s.get('storeImagesOffline'), false);
   assert.equal(await s.get('includeMyImages'), false);
@@ -620,7 +620,7 @@ test('settings return the contract defaults for absent keys', async () => {
   await assert.rejects(s.set(/** @type {any} */ ('retentionDays'), 30), /unknown setting/);
 });
 
-// TDF-0033.5: Chat history (last 100) replaces Chat history (days).
+// TDF-0033.5: Chat history (last 25, TDF-0056) replaces Chat history (days).
 
 /** Write a raw settings row, as an older build stored it. @param {IDBDatabase} db */
 const putRaw = (db, key, value) =>
@@ -639,7 +639,7 @@ const rawRow = (db, key) =>
   });
 
 test('migrateHistory turns a stored retentionDays into historyCount once, and deletes it', async () => {
-  for (const [days, count] of [[0, 0], [30, 100], [1, 100], [null, 100]]) {
+  for (const [days, count] of [[0, 0], [30, 25], [1, 25], [null, 25]]) {
     const db = await fresh();
     await putRaw(db, 'retentionDays', days);
     const s = createSettings(db);
@@ -661,19 +661,19 @@ test('migrateHistory leaves a stored historyCount alone, still deleting retentio
   assert.equal(await rawRow(db, 'retentionDays'), undefined);
 });
 
-test('a member who never set Chat history gets 100 (on), and migrateHistory writes nothing', async () => {
+test('a member who never set Chat history gets 25 (on), and migrateHistory writes nothing', async () => {
   const db = await fresh();
   const s = createSettings(db);
   await s.migrateHistory();
-  assert.equal(await s.get('historyCount'), 100);
+  assert.equal(await s.get('historyCount'), 25);
   assert.equal(await rawRow(db, 'historyCount'), undefined);
 });
 
-test('a stored historyCount other than 0 or 100 reads as 100', async () => {
-  for (const bad of [50, -1, '0', null, true, 1e9]) {
+test('a stored historyCount other than 0, the old look-back 100 included, reads as 25 with no migration', async () => {
+  for (const bad of [100, 50, -1, '0', null, true, 1e9]) {
     const db = await fresh();
     await putRaw(db, 'historyCount', bad);
-    assert.equal(await createSettings(db).get('historyCount'), 100, String(bad));
+    assert.equal(await createSettings(db).get('historyCount'), 25, String(bad));
   }
 });
 
