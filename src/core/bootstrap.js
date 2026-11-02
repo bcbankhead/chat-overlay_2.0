@@ -17,6 +17,7 @@ import { installEngineHook } from './engine-hook.js';
 import { describeError } from './errors.js';
 import { emitConfirmChange, onClearView, onDeleted } from './events.js';
 import { createHistory } from './history.js';
+import { setHistoryOff } from './historyMirror.js';
 import { MAIN_DIV } from './parse.js';
 import { parseHistoryCount, storageCutoff } from './retention.js';
 import { chat2Off, installSwitchLink } from './optOut.js';
@@ -143,9 +144,17 @@ async function start(lift, coreReady) {
     // writes it.
     await settings.migrateHistory();
     let historyCount = await settings.get('historyCount');
+    // The engine hook reads this synchronous copy while the next load's first polls arrive,
+    // before IndexedDB can answer (TDF-0054). A failed write is not worth failing the start over:
+    // it is said once the view is up.
+    const mirrorWriteFailed = mirrorHistoryOff(win, historyCount);
+    const mirrorFailed = mirrorWriteFailed === null ? null : mirrorFailedNotice(historyCount, mirrorWriteFailed);
     unsubscribe.push(
       onSettingChange((key, value) => {
-        if (key === 'historyCount') historyCount = parseHistoryCount(value);
+        if (key !== 'historyCount') return;
+        historyCount = parseHistoryCount(value);
+        const failed = mirrorHistoryOff(win, historyCount);
+        if (failed !== null) shown?.notice(mirrorFailedNotice(historyCount, failed));
       }),
     );
     const { expired, pending } = await history.expirePending(roomID);
@@ -224,6 +233,7 @@ async function start(lift, coreReady) {
     if (autoCollapseFailed !== null) {
       view.notice(`Collapse server history automatically not read; blocks arrive expanded (${autoCollapseFailed})`);
     }
+    if (mirrorFailed !== null) view.notice(mirrorFailed);
     if (blockStatesFailed !== null) {
       const shownAs = autoCollapse ? 'collapsed' : 'expanded';
       view.notice(`Server history blocks shown ${shownAs}: their state was not read (${blockStatesFailed})`);
@@ -259,6 +269,37 @@ async function start(lift, coreReady) {
     throw err;
   }
 }
+
+/**
+ * Record whether Chat history is off in its synchronous mirror. Storage that is missing or that
+ * the browser blocks is passed over; any other failed write is returned, for a notice.
+ * @param {Window} win
+ * @param {number} historyCount
+ * @returns {string | null}  why the mirror was not written, or null when there is nothing to say
+ */
+function mirrorHistoryOff(win, historyCount) {
+  try {
+    // Missing storage (a sandboxed frame) is expected and harmless, as is the SecurityError the
+    // browser throws for blocked site data below: the hook's read fails there too and reads
+    // history as on, as before the mirror existed, and IndexedDB still holds the setting.
+    if (!win.localStorage) return null;
+    setHistoryOff(win, historyCount === 0);
+    return null;
+  } catch (err) {
+    // Duck-typed, not `instanceof`: the DOMException can come from another realm.
+    if (/** @type {{ name?: unknown } | null} */ (err)?.name === 'SecurityError') return null;
+    return describeError(err);
+  }
+}
+
+/**
+ * The notice for a mirror write that failed: the next load reads whatever the mirror last held.
+ * @param {number} historyCount
+ * @param {string} reason
+ */
+const mirrorFailedNotice = (historyCount, reason) =>
+  `Chat history ${historyCount === 0 ? 'off' : 'on'} not recorded for the next page load, which may ` +
+  `${historyCount === 0 ? 'show' : 'hide'} messages sent before it loads (${reason})`;
 
 /**
  * Replay stored records. A record that will not render is skipped with a notice, rather

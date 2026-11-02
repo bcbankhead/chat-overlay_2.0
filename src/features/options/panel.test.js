@@ -595,6 +595,50 @@ test('Clear history now over no saved history says so and asks nothing', async (
   assert.deepEqual(deletions(limits), []);
 });
 
+// TDF-0054: with Chat history off the lines on screen were never saved, so Clear says so.
+const OFF_CLEAR = 'Chat history is off, so nothing is saved. Clear chat buffer empties the lines on screen.';
+
+test('Clear history now with Chat history stored off says nothing is saved and points to Clear chat buffer', async () => {
+  const limits = stubLimits();
+  const { container } = setup({ settings: stubSettings({ historyCount: 0 }), limits });
+  await settle();
+  const { clear, ask, hint } = clearControl(container);
+  clear.click();
+  await settle();
+  assert.equal(ask.hidden, true);
+  assert.equal(hint.textContent, OFF_CLEAR);
+  assert.deepEqual(deletions(limits), []);
+});
+
+test('Clear history now follows the Chat history switch: off, then on again', async () => {
+  const limits = stubLimits();
+  const { container, toggle } = setup({ limits });
+  await settle();
+  const { clear, hint } = clearControl(container);
+  toggle(false);
+  await settle();
+  clear.click();
+  await settle();
+  assert.equal(hint.textContent, OFF_CLEAR);
+  toggle(true);
+  await settle();
+  clear.click();
+  await settle();
+  assert.equal(hint.textContent, 'No saved history.');
+});
+
+test('a refused Chat history untick leaves Clear history now reading history as on', async () => {
+  const settings = stubSettings({}, { failWrite: true });
+  const { container, toggle } = setup({ settings });
+  await settle();
+  toggle(false);
+  await settle();
+  const { clear, hint } = clearControl(container);
+  clear.click();
+  await settle();
+  assert.equal(hint.textContent, 'No saved history.');
+});
+
 test('closing the flyout while a deletion asks restores the button and deletes nothing', async () => {
   const limits = stubLimits({ stored: { a: 2 } });
   const { container, cleanup } = setup({ limits });

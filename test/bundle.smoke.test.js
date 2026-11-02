@@ -1167,3 +1167,122 @@ test('unticking Chat history deletes saved lines from storage and the view, stor
   assert.equal(await stored(), 1, 'ticking it on stores live lines again, without a reload');
   await again.window.happyDOM.close();
 });
+
+// TDF-0054: the bootstrap keeps the history-off mirror in step with the setting, and a load with
+// it off drops what the server sent from before the page loaded, ahead of the engine.
+
+const MIRROR_KEY = 'tdfChat2.historyOff';
+
+test('the history-off mirror is written at start and follows the Chat history switch live', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('historyCount', 0);
+  db.close();
+  const shell = await page(bundle, indexedDB, withRail);
+  assert.equal(shell.window.localStorage.getItem(MIRROR_KEY), '1', 'written at start');
+  const box = await settingsBox(shell, 'Chat history (last 100)');
+  box.checked = true;
+  box.dispatchEvent(new shell.window.Event('change'));
+  await settle();
+  assert.equal(shell.window.localStorage.getItem(MIRROR_KEY), null, 'cleared when ticked');
+  box.checked = false;
+  box.dispatchEvent(new shell.window.Event('change'));
+  await settle();
+  assert.equal(shell.window.localStorage.getItem(MIRROR_KEY), '1', 'written when unticked');
+  await shell.window.happyDOM.close();
+});
+
+/** Replace the page's localStorage with one whose reads work and whose writes do as `writes` says. */
+const mirrorStorage = (writes) => (window) => {
+  const real = window.localStorage;
+  const storage = {
+    getItem: (key) => real.getItem(key),
+    setItem: (key, value) => (writes.setItem ?? ((k, v) => real.setItem(k, v)))(key, value),
+    removeItem: (key) => (writes.removeItem ?? ((k) => real.removeItem(k)))(key),
+  };
+  Object.defineProperty(window, 'localStorage', { configurable: true, get: () => storage });
+};
+const mirrorNotices = (document) => noticeTexts(document).filter((t) => /not recorded for the next page load/.test(t));
+
+test('blocked site data leaves the history-off mirror unwritten without a notice, at start and live', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('historyCount', 0);
+  db.close();
+  const shell = await page(bundle, indexedDB, {
+    ...withRail,
+    beforeEval: (window) => {
+      // As a browser blocking site data does: reading the property throws, from Node's realm.
+      Object.defineProperty(window, 'localStorage', {
+        configurable: true,
+        get() {
+          throw new DOMException('The operation is insecure.', 'SecurityError');
+        },
+      });
+    },
+  });
+  assert.ok(shell.document.getElementById('tdf-chat'), 'the overlay started');
+  assert.deepEqual(banners(shell.document), []);
+  const box = await settingsBox(shell, 'Chat history (last 100)');
+  box.checked = true;
+  box.dispatchEvent(new shell.window.Event('change'));
+  await settle();
+  assert.deepEqual(mirrorNotices(shell.document), []);
+  await shell.window.happyDOM.close();
+});
+
+test('any other failed mirror write raises a notice saying why, at start and live', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('historyCount', 0);
+  db.close();
+  const shell = await page(bundle, indexedDB, {
+    ...withRail,
+    beforeEval: (window) => {
+      mirrorStorage({
+        setItem: () => {
+          throw new TypeError('injected set');
+        },
+        removeItem: () => {
+          throw new DOMException('injected remove', 'QuotaExceededError');
+        },
+      })(window);
+    },
+  });
+  assert.ok(shell.document.getElementById('tdf-chat'), 'the overlay still started');
+  assert.deepEqual(mirrorNotices(shell.document), [
+    'Chat history off not recorded for the next page load, which may show messages sent before it loads (injected set)',
+  ]);
+  const box = await settingsBox(shell, 'Chat history (last 100)');
+  box.checked = true;
+  box.dispatchEvent(new shell.window.Event('change'));
+  await settle();
+  assert.equal(mirrorNotices(shell.document).length, 2);
+  assert.equal(
+    mirrorNotices(shell.document)[1],
+    'Chat history on not recorded for the next page load, which may hide messages sent before it loads (injected remove)',
+  );
+  await shell.window.happyDOM.close();
+});
+
+test('with Chat history off, a message from before the page load never reaches the engine; a live one does', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('historyCount', 0);
+  db.close();
+  const date = new Date();
+  const nowSeconds = Math.floor(date.getTime() / 1000);
+  const shell = await page(bundle, indexedDB, {
+    globals: { receiveMesReq: { readyState: 4, responseXML: null, getResponseHeader: (name) => (name === 'Date' ? date.toUTCString() : null) } },
+    beforeEval: (window) => window.localStorage.setItem(MIRROR_KEY, '1'),
+    early: [um('1', 'bob', 'old', String(nowSeconds - 600)), um('2', 'bob', 'live', String(nowSeconds + 5))],
+  });
+  assert.equal(shell.document.getElementById(String(nowSeconds - 600)), null, 'the engine drew no row for it');
+  assert.ok(shell.document.getElementById(String(nowSeconds + 5)));
+  assert.deepEqual(shownIds(shell.document), ['2']);
+  await shell.window.happyDOM.close();
+});

@@ -2,12 +2,14 @@
 // server records (which carry the server id, field [0]) and `createMessageDiv` to learn
 // whether the engine actually rendered each message, so the engine's own filters (blocked
 // users, duplicates, commands, PM rules) still decide what is shown and stored. Wraps
-// `sendData` to confirm each own message by its sendData.php response. With Chat history at 0
-// days nothing is written to history; messages are still shown and announced.
+// `sendData` to confirm each own message by its sendData.php response. With Chat history
+// off nothing is written to history; messages are still shown and announced, except those the
+// server sent from before the page loaded, which skip the engine entirely (TDF-0054).
 
 import { describeError } from './errors.js';
 import { emitConfirmChange, emitDeleted, emitInbound } from './events.js';
 import { nextReceivedAt } from './history.js';
+import { historyOffNow } from './historyMirror.js';
 import {
   MAIN_DIV,
   classify,
@@ -81,6 +83,18 @@ export function engineAvailable(win) {
 /** How many recent server records the clock-skew estimate reads. */
 const SKEW_SAMPLES = 20;
 
+/** Whole-message moderation commands the engine acts on (message.js.php:784-817). */
+const MODERATION = new Set(['SILENCE', 'KICK', 'BAN']);
+
+/**
+ * Whether createMessageDiv acts on this message as a moderation command rather than drawing it.
+ * @param {string} message the message as passed to createMessageDiv
+ */
+const isModeration = (message) => {
+  const decoded = safeDecodeURI(String(message ?? ''));
+  return MODERATION.has(decoded) || isDelete(decoded) !== null;
+};
+
 const UNPAIRED_NOTICE =
   'A message was shown but not saved: no server record in its poll matched its time and sender';
 
@@ -147,6 +161,40 @@ export function installEngineHook({ win, roomID }) {
   let view;
   /** @type {() => boolean} */
   let storing = () => true;
+  /** Epoch ms of install, on the device clock. */
+  const installAt = Date.now();
+  /**
+   * Server-clock epoch seconds of install, from the first poll reply's `Date` header; null until
+   * then, and for good when that reply carries none. A message whose server mTime precedes it was
+   * sent before this page loaded.
+   * @type {number | null}
+   */
+  let loadCutoff = null;
+  let cutoffRead = false;
+  /** @type {string[]} notices raised before `attach`, shown once it sets the view */
+  let earlyNotices = [];
+
+  /** Whether Chat history is off: the setting once attached, its synchronous mirror before. */
+  const historyOff = () => (buffered ? historyOffNow(win) : !storing());
+
+  /**
+   * Fix the load cutoff from the first poll reply that carries a usable Date header, once. A
+   * header read that throws gives up for the session.
+   * @param {any} req
+   */
+  const readCutoff = (req) => {
+    let header;
+    try {
+      header = req.getResponseHeader?.('Date');
+    } catch (err) {
+      cutoffRead = true;
+      throw err;
+    }
+    const serverMs = typeof header === 'string' ? Date.parse(header) : NaN;
+    if (!Number.isFinite(serverMs)) return;
+    cutoffRead = true;
+    loadCutoff = Math.floor(serverMs / 1000) - Math.ceil((Date.now() - installAt) / 1000);
+  };
 
   /**
    * A local time (ms) moved onto the server's clock, or undefined before any poll has
@@ -191,7 +239,9 @@ export function installEngineHook({ win, roomID }) {
     try {
       return fn();
     } catch (err) {
-      view?.notice(`${what}: ${describeError(err)}`);
+      const text = `${what}: ${describeError(err)}`;
+      if (view) view.notice(text);
+      else earlyNotices.push(text);
       return undefined;
     }
   };
@@ -287,6 +337,7 @@ export function installEngineHook({ win, roomID }) {
   win.handleMessages = function (/** @type {unknown[]} */ ...args) {
     if (abandoned) return origHandle.apply(this, args);
     const req = win.receiveMesReq;
+    if (req && req.readyState == 4 && !cutoffRead) guard('Page load time not read', () => readCutoff(req));
     if (req && req.readyState == 4 && req.responseXML) {
       queue = Array.from(req.responseXML.getElementsByTagName('usermessage'), (node) =>
         parseUserMessage(/** @type {Element} */ (node).textContent ?? ''),
@@ -337,6 +388,20 @@ export function installEngineHook({ win, roomID }) {
         server = queue[i];
         queue = queue.slice(i + 1);
       }
+    }
+    // With Chat history off, a message the server sent from before this page loaded skips the
+    // engine: no row, no sound, no image or avatar requests, and nothing stored, shown or
+    // announced (TDF-0054). Without a server Date header nothing is suppressed. Moderation
+    // commands still reach the engine, which applies them, and private windows are out of scope.
+    if (
+      server &&
+      mDiv === MAIN_DIV &&
+      loadCutoff !== null &&
+      Number(server.mTime) < loadCutoff &&
+      !isModeration(message) &&
+      guard('History setting not read', historyOff)
+    ) {
+      return false;
     }
     // The engine echoes a send synchronously, right after sendData, outside any poll.
     const send = inPoll ? null : lastSend;
@@ -469,6 +534,9 @@ export function installEngineHook({ win, roomID }) {
       if (abandoned || !buffered) return;
       ({ history, view } = deps);
       if (deps.storing) storing = deps.storing;
+      const notices = earlyNotices;
+      earlyNotices = [];
+      for (const text of notices) view.notice(text);
       replayedIds = new Set((deps.replayed ?? []).map((r) => r.id));
       // Pending own messages left by the previous page: a server copy still confirms them,
       // and each timer runs out the wait it had left.
@@ -484,6 +552,7 @@ export function installEngineHook({ win, roomID }) {
     abandon() {
       abandoned = true;
       buffered = null;
+      earlyNotices = [];
       pendings = [];
       sentOwn = [];
       lastSend = null;

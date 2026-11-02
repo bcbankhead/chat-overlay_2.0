@@ -5,6 +5,7 @@ import { engineAvailable, installEngineHook } from '../src/core/engine-hook.js';
 import 'fake-indexeddb/auto';
 import { openDb } from '../src/core/db.js';
 import { createHistory } from '../src/core/history.js';
+import { HISTORY_OFF_KEY } from '../src/core/historyMirror.js';
 
 /** A fake engine: createMessageDiv renders unless the body says FILTERED or repeats. */
 function fakeEngine() {
@@ -883,4 +884,211 @@ test("the page-load block id comes from the browser's randomUUID where it has on
   win.receiveMesReq.responseXML = xml(um('1060', 'bob', 'old', '1600'));
   win.handleMessages();
   assert.equal(calls.find((c) => c[0] === 'put')[1].backlogBlock, 'uuid-1');
+});
+
+// TDF-0054: with Chat history off, messages the server sent from before the page loaded skip
+// the engine. The cutoff is the first poll reply's Date header, on the server's clock.
+
+const SERVER_DATE = 'Mon, 02 Nov 2026 15:00:00 GMT';
+const SERVER_NOW = Date.parse(SERVER_DATE) / 1000;
+const preLoad = String(SERVER_NOW - 600);
+const postLoad = String(SERVER_NOW + 5);
+
+/** A fake engine whose poll replies carry `date` as their Date header, counting createMessageDiv runs. */
+function datedEngine(date = SERVER_DATE) {
+  const win = fakeEngine();
+  win.engineCalls = 0;
+  const create = win.createMessageDiv;
+  win.createMessageDiv = function (...args) {
+    win.engineCalls += 1;
+    return create.apply(this, args);
+  };
+  win.receiveMesReq.getResponseHeader = (name) => (name.toLowerCase() === 'date' ? date : null);
+  return win;
+}
+
+function datedSetup({ storing = () => true, date = SERVER_DATE } = {}) {
+  const win = datedEngine(date);
+  const calls = [];
+  const history = new Proxy({}, { get: (_, op) => async (...args) => calls.push([op, ...args]) });
+  const view = new Proxy({}, { get: (_, op) => (...args) => calls.push([`view.${op}`, ...args]) });
+  const hook = installEngineHook({ win, roomID: '1' });
+  hook.attach({ history, view, storing });
+  const poll = (...messages) => {
+    win.receiveMesReq.responseXML = xml(...messages);
+    win.handleMessages();
+  };
+  return { win, calls, poll };
+}
+
+test('history off: a message from before the page load skips the engine and is not stored, shown or announced', () => {
+  const { win, calls, poll } = datedSetup({ storing: () => false });
+  const results = [];
+  const wrapped = win.createMessageDiv;
+  win.createMessageDiv = function (...args) {
+    const r = wrapped.apply(this, args);
+    results.push(r);
+    return r;
+  };
+  const seen = [];
+  const off = onInbound((r) => seen.push(r.id));
+  poll(um('1100', 'bob', 'old', preLoad), um('1101', 'carol', 'older', String(SERVER_NOW - 3600)));
+  off();
+  assert.equal(win.engineCalls, 0);
+  assert.equal(win.showMessages, 0);
+  assert.deepEqual(results, [false, false]);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(seen, []);
+});
+
+test('history off: a message sent after the page load still draws', () => {
+  const { win, calls, poll } = datedSetup({ storing: () => false });
+  poll(um('1102', 'bob', 'old', preLoad), um('1103', 'bob', 'new', postLoad));
+  assert.equal(win.engineCalls, 1);
+  assert.deepEqual(
+    calls.filter((c) => c[0] === 'view.place').map((c) => c[1].id),
+    ['1103'],
+  );
+  poll(um('1104', 'carol', 'later', String(SERVER_NOW + 30)));
+  assert.equal(win.engineCalls, 2);
+});
+
+test('history off: the cutoff is read from the first reply only', () => {
+  const { win, poll } = datedSetup({ storing: () => false });
+  poll(um('1105', 'bob', 'first', postLoad));
+  win.receiveMesReq.getResponseHeader = () => 'Mon, 02 Nov 2026 18:00:00 GMT';
+  poll(um('1106', 'bob', 'second', String(SERVER_NOW + 60)));
+  assert.equal(win.engineCalls, 2);
+});
+
+test('history off: without a usable Date header nothing is suppressed', () => {
+  for (const date of [null, 'not a date']) {
+    const { win, calls, poll } = datedSetup({ storing: () => false, date });
+    poll(um('1107', 'bob', 'old', preLoad));
+    assert.equal(win.engineCalls, 1, String(date));
+    assert.ok(calls.some((c) => c[0] === 'view.place' && c[1].id === '1107'));
+  }
+});
+
+test('a Date header read that throws is shown as a notice, and nothing is suppressed', () => {
+  const { win, calls, poll } = datedSetup({ storing: () => false });
+  win.receiveMesReq.getResponseHeader = () => {
+    throw new Error('header denied');
+  };
+  poll(um('1111', 'bob', 'old', preLoad));
+  assert.ok(calls.some((c) => c[0] === 'view.notice' && c[1] === 'Page load time not read: header denied'));
+  assert.equal(win.engineCalls, 1);
+});
+
+test('a history setting read that throws is shown as a notice, and the message still draws', () => {
+  const { win, calls, poll } = datedSetup({
+    storing: () => {
+      throw new Error('setting denied');
+    },
+  });
+  poll(um('1112', 'bob', 'old', preLoad));
+  assert.ok(calls.some((c) => c[0] === 'view.notice' && c[1] === 'History setting not read: setting denied'));
+  assert.equal(win.engineCalls, 1);
+});
+
+test('history on: a message from before the page load draws and is stored, as before', () => {
+  const { win, calls, poll } = datedSetup();
+  poll(um('1108', 'bob', 'old', preLoad));
+  assert.equal(win.engineCalls, 1);
+  assert.ok(calls.some((c) => c[0] === 'put' && c[1].id === '1108'));
+  assert.ok(calls.some((c) => c[0] === 'view.place' && c[1].id === '1108'));
+});
+
+test('history off: engine notices with no server record are untouched', () => {
+  const { win, calls, poll } = datedSetup({ storing: () => false });
+  poll(um('1109', 'bob', 'old', preLoad));
+  win.createMessageDiv('0', '-1', 'chatContainer', -2, '1|#000|12px|verdana|** alice has joined', 'beep_high.mp3', '', '', '');
+  assert.equal(win.engineCalls, 1);
+  assert.ok(calls.some((c) => c[0] === 'view.append'));
+});
+
+test('before attach, the history-off mirror decides: off suppresses; on and a throwing storage draw', () => {
+  /** @param {unknown} storage */
+  const run = (storage) => {
+    const win = datedEngine();
+    Object.defineProperty(win, 'localStorage', { configurable: true, get: () => storage });
+    const calls = [];
+    const history = new Proxy({}, { get: (_, op) => async (...args) => calls.push([op, ...args]) });
+    const view = new Proxy({}, { get: (_, op) => (...args) => calls.push([`view.${op}`, ...args]) });
+    const hook = installEngineHook({ win, roomID: '1' });
+    win.receiveMesReq.responseXML = xml(um('1110', 'bob', 'old', preLoad));
+    win.handleMessages();
+    hook.attach({ history, view, storing: () => false });
+    return { engineCalls: win.engineCalls, calls };
+  };
+  const off = run({ getItem: (key) => (key === HISTORY_OFF_KEY ? '1' : null) });
+  assert.equal(off.engineCalls, 0);
+  assert.deepEqual(off.calls, []);
+  assert.equal(run({ getItem: () => null }).engineCalls, 1);
+  const denied = run({
+    getItem() {
+      throw new Error('denied');
+    },
+  });
+  assert.equal(denied.engineCalls, 1);
+});
+
+/** A raw server record with its own target div and body, as the poll XML carries it. */
+const rawRecord = (id, { div = 'chatContainer', user = 'bob', toUser = '', body, mTime }) =>
+  `${id}}{9}{${div}}{${user}}{${toUser}}{${body}}{x}{beep_high.mp3}{${mTime}`;
+
+test('history off: a pre-load SILENCE, BAN or KICK aimed at the user still reaches the engine', () => {
+  for (const command of ['SILENCE', 'BAN', 'KICK']) {
+    const { win, poll } = datedSetup({ storing: () => false });
+    poll(rawRecord('1200', { user: 'mod', toUser: 'alice', body: command, mTime: preLoad }));
+    assert.equal(win.engineCalls, 1, command);
+  }
+});
+
+test('history off: a pre-load admin delete still reaches the engine', () => {
+  const { win, poll } = datedSetup({ storing: () => false });
+  poll(rawRecord('1201', { user: 'mod', body: encodeURI(`DELETEMESSAGE_av.gif|#000|12px|verdana|${preLoad}`), mTime: preLoad }));
+  assert.equal(win.engineCalls, 1);
+});
+
+test('history off: a pre-load private-window message is not suppressed', () => {
+  const { win, poll } = datedSetup({ storing: () => false });
+  poll(
+    rawRecord('1202', {
+      div: 'pcontent_9_1',
+      toUser: 'alice',
+      body: encodeURI('av.gif|#000|12px|verdana|private|0|0'),
+      mTime: preLoad,
+    }),
+  );
+  assert.equal(win.engineCalls, 1);
+});
+
+test('history off: a first reply with no Date header leaves the cutoff to a later reply', () => {
+  const { win, poll } = datedSetup({ storing: () => false, date: null });
+  poll(um('1203', 'bob', 'first', preLoad));
+  assert.equal(win.engineCalls, 1);
+  win.receiveMesReq.getResponseHeader = (name) => (name.toLowerCase() === 'date' ? SERVER_DATE : null);
+  poll(um('1204', 'carol', 'retried', preLoad));
+  assert.equal(win.engineCalls, 1);
+  win.receiveMesReq.getResponseHeader = () => 'Mon, 02 Nov 2026 18:00:00 GMT';
+  poll(um('1205', 'carol', 'live', postLoad));
+  assert.equal(win.engineCalls, 2);
+});
+
+test('a Date header read that throws before attach shows its notice once attached', () => {
+  const win = datedEngine();
+  win.receiveMesReq.getResponseHeader = () => {
+    throw new Error('header denied');
+  };
+  const calls = [];
+  const history = new Proxy({}, { get: (_, op) => async (...args) => calls.push([op, ...args]) });
+  const view = new Proxy({}, { get: (_, op) => (...args) => calls.push([`view.${op}`, ...args]) });
+  const hook = installEngineHook({ win, roomID: '1' });
+  win.receiveMesReq.responseXML = xml(um('1206', 'bob', 'old', preLoad));
+  win.handleMessages();
+  assert.deepEqual(calls, []);
+  hook.attach({ history, view, storing: () => false });
+  assert.ok(calls.some((c) => c[0] === 'view.notice' && c[1] === 'Page load time not read: header denied'));
+  assert.equal(win.engineCalls, 1);
 });
