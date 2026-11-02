@@ -1,4 +1,4 @@
-// The Storage section, applied: chat history pruned by age over the `messages` receivedAt index,
+// The history and gallery limits of Media and Gallery Settings, applied: chat history pruned by age over the `messages` receivedAt index,
 // cleared outright, or deleted by sender over the user index; and the gallery kept under its
 // size by TDF-0009.5's store. Deleted lines are announced through core's onDeleted, so the open
 // view drops their rows and tagging, the tags store's only writer, re-derives without them. No

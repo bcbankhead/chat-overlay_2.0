@@ -195,6 +195,25 @@ export function checkSecondCopyInert(code) {
 }
 
 /**
+ * The opt-out gate (TDF-0037): every feature entry calls chat2Off (src/core/optOut.js) before it
+ * starts, so turning Chat 2.0 off cannot leave one feature running. Read from the source, with
+ * comments stripped, since the bundle no longer says which entry a call came from.
+ * @param {string} root
+ * @param {string[]} features
+ * @returns {string[]}
+ */
+export function checkEntriesGated(root, features) {
+  return features.flatMap((name) => {
+    const source = readFileSync(path.join(root, 'src', 'features', name, 'index.js'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    return /\bchat2Off\(/.test(source)
+      ? []
+      : [`src/features/${name}/index.js does not call chat2Off; every feature entry must check it before starting (src/core/optOut.js)`];
+  });
+}
+
+/**
  * Every check for one output, as `<name>: <problem>` lines.
  * @param {string} name
  * @param {string} code
@@ -265,6 +284,7 @@ export async function build({ match, root = ROOT, outfile } = /** @type {any} */
   });
 
   const problems = [
+    ...checkEntriesGated(root, features),
     ...verify(path.basename(userscript), userscriptCode, { userscript: true }),
     ...verify(path.basename(include), includeCode, { userscript: false }),
     ...verify(path.basename(forum), forumCode, { userscript: false }),

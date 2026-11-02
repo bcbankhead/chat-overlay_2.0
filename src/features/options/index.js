@@ -2,13 +2,14 @@
 // holds the double-load guard and the chat-page check.
 
 import { MAIN_DIV } from '../../core/parse.js';
+import { chat2Off } from '../../core/optOut.js';
 import { whenDomReady } from '../../core/ready.js';
 import { expectReady } from '../../core/reveal.js';
 import css from './options.css';
 import { startSettings } from './start.js';
 
 const win = /** @type {any} */ (window);
-if (!win.__tdfChat2Options) {
+if (!win.__tdfChat2Options && !chat2Off(window)) {
   win.__tdfChat2Options = true;
   const done = expectReady('options');
   whenDomReady(document, () => {

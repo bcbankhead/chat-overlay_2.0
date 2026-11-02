@@ -6,6 +6,7 @@ import { Window } from 'happy-dom';
 import { STORES, openDb, request } from '../../core/db.js';
 import { emitConfirmChange, emitInbound } from '../../core/events.js';
 import { createHistory } from '../../core/history.js';
+import { createSettings } from '../../core/settings.js';
 import { createLimits } from '../options/limits.js';
 import { SMILIE_CODES_FIXTURE as CODES } from './smilieCodes.fixture.js';
 import { FALLBACK_TOKEN_BG, nativeChatBackground, reporter, startTagging } from './start.js';
@@ -379,4 +380,35 @@ test('a Storage limit prune is not undone by the next reaction change', async ()
   const rows = await request(db.transaction(STORES.tags).objectStore(STORES.tags).getAll());
   assert.deepEqual(rows.map((r) => r.sender), ['carol']);
   assert.deepEqual(hearts(), ['♥1']);
+});
+
+test('with Use media quickview off, clicking a posted share image opens its tab through win.open', async () => {
+  const { win, doc } = chatPage();
+  /** @type {unknown[][]} */
+  const calls = [];
+  win.open = (/** @type {unknown[]} */ ...args) => (calls.push(args), {});
+  const indexedDB = new IDBFactory();
+  await createSettings(await openDb({ indexedDB })).set('useMediaQuickview', false);
+  await startTagging({ win, doc, css: '', indexedDB });
+  await settle();
+  const event = new win.MouseEvent('click', { bubbles: true, cancelable: true });
+  doc.querySelector('img.tdf-posted').dispatchEvent(event);
+  assert.equal(event.defaultPrevented, true);
+  assert.deepEqual(calls, [[doc.querySelector('.tdf-body a').href, '_blank', 'noopener']]);
+  assert.equal(doc.querySelector('.tdf-lb'), null, 'no popover opens');
+});
+
+test('by default a posted share image opens the media popover, not a tab', async () => {
+  const { win, doc } = chatPage();
+  /** @type {unknown[][]} */
+  const calls = [];
+  win.open = (/** @type {unknown[]} */ ...args) => (calls.push(args), {});
+  await startTagging({ win, doc, css: '', indexedDB: new IDBFactory() });
+  await settle();
+  const event = new win.MouseEvent('click', { bubbles: true, cancelable: true });
+  doc.querySelector('img.tdf-posted').dispatchEvent(event);
+  assert.equal(event.defaultPrevented, true);
+  assert.deepEqual(calls, [], 'no tab opens on the image click');
+  assert.ok(doc.querySelector('.tdf-lb'), 'the popover opens');
+  /** @type {HTMLElement} */ (doc.querySelector('.tdf-lb-close')).click();
 });

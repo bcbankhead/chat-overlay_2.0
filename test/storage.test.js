@@ -4,7 +4,7 @@ import 'fake-indexeddb/auto';
 import { DB_VERSION, SUPERSEDED, openDb } from '../src/core/db.js';
 import { createHistory } from '../src/core/history.js';
 import { PENDING_TTL_MS } from '../src/core/reconcile.js';
-import { DEFAULTS, createSettings, onSettingChange } from '../src/core/settings.js';
+import { DEFAULTS, createSettings, followSetting, onSettingChange } from '../src/core/settings.js';
 
 let n = 0;
 const fresh = () => openDb({ name: `test-${++n}` });
@@ -606,6 +606,7 @@ test('settings return the contract defaults for absent keys', async () => {
   assert.equal(await s.get('likeIntervalSeconds'), 15);
   assert.equal(await s.get('theme'), null);
   assert.equal(await s.get('autoCollapseServerHistory'), false);
+  assert.equal(await s.get('useMediaQuickview'), true);
   await s.set('theme', 'dark');
   assert.equal(await s.get('theme'), 'dark');
   await assert.rejects(s.set('nope', 1), /unknown setting/);
@@ -671,4 +672,45 @@ test('block state round-trips, merges per block, prunes and clears', async () =>
   const settings = createSettings(db);
   assert.equal(Object.hasOwn(DEFAULTS, BLOCK_STATE_KEY), false, 'not a member setting');
   assert.ok(settings);
+});
+
+test('followSetting reads synchronously: the default, then the stored value, then every committed set', async () => {
+  const db = await fresh();
+  await createSettings(db).set('useMediaQuickview', false);
+  const read = followSetting(Promise.resolve(createSettings(db)), 'useMediaQuickview', assert.fail);
+  assert.equal(read(), true, 'the default until the stored value is read');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(read(), false, 'then the stored value');
+  await createSettings(db).set('useMediaQuickview', true);
+  assert.equal(read(), true, 'then each committed set, through any Settings');
+  await createSettings(db).set('theme', 'dark');
+  assert.equal(read(), true, 'another key changes nothing');
+});
+
+test('followSetting keeps a set heard before its read resolves, and keeps the default when the read fails', async () => {
+  const db = await fresh();
+  /** @type {(s: unknown) => void} */
+  let resolve = () => {};
+  const read = followSetting(new Promise((r) => (resolve = r)), 'useMediaQuickview', assert.fail);
+  await createSettings(db).set('useMediaQuickview', false);
+  resolve({ get: async () => true });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(read(), false, 'the later set wins over the earlier read');
+
+  /** @type {unknown[]} */
+  const errors = [];
+  const unopened = followSetting(Promise.reject(new Error('no db')), 'likeIntervalSeconds', (err) => errors.push(err));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(unopened(), 15);
+  assert.deepEqual(errors, [], "a failed open is the caller's to report");
+
+  const unread = new Error('read failed');
+  const failed = followSetting(
+    Promise.resolve(/** @type {any} */ ({ get: () => Promise.reject(unread) })),
+    'likeIntervalSeconds',
+    (err) => errors.push(err),
+  );
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(failed(), 15, 'the default stays');
+  assert.deepEqual(errors, [unread], 'a failed read reaches onError');
 });

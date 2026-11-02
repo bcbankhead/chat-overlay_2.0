@@ -15,15 +15,20 @@ import { overLimit } from './shareParse.js';
  * @property {string} mTime         unix seconds, '' for an own pending echo
  * @property {string} roomID
  * @property {number} receivedAt
- * @property {string} contentType   as served; '' when the image never loaded
+ * @property {string} contentType   as served, or the stored blob's own type once compression
+ *                                  re-encoded it; '' when the image never loaded
  * @property {Blob | null} thumb    128×128 centre crop, made once at capture
- * @property {Blob} [blob]          the full image, only with `storeImagesOffline` on
+ * @property {Blob} [blob]          the full image, only with `storeImagesOffline` on; a smaller
+ *                                  JPEG re-encode of it with `compressStoredImages` on
  * @property {number} bytes         stored on disk for this record: blob (if kept) plus thumb
  * @property {boolean} favorite
  * @property {boolean} broken       the server copy failed to load at capture
  * @property {string} [brokenReason] why it failed, shown on the tile's badge
  * @property {string} [hash]        SHA-256 of the fetched bytes, lowercase hex; absent on a
  *                                  broken record, a failed hash, and captures before schema v2
+ * @property {boolean} [compressChecked] the stored blob's compression was decided (TDF-0036):
+ *                                  re-encoded, kept as smaller, excluded or failed; the
+ *                                  backfill never processes it again
  */
 
 /** Refused by `remove` for a favourite. */
@@ -197,13 +202,54 @@ export function createImageStore(db) {
      * The server copy loaded again: clear the broken state, merging what the new fetch made
      * (a capture retry's thumbnail, for one). A favourite stays a favourite.
      * @param {string} id
-     * @param {Partial<Pick<ImageRecord, 'contentType' | 'thumb' | 'blob' | 'bytes' | 'hash'>>} [fields]
+     * @param {Partial<Pick<ImageRecord, 'contentType' | 'thumb' | 'blob' | 'bytes' | 'hash' | 'compressChecked'>>} [fields]
      */
     repair(id, fields = {}) {
       return update(id, (r) => {
         const { brokenReason: _gone, ...rest } = r;
         return { ...rest, ...fields, broken: false };
       });
+    },
+
+    /**
+     * Ids whose stored original has not yet had its compression decided (TDF-0036's backfill):
+     * a blob kept, not broken, not `compressChecked`. Read with a cursor, one record at a time.
+     * @returns {Promise<string[]>}
+     */
+    pendingCompression() {
+      return new Promise((resolve, reject) => {
+        /** @type {string[]} */
+        const ids = [];
+        const req = tx('readonly').objectStore(STORES.images).openCursor();
+        req.onerror = () => reject(req.error);
+        req.onsuccess = () => {
+          const cursor = req.result;
+          if (!cursor) return resolve(ids);
+          const r = /** @type {ImageRecord} */ (cursor.value);
+          if (r.blob && !r.broken && !r.compressChecked) ids.push(r.id);
+          cursor.continue();
+        };
+      });
+    },
+
+    /**
+     * Replace a stored original with its compression's outcome, in one transaction, only while
+     * the record still holds a blob of `readSize` bytes: one replaced or dropped since it was
+     * read is left alone, as is a missing record. Nothing else changes, a favourite included.
+     * @param {string} id
+     * @param {number} readSize  the stored blob's size when it was read for compression
+     * @param {Partial<Pick<ImageRecord, 'blob' | 'bytes' | 'contentType' | 'compressChecked'>>} fields
+     * @returns {Promise<boolean>} whether it was written
+     */
+    async recompress(id, readSize, fields) {
+      const t = tx('readwrite');
+      const store = t.objectStore(STORES.images);
+      const row = /** @type {ImageRecord | undefined} */ (await request(store.get(id)));
+      const current = row !== undefined && row.blob !== undefined && row.blob.size === readSize;
+      if (row && current) store.put({ ...row, ...fields });
+      await done(t);
+      if (current) notify();
+      return current;
     },
 
     /**

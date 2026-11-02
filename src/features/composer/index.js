@@ -1,10 +1,11 @@
 // Composer modifications on the engine's own textarea#optionsBar: Shift+Enter inserts a
 // newline, a URL pasted over a selection becomes a labelled link, and the composer is restyled
-// in place (composer.css, from data-tdf-theme on <html>) with a smiley picker, image attach and
-// a whisper chip. Text still goes out through the engine — the inline submitenter calls
+// in place (composer.css, from data-tdf-theme on <html>) with a smiley picker, image and video
+// attach and a whisper chip. Text still goes out through the engine — the inline submitenter calls
 // addMessage — so whisper, silence, the length limit and the repeat filter keep applying.
 
 import { MAIN_DIV } from '../../core/parse.js';
+import { chat2Off } from '../../core/optOut.js';
 import { whenDomReady } from '../../core/ready.js';
 import { expectReady } from '../../core/reveal.js';
 import { installAttach } from './attach.js';
@@ -15,10 +16,11 @@ import { installRefocus } from './refocus.js';
 import { installSmileyButton } from './smilies.js';
 import { installWhisper } from './whisper.js';
 
-const BAR = 'optionsBar';
+/** The message box's id; gallery/lightbox.js's MESSAGE_BOX_ID copies it, held by a drift test. */
+export const BAR = 'optionsBar';
 
 const win = /** @type {any} */ (window);
-if (!win.__tdfChat2Composer) {
+if (!win.__tdfChat2Composer && !chat2Off(window)) {
   win.__tdfChat2Composer = true;
   // Window capture phase runs before the textarea's inline onkeypress, and needs no wait for
   // the element to exist.

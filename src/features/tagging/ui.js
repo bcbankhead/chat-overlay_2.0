@@ -7,8 +7,12 @@
 // phase listener and a MutationObserver, editing no message-view file. It also hides a like's
 // ^suffix token in the view. A like it queues is announced on core's liked channel, which
 // the gallery saves the image from (TDF-0015).
+// With Use media quickview on (TDF-0035), a click on a share image, in a public message or a
+// whisper, opens the media popover over the chat's share images in chat order instead; its zoom
+// is the same new-tab open. Off, a whisper's image keeps following its link.
 
 import { emitLiked } from '../../core/events.js';
+import { openLightbox } from '../gallery/lightbox.js';
 import { extractShareIds } from '../gallery/shareParse.js';
 import { burst as floatHearts } from './hearts.js';
 
@@ -38,10 +42,21 @@ const HEART_PATH =
  *   queue: import('./queue.js').ReactionQueue,
  *   codes: readonly string[],
  *   burst?: (doc: Document, win: any, anchor: Element) => unknown,
- * }} deps
+ *   quickview?: () => boolean,
+ *   report?: (err: unknown) => void,
+ * }} deps  `quickview` is read at each click: whether a share image opens the media popover
  * @returns {() => void} uninstall
  */
-export function installReactionUi({ doc, win, store, queue, codes, burst = floatHearts }) {
+export function installReactionUi({
+  doc,
+  win,
+  store,
+  queue,
+  codes,
+  burst = floatHearts,
+  quickview = () => false,
+  report = (err) => console.error(err),
+}) {
   // The form the view's rows carry in data-user: start.js compares inbound users to it alike.
   const me = String(win.userName ?? '');
 
@@ -81,10 +96,63 @@ export function installReactionUi({ doc, win, store, queue, codes, burst = float
    * install could not resolve a reaction to one (A1).
    * @param {Element} img
    */
-  const shareOf = (img) => {
-    if (!img.closest('.tdf-msg.tdf-kind-public .tdf-body')) return null;
+  const shareOf = (img) => (img.closest('.tdf-msg.tdf-kind-public .tdf-body') ? shareIdOf(img) : null);
+
+  /**
+   * The share id an image links to, or null; any message kind.
+   * @param {Element} img
+   */
+  const shareIdOf = (img) => {
     const link = img.closest('a');
     return extractShareIds(`${link?.getAttribute('href') ?? ''} ${img.getAttribute('src') ?? ''}`)[0] ?? null;
+  };
+
+  /**
+   * The share id of an image the media popover shows: one in a public message or a whisper,
+   * which the view renders only to the whisper's sender and recipient.
+   * @param {Element} img
+   */
+  const mediaShareOf = (img) =>
+    img.closest('.tdf-msg.tdf-kind-public .tdf-body') || img.closest('.tdf-msg.tdf-kind-whisper .tdf-body')
+      ? shareIdOf(img)
+      : null;
+
+  /** @type {{ close: () => void } | null} the popover this install opened last */
+  let popover = null;
+
+  /**
+   * Open the media popover at a share image, over every share image in the chat, in chat order.
+   * @param {HTMLImageElement} clicked
+   * @param {string} shareId
+   */
+  const openQuickview = (clicked, shareId) => {
+    /** @type {import('../gallery/roster.js').MediaItem[]} */
+    const items = [];
+    /** @type {Map<string, string>} where each share's zoom opens */
+    const hrefs = new Map();
+    for (const node of doc.querySelectorAll('#tdf-chat .tdf-msg .tdf-body img')) {
+      const img = /** @type {HTMLImageElement} */ (node);
+      const id = mediaShareOf(img);
+      if (id === null || hrefs.has(id)) continue;
+      hrefs.set(id, img.closest('a')?.href ?? img.src);
+      // A share image the chat could not render (a video's, or a broken one) gives no thumbnail.
+      const broken = img.complete && img.naturalWidth === 0 && img.getAttribute('src') !== null;
+      items.push({ id, src: img.src, thumb: broken ? null : img.src, kind: 'unknown' });
+    }
+    popover = openLightbox({
+      doc,
+      win,
+      host: doc.getElementById('tdf-chat'),
+      items,
+      index: Math.max(0, items.findIndex((item) => item.id === shareId)),
+      zoom: (item) => {
+        if (!win.open(hrefs.get(item.id) ?? item.src, '_blank', 'noopener')) {
+          report(new Error('gallery: the browser blocked the new tab'));
+        }
+      },
+      report,
+      opener: clicked,
+    });
   };
 
   /**
@@ -238,9 +306,22 @@ export function installReactionUi({ doc, win, store, queue, codes, burst = float
       else if (!entry && !store.likesFor(shareId).mine) like(shareId, LIKE_CODE, likeButton);
       return;
     }
+    if (target.tagName !== 'IMG') return;
+    // Quickview on: a share image, public or whispered, opens the popover. Read now, so the
+    // setting applies without a reload.
+    const mediaId = mediaShareOf(target);
+    if (mediaId !== null && quickview()) {
+      event.preventDefault();
+      try {
+        openQuickview(/** @type {HTMLImageElement} */ (target), mediaId);
+      } catch (err) {
+        report(err);
+      }
+      return;
+    }
     // Clicking the image opens it full size in a new tab. No share id, no frame (B7): the plain
     // link stays.
-    if (target.tagName !== 'IMG' || !target.closest(`.${FRAME}`) || shareOf(target) === null) return;
+    if (!target.closest(`.${FRAME}`) || shareOf(target) === null) return;
     event.preventDefault();
     const img = /** @type {HTMLImageElement} */ (target);
     win.open(img.closest('a')?.href ?? img.src, '_blank', 'noopener');
@@ -269,5 +350,7 @@ export function installReactionUi({ doc, win, store, queue, codes, burst = float
     offStore();
     offQueue();
     offLike();
+    popover?.close();
+    popover = null;
   };
 }

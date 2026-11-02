@@ -1,14 +1,17 @@
-// The Settings flyout (UI design 2026-10-27, Flyouts → Settings). Chat: the Auto-scroll switch
-// over the engine's #autoScrollID, Clear chat buffer and Collapse server history automatically
-// (TDF-0033.3). Storage: Chat history (days), Clear
-// history now and Delete messages by user (TDF-0010), Gallery size limit (MB), Include my images
-// (TDF-0009.13) and Store images offline. A hint under each field says what the typed value
-// would delete; the setting is written, and the deletion runs, only when the value is committed
-// (change: Enter or leaving the field). The two deletions ask first, inline. The rail gives the
-// flyout body its scrollbar.
+// The Settings flyout (UI design 2026-10-27, Flyouts → Settings), in two sections (TDF-0039).
+// Chat: Use Chat 2.0 (TDF-0037), Auto-scroll over the engine's #autoScrollID, Clear chat buffer,
+// Collapse server history automatically (TDF-0033.3), Chat history (days), Clear history now and Hide messages by user (TDF-0010, TDF-0044). Media
+// and Gallery Settings, one flat list: Include my images (TDF-0009.13), Store images offline,
+// Compress stored images (TDF-0036), Use media quickview (TDF-0035) and Gallery size limit (MB).
+// Every boolean setting is a checkbox drawn as a switch (tdf-opt-switch). A hint under each field says
+// what the typed value would delete; the
+// setting is written, and the deletion runs, only when the value is committed (change: Enter or
+// leaving the field). The two deletions ask first, inline. The rail gives the flyout body its
+// scrollbar.
 
 import { describeError } from '../../core/errors.js';
 import { clearView } from '../../core/events.js';
+import { chat2Off, setChat2Off } from '../../core/optOut.js';
 import { MB_BYTES, parseDays, parseMegabytes, senderLabel } from './selectors.js';
 
 /**
@@ -64,13 +67,13 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   /**
    * A checkbox row over a boolean setting, written on change, appended where it is called. An
    * optional static hint says what the box does; a second hint shows only a failure.
-   * @param {'autoCollapseServerHistory' | 'includeMyImages' | 'storeImagesOffline'} key
+   * @param {'autoCollapseServerHistory' | 'includeMyImages' | 'storeImagesOffline' | 'compressStoredImages' | 'useMediaQuickview'} key
    * @param {string} label
    * @param {string} [about]
    */
   const check = (key, label, about) => {
     const row = el('label', 'tdf-opt-row');
-    const box = el('input', 'tdf-opt-check');
+    const box = el('input', 'tdf-opt-switch');
     box.type = 'checkbox';
     row.append(el('span', '', label), box);
     root.append(row);
@@ -96,9 +99,33 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
 
   root.append(el('div', 'tdf-opt-section tdf-opt-first', 'Chat'));
 
+  // Use Chat 2.0: unchecking records the choice (optOut.js, TDF-0037) and reloads into the
+  // original chat, asking nothing; its Switch to Chat 2.0 link turns it back on. A write the
+  // browser refuses says so here and does not reload.
+  const chat2Row = el('label', 'tdf-opt-row');
+  const chat2 = el('input', 'tdf-opt-switch tdf-opt-chat2');
+  chat2.type = 'checkbox';
+  chat2.checked = !chat2Off(win);
+  chat2Row.append(el('span', '', 'Use Chat 2.0'), chat2);
+  const chat2Hint = el('div', 'tdf-opt-hint tdf-warn');
+  chat2Hint.setAttribute('aria-live', 'polite');
+  root.append(chat2Row, chat2Hint);
+  chat2.addEventListener('change', () => {
+    if (chat2.checked) return;
+    chat2Hint.textContent = '';
+    try {
+      setChat2Off(win, true);
+    } catch (err) {
+      chat2.checked = true;
+      chat2Hint.textContent = `Could not apply: ${describeError(err)}`;
+      return;
+    }
+    win.location.reload();
+  });
+
   // Auto-scroll: the engine's own checkbox, both ways; the engine reads it on every line.
   const scrollRow = el('label', 'tdf-opt-row');
-  const scroll = el('input', 'tdf-opt-switch');
+  const scroll = el('input', 'tdf-opt-switch tdf-opt-autoscroll');
   scroll.type = 'checkbox';
   scrollRow.append(el('span', '', 'Auto-scroll'), scroll);
   const engineScroll = doc.getElementById('autoScrollID');
@@ -134,7 +161,6 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   );
   // Collapse server history automatically (TDF-0033.3): core follows the setting live.
   check('autoCollapseServerHistory', 'Collapse server history automatically', 'Server-history blocks arrive collapsed.');
-  root.append(el('div', 'tdf-opt-section', 'Storage'));
 
   /**
    * @param {string} label
@@ -167,11 +193,25 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
    *   none: () => string,
    *   question: (n: number) => string,
    *   run: () => Promise<string[]>,
+   *   done?: (n: number) => string,
+   *   failed?: (err: string) => string,
    *   after?: () => void,
    *   lock?: (on: boolean) => void,
    * }} step
    */
-  const confirmStep = (label, { count, none, question, run, after = () => {}, lock = () => {} }) => {
+  const confirmStep = (
+    label,
+    {
+      count,
+      none,
+      question,
+      run,
+      done = (n) => `Deleted ${plural(n, 'message')}.`,
+      failed = (err) => `Could not delete: ${err}`,
+      after = () => {},
+      lock = () => {},
+    },
+  ) => {
     const button = el('button', 'tdf-opt-clear', label);
     button.type = 'button';
     const ask = el('div', 'tdf-opt-confirm');
@@ -230,11 +270,11 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
         const ids = await run();
         if (closed) return;
         reset();
-        report(`Deleted ${plural(ids.length, 'message')}.`);
+        report(done(ids.length));
       } catch (err) {
         if (closed) return;
         reset();
-        report(`Could not delete: ${describeError(err)}`, true);
+        report(failed(describeError(err)), true);
       }
       after();
     });
@@ -252,11 +292,12 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   });
   root.append(clearHistory.button, clearHistory.ask, clearHistory.hint);
 
-  // Delete messages by user: any sender in stored history, online or not. The option value is
-  // the stored sender, which is what the user index holds; the label is decoded.
+  // Hide messages by user: any sender in stored history, online or not. It removes their lines
+  // from local history only, so it says hide: the chat server may replay those messages. The
+  // option value is the stored sender, which is what the user index holds; the label is decoded.
   const senderRow = el('label', 'tdf-opt-row tdf-opt-sender');
   const sender = el('select', '');
-  senderRow.append(el('span', '', 'Delete messages by user'), sender);
+  senderRow.append(el('span', '', 'Hide messages by user'), sender);
   // The sender asked about, fixed for that question; the picker is locked while it is open.
   let asked = '';
   let locked = false;
@@ -266,14 +307,16 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     sender.disabled = locked || unavailable;
     if (!locked) byUser.button.disabled = unavailable;
   };
-  const byUser = confirmStep('Delete', {
+  const byUser = confirmStep('Hide', {
     count: () => {
       asked = sender.value;
       return limits.countByUser(asked);
     },
-    none: () => `No saved messages from ${senderLabel(asked)}.`,
-    question: (n) => `Delete ${plural(n, 'message')} from ${senderLabel(asked)}?`,
+    none: () => `No saved messages from ${senderLabel(asked)} to hide.`,
+    question: (n) => `Hide ${plural(n, 'message')} from ${senderLabel(asked)}?`,
     run: () => limits.deleteByUser(asked),
+    done: (n) => `Hid ${plural(n, 'message')}.`,
+    failed: (err) => `Could not hide: ${err}`,
     after: () => refreshSenders(),
     lock: (on) => {
       locked = on;
@@ -281,6 +324,23 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     },
   });
   root.append(senderRow, byUser.button, byUser.ask, byUser.hint);
+
+  root.append(el('div', 'tdf-opt-section', 'Media and Gallery Settings'));
+
+  // Include my images: whether capture keeps the user's own shares, from the next share.
+  check('includeMyImages', 'Include my images');
+  // Store images offline: whether capture also keeps each new image's full copy, not only its
+  // thumbnail, from the next share.
+  check('storeImagesOffline', 'Store images offline');
+  // Compress stored images: each stored original is re-encoded as a smaller JPEG at its own
+  // dimensions, from the next share, and those already stored in the background (TDF-0036).
+  check('compressStoredImages', 'Compress stored images');
+  // Use media quickview: a shared image or gallery tile opens in the in-chat popover; off opens
+  // a new tab. Read at each click, so it applies without a reload (TDF-0035).
+  check('useMediaQuickview', 'Use media quickview');
+
+  const gallery = field('Gallery size limit (MB)', 'No limit');
+  gallery.input.min = '1';
 
   // Only the latest read fills the list.
   let senderSeq = 0;
@@ -323,14 +383,6 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     syncSender();
   };
   refreshSenders();
-  const gallery = field('Gallery size limit (MB)', 'No limit');
-  gallery.input.min = '1';
-
-  // Include my images: whether capture keeps the user's own shares, from the next share.
-  check('includeMyImages', 'Include my images');
-  // Store images offline: whether capture also keeps each new image's full copy, not only its
-  // thumbnail, from the next share.
-  check('storeImagesOffline', 'Store images offline');
 
   container.appendChild(root);
 
@@ -466,8 +518,11 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     },
     (err) => {
       if (closed) return;
-      history.hint.textContent = `Could not read settings: ${describeError(err)}`;
-      history.hint.classList.add('tdf-warn');
+      // The two fields sit in different sections (TDF-0044), so each carries the warning.
+      for (const field of [history, gallery]) {
+        field.hint.textContent = `Could not read settings: ${describeError(err)}`;
+        field.hint.classList.add('tdf-warn');
+      }
     },
   );
 

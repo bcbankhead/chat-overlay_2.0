@@ -1,4 +1,4 @@
-// Image upload through the engine's Share Files plugin (plugins/share/), the route its own
+// Image and video upload through the engine's Share Files plugin (plugins/share/), the route its own
 // "Share Files" window uses. The plugin's form is read live for its action, hidden fields
 // and the shareID radio values, so only the field names come from reference/ANALYSIS.md:
 // `shareID` (public/private), `shareWithUser` and `uploadedfile`.
@@ -9,10 +9,23 @@ const BASE = 'plugins/share/';
 
 // A stalled plugin would otherwise hold the composer busy until a reload.
 const TIMEOUT_MS = 30000;
+// The POST carries the whole file, so its limit grows with the file at a slow uplink's rate;
+// a flat 30 s would abort an ordinary video mid-upload.
+const SLOW_UPLINK_BYTES_PER_MS = 128;
+
+/**
+ * The POST's time limit for a file of `size` bytes: TIMEOUT_MS for the plugin's answer, plus the
+ * time to send the file at SLOW_UPLINK_BYTES_PER_MS.
+ * @param {number} size
+ * @returns {number}
+ */
+export function uploadTimeoutMs(size) {
+  return TIMEOUT_MS + Math.ceil(Math.max(0, size) / SLOW_UPLINK_BYTES_PER_MS);
+}
 
 /**
  * Upload `file`, privately to `toUser` when one is given, otherwise to the room. The plugin
- * posts the image message itself; rejects with the reason on any refusal.
+ * posts the file's message itself; rejects with the reason on any refusal.
  * @param {File} file
  * @param {string} [toUser]
  * @returns {Promise<void>}
@@ -39,7 +52,7 @@ export async function uploadShare(file, toUser = '') {
   data.set('uploadedfile', file, file.name);
 
   const action = new URL(form.getAttribute('action') || '', formUrl);
-  const response = await shareFetch(action, { method: 'POST', body: data });
+  const response = await shareFetch(action, { method: 'POST', body: data }, uploadTimeoutMs(file.size));
   const body = await response.text();
   const refusal = shareRefusal(response.status, body);
   if (refusal) throw new Error(refusal);
@@ -47,21 +60,22 @@ export async function uploadShare(file, toUser = '') {
 
 /**
  * A plugin request that never follows a redirect (a signed-out session is sent to a sign-in
- * page, whose own form must not be mistaken for the plugin's) and gives up after TIMEOUT_MS.
+ * page, whose own form must not be mistaken for the plugin's) and gives up after `timeoutMs`.
  * @param {URL} url
  * @param {RequestInit} init
+ * @param {number} [timeoutMs]
  */
-async function shareFetch(url, init) {
+async function shareFetch(url, init, timeoutMs = TIMEOUT_MS) {
   try {
     return await fetch(url, {
       ...init,
       credentials: 'same-origin',
       redirect: 'manual',
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     if (/** @type {any} */ (error)?.name === 'TimeoutError') {
-      throw new Error(`Upload failed: the Share Files plugin did not answer within ${TIMEOUT_MS / 1000} s`);
+      throw new Error(`Upload failed: the Share Files plugin did not answer within ${Math.ceil(timeoutMs / 1000)} s`);
     }
     throw error;
   }
@@ -72,7 +86,7 @@ async function shareFetch(url, init) {
  * id, a label naming only that radio, or the text of a parent holding only that radio — the live
  * plugin's form uses values 1/2 with bare text beside each radio in its own table cell. A private
  * share fails closed: with no radio that names it, the upload is refused rather than risk posting
- * a whispered image to the room.
+ * a whispered file to the room.
  * @param {HTMLFormElement} form
  * @param {boolean} isPrivate
  */

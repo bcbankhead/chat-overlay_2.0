@@ -7,6 +7,10 @@ import { Window } from 'happy-dom';
 import * as esbuild from 'esbuild';
 import { fileURLToPath } from 'node:url';
 import { adapt, THEME_BG } from '../../core/ink.js';
+import { MESSAGE_BOX_ID, openLightbox } from '../gallery/lightbox.js';
+import { COMPOSER_NOT_READY, installStager, stageAttachment } from './api.js';
+import { OPEN_MENU } from './refocus.js';
+import { whisperTarget } from './whisper.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const settle = () => new Promise((r) => setTimeout(r, 20));
@@ -27,9 +31,10 @@ before(async () => {
     stdin: {
       contents: [
         "import { mount } from '../../core/shell.js';",
-        "import './index.js';",
+        "import { BAR } from './index.js';",
         "import { openSmileyPicker } from './smilies.js';",
-        'window.__test = { mount, openSmileyPicker };',
+        "import { COMPOSER_NOT_READY, stageAttachment } from './api.js';",
+        'window.__test = { mount, openSmileyPicker, BAR, stageAttachment, COMPOSER_NOT_READY };',
       ].join('\n'),
       resolveDir: here,
       sourcefile: 'harness.js',
@@ -704,7 +709,7 @@ test('private boxes keep the engine styling', () => {
 
 test('the hint line is always present', () => {
   const { document } = page();
-  assert.equal(document.querySelector('.tdf-attach-hint')?.textContent, 'Shift+Enter for newline · Drag and drop images');
+  assert.equal(document.querySelector('.tdf-attach-hint')?.textContent, 'Shift+Enter for newline · Drag and drop images or videos');
 });
 
 test('a dropped image shows a thumbnail; × removes it; non-images are ignored', () => {
@@ -828,6 +833,16 @@ test('without #whisperID no chip is added and the engine functions stay unwrappe
   assert.ok(document.querySelector('.tdf-attach-icon'), 'the other pieces still install');
 });
 
+test('whisperTarget reads #whisperID, and is empty for the room or without the field', () => {
+  const { document } = new Window({ url: 'https://chat.example.com/forum/chat/' });
+  const doc = /** @type {any} */ (document);
+  assert.equal(whisperTarget(doc), '');
+  doc.body.innerHTML = '<input id="whisperID" value="">';
+  assert.equal(whisperTarget(doc), '');
+  doc.getElementById('whisperID').value = 'bob b';
+  assert.equal(whisperTarget(doc), 'bob b');
+});
+
 test('before the theme mounts the box keeps the engine colour', () => {
   const { document, bar, win } = page({ theme: null });
   win.changeMessBoxStyle('optionsBar');
@@ -887,6 +902,114 @@ test('the upload icon opens the file chooser, and a chosen image attaches', () =
   const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
   assert.equal(thumb.hidden, false);
   assert.equal(thumb.title, 'pick.png');
+});
+
+test('a dropped mp4 attaches with a video preview in place of the image', () => {
+  const { window, document, bar } = page();
+  const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
+  const event = drop(window, bar, new window.File(['x'], 'clip.mp4', { type: 'video/mp4' }));
+  assert.equal(event.defaultPrevented, true);
+  assert.equal(thumb.hidden, false);
+  assert.equal(thumb.title, 'clip.mp4');
+  const video = thumb.querySelector('video');
+  assert.ok(video, 'the thumbnail holds a video preview');
+  assert.equal(video.hidden, false);
+  assert.equal(video.muted, true);
+  assert.notEqual(video.getAttribute('src'), null);
+  const img = thumb.querySelector('img');
+  assert.equal(img.hidden, true);
+  assert.equal(img.getAttribute('src'), null);
+  assert.equal(document.querySelector('.tdf-attach-hint')?.textContent, 'Shift+Enter for newline · Drag and drop images or videos');
+});
+
+test('the file chooser offers videos, and a chosen mp4 attaches', () => {
+  const { window, document } = page();
+  const input = /** @type {any} */ (document.querySelector('input[type=file]'));
+  assert.match(input.accept, /(^|,)video\/\*(,|$)/);
+  assert.match(input.accept, /(^|,)image\/\*(,|$)/);
+  Object.defineProperty(input, 'files', { value: [new window.File(['x'], 'pick.mp4', { type: 'video/mp4' })] });
+  input.dispatchEvent(new window.Event('change'));
+  const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
+  assert.equal(thumb.hidden, false);
+  assert.equal(thumb.title, 'pick.mp4');
+  assert.equal(thumb.querySelector('video').hidden, false);
+});
+
+test('Enter with a video pending uploads it through Share Files and clears the thumbnail', async () => {
+  const { window, document, bar, state, win } = page();
+  const calls = stubShare(win);
+  drop(window, bar, new window.File(['x'], 'clip.mp4', { type: 'video/mp4' }));
+  enter(window, bar, false);
+  assert.equal(state.sent, 0, 'the engine never saw the Enter');
+  await settle();
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].method, 'POST');
+  assert.equal(calls[1].body.get('uploadedfile').name, 'clip.mp4');
+  const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
+  assert.equal(thumb.hidden, true);
+  assert.equal(thumb.querySelector('video').getAttribute('src'), null, 'no video source is left behind');
+});
+
+test('an image dropped after a pending video switches the preview back, leaving no video source', () => {
+  const { window, document, bar } = page();
+  const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
+  drop(window, bar, new window.File(['x'], 'clip.mp4', { type: 'video/mp4' }));
+  drop(window, bar, new window.File(['y'], 'cat.png', { type: 'image/png' }));
+  assert.equal(thumb.title, 'cat.png');
+  const img = thumb.querySelector('img');
+  const video = thumb.querySelector('video');
+  assert.equal(img.hidden, false);
+  assert.notEqual(img.getAttribute('src'), null);
+  assert.equal(video.hidden, true);
+  assert.equal(video.getAttribute('src'), null);
+});
+
+test('an mp4 dropped after a pending image switches the preview to video, leaving no image source', () => {
+  const { window, document, bar } = page();
+  const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
+  drop(window, bar, new window.File(['y'], 'cat.png', { type: 'image/png' }));
+  drop(window, bar, new window.File(['x'], 'clip.mp4', { type: 'video/mp4' }));
+  assert.equal(thumb.title, 'clip.mp4');
+  const img = thumb.querySelector('img');
+  const video = thumb.querySelector('video');
+  assert.equal(img.hidden, true);
+  assert.equal(img.getAttribute('src'), null);
+  assert.equal(video.hidden, false);
+  assert.notEqual(video.getAttribute('src'), null);
+});
+
+test('a dropped video is released with load() when an image replaces it or × removes it', () => {
+  const { window, document, bar } = page();
+  const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
+  const video = thumb.querySelector('video');
+  let loads = 0;
+  video.load = () => {
+    loads += 1;
+  };
+  drop(window, bar, new window.File(['x'], 'clip.mp4', { type: 'video/mp4' }));
+  drop(window, bar, new window.File(['y'], 'cat.png', { type: 'image/png' }));
+  assert.equal(loads, 1, 'the image replacing the video released it');
+  thumb.querySelector('.tdf-attach-remove').click();
+  assert.equal(loads, 1, 'no video was held, so × has nothing to release');
+  drop(window, bar, new window.File(['x'], 'clip.mp4', { type: 'video/mp4' }));
+  thumb.querySelector('.tdf-attach-remove').click();
+  assert.equal(loads, 2, '× released the pending video');
+  assert.equal(video.getAttribute('src'), null);
+});
+
+test('the upload POST waits longer for a larger file; the form GET keeps 30 s', async () => {
+  const { window, bar, win } = page();
+  stubShare(win);
+  /** @type {number[]} */
+  const limits = [];
+  win.AbortSignal.timeout = (/** @type {number} */ ms) => {
+    limits.push(ms);
+    return new win.AbortController().signal;
+  };
+  drop(window, bar, new window.File([new Uint8Array(128 * 1000)], 'clip.mp4', { type: 'video/mp4' }));
+  enter(window, bar, false);
+  await settle();
+  assert.deepEqual(limits, [30000, 31000]);
 });
 
 test('with no Send button the text goes out through addMessage', async () => {
@@ -962,7 +1085,7 @@ test('a file that cannot attach says why on the hint line', async () => {
   const { window, document, bar, win } = page();
   const hint = /** @type {any} */ (document.querySelector('.tdf-attach-hint'));
   drop(window, bar, new window.File(['x'], 'notes.txt', { type: 'text/plain' }));
-  assert.equal(hint.textContent, 'Only images can be attached: notes.txt');
+  assert.equal(hint.textContent, 'Only images and videos can be attached: notes.txt');
   assert.equal(hint.classList.contains('tdf-attach-refused'), true);
 
   win.fetch = () => new Promise(() => {});
@@ -970,7 +1093,7 @@ test('a file that cannot attach says why on the hint line', async () => {
   enter(window, bar, false);
   await settle();
   drop(window, bar, new window.File(['y'], 'other.png', { type: 'image/png' }));
-  assert.equal(hint.textContent, 'An image is still uploading');
+  assert.equal(hint.textContent, 'A file is still uploading');
 });
 
 test('a drop of several images keeps the first and says so', () => {
@@ -980,7 +1103,7 @@ test('a drop of several images keeps the first and says so', () => {
   Object.defineProperty(event, 'dataTransfer', { value: { files } });
   bar.dispatchEvent(event);
   assert.equal(/** @type {any} */ (document.querySelector('.tdf-attach-thumb')).title, 'a.png');
-  assert.equal(document.querySelector('.tdf-attach-hint')?.textContent, 'One image at a time: the first was kept');
+  assert.equal(document.querySelector('.tdf-attach-hint')?.textContent, 'One file at a time: the first was kept');
 });
 
 test('before the theme mounts nothing attaches and Enter reaches the engine', () => {
@@ -1086,4 +1209,200 @@ test('the live Share Files form: scope is read from each radio\'s own cell, and 
   await settle();
   assert.equal(calls[1].body.get('shareID'), '2', 'private');
   assert.equal(calls[1].body.get('shareWithUser'), 'Bob');
+});
+
+test("the lightbox's copy of the message box id matches the composer's BAR", () => {
+  const { win } = page();
+  assert.equal(MESSAGE_BOX_ID, win.__test.BAR);
+});
+
+/** Open a real media popover over the composer page. */
+function openPopover(/** @type {any} */ window, /** @type {any} */ document) {
+  const opener = document.createElement('button');
+  document.body.appendChild(opener);
+  const item = { id: '1', src: 'https://chat.example.com/share/1', thumb: 't1', kind: /** @type {const} */ ('unknown') };
+  const two = { ...item, id: '2', src: 'https://chat.example.com/share/2', thumb: 't2' };
+  const opened = openLightbox({ doc: document, win: window, host: null, items: [item, two], index: 0, zoom: () => {}, report: () => {}, opener });
+  return { ...opened, opener };
+}
+
+test('an open media popover counts as an open menu', () => {
+  const { window, document } = page();
+  const { layer, close } = openPopover(window, document);
+  assert.ok(layer.matches(OPEN_MENU), 'the layer matches OPEN_MENU');
+  close();
+  assert.equal(document.querySelector(OPEN_MENU), null, 'nothing matches once closed');
+});
+
+test('while the popover is open a click inside it keeps focus off the box; Escape on the box closes it', async () => {
+  const { window, document, bar } = page();
+  await settle();
+  const { layer } = openPopover(window, document);
+  await settle();
+  assert.ok(document.activeElement !== bar, 'opening leaves focus in the popover');
+  await press(window, /** @type {any} */ (layer.querySelector('.tdf-lb-next')));
+  assert.ok(document.activeElement !== bar, 'a click on an arrow keeps focus off the box');
+  await press(window, /** @type {any} */ (layer.querySelector('.tdf-lb-thumb')));
+  assert.ok(document.activeElement !== bar, 'a filmstrip click keeps focus off the box');
+
+  bar.focus();
+  const arrow = new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true });
+  bar.dispatchEvent(arrow);
+  assert.equal(arrow.defaultPrevented, false, 'the arrow stays with the box');
+  const escape = new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  bar.dispatchEvent(escape);
+  assert.equal(escape.defaultPrevented, true);
+  assert.equal(document.querySelector('.tdf-lb'), null, 'Escape on the box closes the popover');
+});
+
+test('closing the popover returns focus to the box', async () => {
+  const { window, document, bar } = page();
+  await settle();
+  const { close } = openPopover(window, document);
+  await settle();
+  assert.ok(document.activeElement !== bar);
+  close();
+  await settle();
+  assert.ok(document.activeElement === bar, 'the last menu closing refocuses the box');
+});
+
+test('closing the popover with a mouse press on Close returns focus to the box', async () => {
+  const { window, document, bar } = page();
+  await settle();
+  const { layer } = openPopover(window, document);
+  await settle();
+  await press(window, /** @type {any} */ (layer.querySelector('.tdf-lb-close')));
+  assert.equal(document.querySelector('.tdf-lb'), null);
+  assert.ok(document.activeElement === bar);
+});
+
+test('closing the popover from the keyboard leaves focus on its opener', async () => {
+  const { window, document, bar } = page();
+  await settle();
+  const first = openPopover(window, document);
+  await settle();
+  const escape = new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  document.activeElement.dispatchEvent(escape);
+  await settle();
+  assert.equal(document.querySelector('.tdf-lb'), null, 'Escape closes the popover');
+  assert.ok(document.activeElement === first.opener, 'Escape leaves focus on the opener');
+  assert.ok(document.activeElement !== bar);
+
+  const second = openPopover(window, document);
+  await settle();
+  const close = /** @type {any} */ (second.layer.querySelector('.tdf-lb-close'));
+  close.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  close.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 0 }));
+  await settle();
+  assert.equal(document.querySelector('.tdf-lb'), null, 'Enter on Close closes the popover');
+  assert.ok(document.activeElement === second.opener, 'Enter on Close leaves focus on the opener');
+});
+
+test('closing the popover on a touch screen does not refocus the box', async () => {
+  const { window, document, bar } = page({ coarse: true });
+  await settle();
+  const { close, opener } = openPopover(window, document);
+  await settle();
+  close();
+  await settle();
+  assert.ok(document.activeElement !== bar, 'the box stays unfocused, so no keyboard opens');
+  assert.ok(document.activeElement === opener);
+});
+
+// The stager (TDF-0043): another feature hands the box a file through api.js stageAttachment.
+
+test('a staged file waits as the thumbnail, focused in the box, and nothing uploads until Enter', async () => {
+  const { window, document, bar, state, win } = page();
+  const calls = stubShare(win);
+  const other = document.createElement('input');
+  document.body.appendChild(other);
+  other.focus();
+  const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
+  assert.equal(win.__test.stageAttachment(new window.File(['x'], 'cat.png', { type: 'image/png' })), null);
+  assert.equal(thumb.hidden, false);
+  assert.equal(thumb.title, 'cat.png');
+  assert.equal(bar.classList.contains('tdf-attach-has'), true);
+  assert.equal(document.activeElement, bar, 'focus moves to the box');
+  await settle();
+  assert.deepEqual(calls, [], 'nothing is uploaded at staging');
+  bar.value = 'look';
+  enter(window, bar, false);
+  await settle();
+  assert.deepEqual(calls.map((c) => c.method), ['GET', 'POST']);
+  assert.equal(calls[1].body.get('uploadedfile').name, 'cat.png');
+  assert.equal(thumb.hidden, true);
+  assert.equal(state.clicks, 1, 'the text goes through the engine Send');
+});
+
+test('a staged file replaces one already waiting', () => {
+  const { window, document, bar, win } = page();
+  drop(window, bar, new window.File(['x'], 'first.png', { type: 'image/png' }));
+  assert.equal(win.__test.stageAttachment(new window.File(['y'], 'second.png', { type: 'image/png' })), null);
+  assert.equal(/** @type {any} */ (document.querySelector('.tdf-attach-thumb')).title, 'second.png');
+});
+
+test('a staged file follows the whisper in force at send, not at staging', async () => {
+  const { window, document, win } = page();
+  const calls = stubShare(win);
+  win.__test.stageAttachment(new window.File(['x'], 'cat.png', { type: 'image/png' }));
+  win.whisperUser('Alice');
+  /** @type {any} */ (document.getElementById('optionsSend')).click();
+  await settle();
+  assert.match(calls[0].url, /shareWithUser=Alice$/);
+  assert.equal(calls[1].body.get('shareID'), '2');
+  assert.equal(calls[1].body.get('shareWithUser'), 'Alice');
+});
+
+test('a staged file the box refuses returns the reason and shows it on the hint line', async () => {
+  const { window, document, bar, win } = page();
+  const hint = /** @type {any} */ (document.querySelector('.tdf-attach-hint'));
+  const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
+  assert.equal(win.__test.stageAttachment(new window.File(['x'], 'notes.txt', { type: 'text/plain' })), 'Only images and videos can be attached: notes.txt');
+  assert.equal(hint.textContent, 'Only images and videos can be attached: notes.txt');
+  assert.equal(hint.classList.contains('tdf-attach-refused'), true);
+  assert.equal(thumb.hidden, true);
+
+  win.fetch = () => new Promise(() => {});
+  drop(window, bar, new window.File(['x'], 'cat.png', { type: 'image/png' }));
+  enter(window, bar, false);
+  await settle();
+  assert.equal(win.__test.stageAttachment(new window.File(['y'], 'other.png', { type: 'image/png' })), 'A file is still uploading');
+  assert.equal(hint.textContent, 'A file is still uploading');
+  assert.equal(thumb.title, 'cat.png', 'the uploading file is kept');
+});
+
+test('before the theme mounts a staged file is refused as not ready, and nothing is drawn', () => {
+  const { window, document, win } = page({ theme: null });
+  const reason = win.__test.stageAttachment(new window.File(['x'], 'cat.png', { type: 'image/png' }));
+  assert.equal(reason, win.__test.COMPOSER_NOT_READY);
+  assert.equal(reason, 'The chat input box is not ready for an attachment');
+  assert.equal(/** @type {any} */ (document.querySelector('.tdf-attach-thumb')).hidden, true);
+  assert.equal(document.querySelector('.tdf-attach-hint')?.classList.contains('tdf-attach-refused'), false);
+});
+
+test('without the chat the box installs no stager, and staging is refused as not ready', () => {
+  const { window, win } = page({ chat: false });
+  assert.equal(win.__test.stageAttachment(new window.File(['x'], 'cat.png', { type: 'image/png' })), win.__test.COMPOSER_NOT_READY);
+});
+
+test('a stager uninstalled after another replaced it leaves the newer one installed', () => {
+  /** @type {string[]} */
+  const seen = [];
+  const file = /** @type {File} */ (/** @type {unknown} */ ({ name: 'x.png', type: 'image/png' }));
+  const offOld = installStager(() => (seen.push('old'), null));
+  const offNew = installStager(() => (seen.push('new'), 'refused'));
+  offOld();
+  assert.equal(stageAttachment(file), 'refused', 'the stale uninstall did not clear the current stager');
+  offNew();
+  assert.equal(stageAttachment(file), COMPOSER_NOT_READY);
+  offNew();
+  assert.deepEqual(seen, ['new']);
+});
+
+test('a file chooser closed with no file attaches nothing and says nothing', () => {
+  const { window, document } = page();
+  const input = /** @type {any} */ (document.querySelector('input[type="file"]'));
+  input.dispatchEvent(new window.Event('change'));
+  assert.equal(/** @type {any} */ (document.querySelector('.tdf-attach-thumb')).hidden, true);
+  assert.equal(document.querySelector('.tdf-attach-hint')?.classList.contains('tdf-attach-refused'), false);
 });

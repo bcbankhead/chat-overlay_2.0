@@ -18,7 +18,8 @@ const get = async (store, id) => (await store.list()).find((r) => r.id === id);
 
 /**
  * @param {{ ok?: boolean, type?: string, offline?: boolean, thumbFails?: boolean, ready?: Promise<any>,
- *   hang?: boolean, timeoutMs?: number, self?: string, hashFails?: boolean }} [opts]
+ *   hang?: boolean, timeoutMs?: number, self?: string, hashFails?: boolean,
+ *   compress?: (blob: Blob) => Promise<Blob | null>, compressOn?: boolean }} [opts]
  */
 async function harness({
   ok = true,
@@ -30,6 +31,8 @@ async function harness({
   timeoutMs,
   self = '',
   hashFails = false,
+  compress,
+  compressOn = false,
 } = {}) {
   /** @type {{ ok: boolean, hang: boolean, type: string, self: string, bytes: Record<string, number> }} */
   const state = { ok, hang, type, self, bytes: {} };
@@ -37,6 +40,7 @@ async function harness({
   const store = createImageStore(db);
   const settings = createSettings(db);
   if (offline) await settings.set('storeImagesOffline', true);
+  if (compressOn) await settings.set('compressStoredImages', true);
   /** @type {Set<(r: any) => void>} */
   const listeners = new Set();
   /** @type {Set<(l: import('../../core/events.js').Liked) => void>} */
@@ -47,7 +51,7 @@ async function harness({
   const fetched = [];
   /** @type {unknown[]} */
   const errors = [];
-  startCapture({
+  const capture = startCapture({
     ready: ready ?? Promise.resolve({ store, settings }),
     onInbound: (fn) => {
       listeners.add(fn);
@@ -87,6 +91,7 @@ async function harness({
           },
         }
       : {}),
+    ...(compress ? { compress } : {}),
   });
   /** @param {Partial<import('../../core/history.js').MessageRecord>} over */
   const deliver = (over) => {
@@ -110,7 +115,7 @@ async function harness({
     const record = deliver(over);
     for (const shareId of extractShareIds(record.text)) like(shareId, record.id, record);
   };
-  return { store, settings, messages, deliver, like, post, fetched, errors, state };
+  return { store, settings, messages, deliver, like, post, fetched, errors, state, backfill: capture.backfill };
 }
 
 test('the same share id liked twice, in one message and across two, yields one entry and one fetch', async () => {
@@ -406,4 +411,253 @@ test('a hash that fails is reported, and the image is stored without one', async
   assert.equal(rows[0].hash, undefined);
   assert.equal(h.errors.length, 2);
   assert.match(String(/** @type {Error} */ (h.errors[0]).message), /no hash for image .*: no subtle crypto/);
+});
+
+/** A compressor that shrinks every original to 1200 bytes of JPEG, recording what it was given. */
+const shrinking = () => {
+  /** @type {Blob[]} */
+  const seen = [];
+  /** @param {Blob} blob */
+  const compress = async (blob) => {
+    seen.push(blob);
+    return new Blob([new Uint8Array(1200)], { type: 'image/jpeg' });
+  };
+  return { seen, compress };
+};
+
+test("with Compress stored images on, the smaller re-encode is stored, and the hash is the fetched bytes'", async () => {
+  const { seen, compress } = shrinking();
+  const h = await harness({ offline: true, compressOn: true, type: 'image/png', compress });
+  h.post({ text: SHARE(ID) });
+  await settle();
+  const row = await get(h.store, ID);
+  assert.equal(row?.blob?.size, 1200);
+  assert.equal(row?.blob?.type, 'image/jpeg');
+  assert.equal(row?.contentType, 'image/jpeg');
+  assert.equal(row?.bytes, 1500);
+  assert.equal(row?.compressChecked, true);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].size, 5000, 'given the fetched original');
+  const plain = await harness({ type: 'image/png' });
+  plain.post({ text: SHARE(ID) });
+  await settle();
+  assert.equal(row?.hash, (await get(plain.store, ID))?.hash, "the hash is the fetched bytes', not the re-encode's");
+  // A re-share of the same image under another id is still recognised as a duplicate.
+  h.post({ id: '2', text: SHARE(OTHER), receivedAt: 2 });
+  await settle();
+  assert.deepEqual((await h.store.list()).map((r) => r.id), [ID]);
+  assert.deepEqual(h.errors, []);
+});
+
+test('a compression that keeps the original, or fails, stores the fetched blob, checked; a failure is reported', async () => {
+  for (const fails of [false, true]) {
+    const h = await harness({
+      offline: true,
+      compressOn: true,
+      compress: async () => {
+        if (fails) throw new Error('cannot encode');
+        return null;
+      },
+    });
+    h.post({ text: SHARE(ID) });
+    await settle();
+    const row = await get(h.store, ID);
+    assert.equal(row?.blob?.size, 5000);
+    assert.equal(row?.contentType, 'image/jpeg');
+    assert.equal(row?.bytes, 5300);
+    assert.equal(row?.compressChecked, true);
+    assert.deepEqual(
+      h.errors.map((e) => /** @type {Error} */ (e).message),
+      fails ? ['gallery: image 123456789012345 kept uncompressed: cannot encode'] : [],
+    );
+  }
+});
+
+test('with Compress stored images off, or Store images offline off, nothing is compressed or checked', async () => {
+  for (const opts of [{ offline: true }, { compressOn: true }]) {
+    const { seen, compress } = shrinking();
+    const h = await harness({ ...opts, compress });
+    h.post({ text: SHARE(ID) });
+    await settle();
+    const row = await get(h.store, ID);
+    assert.equal(row?.blob?.size, opts.offline ? 5000 : undefined);
+    assert.equal(row?.compressChecked, undefined);
+    assert.equal(seen.length, 0);
+  }
+});
+
+test('a broken retry repaired with compression on stores the re-encode, checked', async () => {
+  const { compress } = shrinking();
+  const h = await harness({ ok: false, offline: true, compressOn: true, compress });
+  h.post({ id: '1', text: SHARE(ID) });
+  await settle();
+  h.state.ok = true;
+  h.post({ id: '2', text: SHARE(ID), receivedAt: 2 });
+  await settle();
+  const row = await get(h.store, ID);
+  assert.equal(row?.broken, false);
+  assert.equal(row?.blob?.size, 1200);
+  assert.equal(row?.compressChecked, true);
+});
+
+test('the backfill compresses stored originals in place, keeps favourites, skips decided ones, and stops when switched off', async () => {
+  const { seen, compress } = shrinking();
+  const h = await harness({ offline: true, compress });
+  h.state.bytes[OTHER] = 7;
+  h.post({ id: '1', text: SHARE(ID) });
+  h.post({ id: '2', text: SHARE(OTHER), receivedAt: 2 });
+  await settle();
+  await h.store.setFavorite(ID, true);
+  // Off: the backfill's first task finds the setting off, does nothing, and ends the run.
+  await h.backfill();
+  await settle();
+  assert.equal(seen.length, 0);
+  assert.equal((await get(h.store, ID))?.compressChecked, undefined);
+
+  await h.settings.set('compressStoredImages', true);
+  await h.backfill();
+  await settle();
+  const rows = await h.store.list();
+  assert.equal(rows.length, 2, 'nothing deleted');
+  for (const r of rows) {
+    assert.equal(r.blob?.size, 1200);
+    assert.equal(r.contentType, 'image/jpeg');
+    assert.equal(r.bytes, 1500);
+    assert.equal(r.compressChecked, true);
+  }
+  assert.equal((await get(h.store, ID))?.favorite, true);
+  assert.equal(seen.length, 2);
+  // A second pass, as after a reload, finds nothing left to do.
+  assert.deepEqual(await h.store.pendingCompression(), []);
+  await h.backfill();
+  await settle();
+  assert.equal(seen.length, 2);
+  assert.deepEqual(h.errors, []);
+});
+
+test('without a compressor the backfill does nothing', async () => {
+  const h = await harness({ offline: true, compressOn: true });
+  h.post({ text: SHARE(ID) });
+  await settle();
+  await h.backfill();
+  await settle();
+  assert.equal((await get(h.store, ID))?.blob?.size, 5000);
+  assert.deepEqual(await h.store.pendingCompression(), [ID]);
+});
+
+test('a queued backfill task leaves a record that was removed, broken or decided since it was listed', async () => {
+  const { seen, compress } = shrinking();
+  const h = await harness({ offline: true, compress });
+  h.state.bytes[OTHER] = 7;
+  const THIRD = '888888888888888';
+  h.state.bytes[THIRD] = 9;
+  h.post({ id: '1', text: SHARE(ID) });
+  h.post({ id: '2', text: SHARE(OTHER), receivedAt: 2 });
+  h.post({ id: '3', text: SHARE(THIRD), receivedAt: 3 });
+  await settle();
+  await h.settings.set('compressStoredImages', true);
+  // Change each record after it is listed, before its task runs.
+  const list = h.store.pendingCompression.bind(h.store);
+  h.store.pendingCompression = async () => {
+    const ids = await list();
+    await h.store.remove(ID);
+    await h.store.markBroken(OTHER, 'gone');
+    await h.store.repair(THIRD, { compressChecked: true });
+    return ids;
+  };
+  await h.backfill();
+  await settle();
+  assert.equal(seen.length, 0);
+  assert.equal((await get(h.store, OTHER))?.blob?.size, 5000);
+  assert.equal((await get(h.store, THIRD))?.blob?.size, 5000);
+});
+
+test('a backfill called while another is listing does not list again', async () => {
+  const { compress } = shrinking();
+  const h = await harness({ offline: true, compressOn: true, compress });
+  h.post({ text: SHARE(ID) });
+  await settle();
+  let calls = 0;
+  const list = h.store.pendingCompression.bind(h.store);
+  h.store.pendingCompression = () => {
+    calls += 1;
+    return list();
+  };
+  await Promise.all([h.backfill(), h.backfill()]);
+  await settle();
+  assert.equal(calls, 1);
+  await h.backfill();
+  assert.equal(calls, 2, 'a later backfill lists again');
+});
+
+/**
+ * Three originals stored before compression was on, and a compressor whose first call waits
+ * until released, logging how many fetches had happened at each call.
+ */
+async function gatedBackfill() {
+  /** @type {() => void} */
+  let release = () => {};
+  const gate = new Promise((r) => (release = () => r(undefined)));
+  /** @type {() => void} */
+  let started = () => {};
+  const first = new Promise((r) => (started = () => r(undefined)));
+  /** @type {number[]} */
+  const calls = [];
+  /** @type {{ fetched: string[] }} */
+  const seen = { fetched: [] };
+  const h = await harness({
+    offline: true,
+    compress: async (blob) => {
+      calls.push(seen.fetched.length);
+      if (calls.length === 1) {
+        started();
+        await gate;
+      }
+      return new Blob([new Uint8Array(blob.size - 1)], { type: 'image/jpeg' });
+    },
+  });
+  seen.fetched = h.fetched;
+  const ids = ['111111111111111', '222222222222222', '333333333333333'];
+  ids.forEach((id, i) => {
+    h.state.bytes[id] = i + 1;
+    h.post({ id: String(i + 1), text: SHARE(id), receivedAt: i + 1 });
+  });
+  await settle();
+  await h.settings.set('compressStoredImages', true);
+  return { h, ids, calls, first, release };
+}
+
+test('a capture queued during a backfill runs before the backfill compresses the next original', async () => {
+  const { h, ids, calls, first, release } = await gatedBackfill();
+  await h.backfill();
+  await first;
+  h.post({ id: '9', text: SHARE(ID), receivedAt: 9 });
+  release();
+  await settle();
+  // The first original's compress saw 3 fetches; the new capture's fetch (and its own compress)
+  // ran before the remaining two originals were compressed.
+  assert.deepEqual(calls, [3, 4, 4, 4]);
+  for (const id of [...ids, ID]) assert.equal((await get(h.store, id))?.compressChecked, true);
+  assert.deepEqual(h.errors, []);
+});
+
+test('a backfill called during a run does not start a second one', async () => {
+  const { h, ids, calls, first, release } = await gatedBackfill();
+  let listed = 0;
+  const list = h.store.pendingCompression.bind(h.store);
+  h.store.pendingCompression = () => {
+    listed += 1;
+    return list();
+  };
+  await h.backfill();
+  await first;
+  await h.backfill();
+  release();
+  await settle();
+  assert.equal(listed, 1);
+  assert.equal(calls.length, ids.length, 'each original compressed once');
+  assert.deepEqual(await h.store.pendingCompression(), []);
+  // Once the run has finished, a later backfill lists again.
+  await h.backfill();
+  assert.equal(listed, 3);
 });

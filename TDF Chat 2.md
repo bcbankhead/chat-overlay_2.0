@@ -37,7 +37,9 @@ Key features,
 6. image gallery
     - save all user attachments in the local gallery including your own
     - gallery will be a flyout from the right, but will always show the top 3 images in an overlapping slide format
-    - clicking a tile opens the image in a new tab; an unavailable image opens nothing
+    - clicking a tile opens the in-chat media popover (with `Use media quickview` on, the default) or the image in a new tab (with it off); an unavailable image retries instead of opening
+    - each tile has a `Re-post` button in its lower-right corner that puts the image in the chat input box as the waiting attachment, replacing any file already waiting, and closes the gallery without opening the tile; it posts on Enter or Send, privately to the whispered user while whispering, otherwise to the room; it is disabled for an unavailable image (TDF-0038, TDF-0043)
+    - with `Compress stored images` on (off by default), stored full copies are re-encoded as smaller JPEGs at their own dimensions, new and already-stored alike; GIFs and transparent images are kept as they are, except that an image whose pixels the browser will not let be read is flattened onto white and re-encoded
     - mark for deletion
     - delete button at bottom (stick bottom control)
 7. Styling
@@ -49,3 +51,6 @@ Key features,
 8. Forward compatibility
     - it might be useful if they want to install this script on the page as a JS include this removes all difficulty in installation.
     - it would function the same as the tamper monkey script, and the chat thread would only be locally reproducible, so no need to store chat data long term on the server, it lives in each users chat history until they purge it.
+9. Opting out (TDF-0037)
+    - `Use Chat 2.0` (on by default) is the first row under Chat in Settings; unchecking it reloads into the site's original chat, untouched
+    - while it is off, the only addition is a small `Switch to Chat 2.0` link in the corner, which turns 2.0 back on and reloads, settings and history intact

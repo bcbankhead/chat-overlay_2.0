@@ -195,7 +195,7 @@
   background: rgba(255, 255, 255, 0.35);
 }
 
-/* Image attach. With an image pending, the text moves over for its thumbnail. */
+/* Image and video attach. With a file pending, the text moves over for its thumbnail. */
 :root[data-tdf-theme] #optionsBar.tdf-attach-has {
   padding-left: 62px !important;
 }
@@ -250,7 +250,9 @@
   display: none;
 }
 
-.tdf-attach-thumb img {
+.tdf-attach-thumb img,
+.tdf-attach-thumb video {
+  display: block;
   width: 44px;
   height: 44px;
   border-radius: 6px;
@@ -258,7 +260,8 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
-.tdf-attach-thumb.tdf-attach-busy img {
+.tdf-attach-thumb.tdf-attach-busy img,
+.tdf-attach-thumb.tdf-attach-busy video {
   opacity: 0.5;
 }
 
@@ -266,10 +269,17 @@
   color: #cf222e;
 }
 
-.tdf-attach-thumb.tdf-attach-failed img {
+.tdf-attach-thumb.tdf-attach-failed img,
+.tdf-attach-thumb.tdf-attach-failed video {
   outline: 2px solid #cf222e;
   outline-offset: -2px;
   opacity: 0.6;
+}
+
+/* The preview not in use; `display: block` above would otherwise override [hidden]. */
+.tdf-attach-thumb img[hidden],
+.tdf-attach-thumb video[hidden] {
+  display: none;
 }
 
 .tdf-attach-remove {

@@ -982,3 +982,106 @@ test('a failed block-state read with auto-collapse on shows blocks collapsed, sa
   assert.equal(await storedBlockStates(indexedDB), undefined, 'a state never read is not overwritten');
   await shell.window.happyDOM.close();
 });
+
+/** An indexedDB stand-in that records every touch, to prove the database is never opened. */
+function recordingIndexedDB() {
+  /** @type {string[]} */
+  const touched = [];
+  const db = new Proxy(
+    {},
+    {
+      get(_, key) {
+        touched.push(String(key));
+        return undefined;
+      },
+    },
+  );
+  return { db, touched };
+}
+
+const turnOff = (window) => window.localStorage.setItem('tdfChat2.off', '1');
+
+test('turned off, from <head>: no cloak, no overlay, no engine hook, no database; one switch link with both copies', async () => {
+  const { db, touched } = recordingIndexedDB();
+  /** @type {Record<string, unknown>} */
+  const engine = {};
+  const head = await headPage(await included(), db, {
+    beforeEval: (window) => {
+      turnOff(window);
+      for (const key of ['createMessageDiv', 'handleMessages']) engine[key] = window[key];
+    },
+    onload: [um('1', 'bob', 'original chat', '100')],
+  });
+  const { window, document } = head;
+  assert.equal(window.__tdfChat2Loaded, true);
+  assert.equal(cloaked(document), false, 'never cloaked');
+  assert.equal(document.getElementById(CLOAK_ID), null);
+
+  await head.ready();
+  window.eval(await bundled());
+  await head.load();
+  await settle();
+  assert.equal(document.getElementById('tdf-chat'), null);
+  assert.equal(document.getElementById('tdf-rail'), null);
+  for (const style of ['tdf-chat-style', 'tdf-composer-style', 'tdf-gallery-style', 'tdf-options-style', 'tdf-tagging-style']) {
+    assert.equal(document.getElementById(style), null, style);
+  }
+  assert.equal(document.documentElement.dataset.tdfTheme, undefined, 'no theme');
+  assert.equal(document.getElementById('chatContainer').style.visibility, '', 'the original chat shows');
+  assert.equal(document.getElementById('chatContainer').children.length, 1, 'the engine rendered its own line');
+  for (const [key, fn] of Object.entries(engine)) assert.equal(window[key], fn, `${key} is not wrapped`);
+  assert.deepEqual(touched, [], 'indexedDB never touched');
+  assert.equal(window.__tdfChat2Avatars, undefined);
+  for (const flag of ['Composer', 'Gallery', 'Options', 'Profile', 'Rail', 'Tagging']) {
+    assert.equal(window[`__tdfChat2${flag}`], undefined, `${flag} never started`);
+  }
+  const links = document.querySelectorAll('#tdf-chat2-switch');
+  assert.equal(links.length, 1);
+  assert.equal(links[0].textContent, 'Switch to Chat 2.0');
+  assert.deepEqual(banners(document), []);
+});
+
+test('turned off, the switch link turns 2.0 back on and the reload replays stored history with settings intact', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const on = await page(bundle, indexedDB);
+  on.poll(um('1', 'bob', 'kept', '100'), um('2', 'carol', 'also kept', '101'));
+  await settle();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('theme', 'dark');
+  db.close();
+
+  let reloads = 0;
+  const off = await page(bundle, indexedDB, {
+    beforeEval: (window) => {
+      turnOff(window);
+      window.location.reload = () => reloads++;
+    },
+  });
+  assert.equal(off.document.getElementById('tdf-chat'), null);
+  const link = off.document.getElementById('tdf-chat2-switch');
+  assert.ok(link, 'switch link shown');
+  link.dispatchEvent(new off.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  assert.equal(reloads, 1);
+  assert.equal(off.window.localStorage.getItem('tdfChat2.off'), null, 'recorded as on');
+
+  // The reload: the same storage, now without the flag.
+  const back = await page(bundle, indexedDB);
+  assert.deepEqual(shownIds(back.document), ['1', '2']);
+  assert.equal(back.document.documentElement.dataset.tdfTheme, 'dark');
+  assert.equal(back.document.getElementById('tdf-chat2-switch'), null);
+});
+
+test('localStorage that throws reads as on: the overlay starts as before', async () => {
+  const { document } = await page(await bundled(), new IDBFactory(), {
+    beforeEval: (window) =>
+      Object.defineProperty(window, 'localStorage', {
+        configurable: true,
+        get() {
+          throw new Error('SecurityError');
+        },
+      }),
+  });
+  assert.ok(document.getElementById('tdf-chat'), 'overlay mounted');
+  assert.equal(document.getElementById('tdf-chat2-switch'), null);
+});

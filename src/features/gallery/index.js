@@ -2,6 +2,7 @@
 // holds the double-load guard and the chat-page check.
 
 import { MAIN_DIV } from '../../core/parse.js';
+import { chat2Off } from '../../core/optOut.js';
 import { whenDomReady } from '../../core/ready.js';
 import { expectReady } from '../../core/reveal.js';
 import css from './gallery.css';
@@ -10,7 +11,7 @@ import { startGallery } from './start.js';
 const win = /** @type {any} */ (window);
 // Only the first copy of the script captures and registers (the __tdfChat2 prefix is the one
 // build.mjs's second-copy check sets).
-if (!win.__tdfChat2Gallery) {
+if (!win.__tdfChat2Gallery && !chat2Off(window)) {
   win.__tdfChat2Gallery = true;
   const done = expectReady('gallery');
   whenDomReady(document, () => {

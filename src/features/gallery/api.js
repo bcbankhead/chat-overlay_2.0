@@ -10,7 +10,12 @@ import { reportGalleryError } from './errors.js';
  * @property {string} id                 a duplicate id replaces the earlier registration
  * @property {string} label
  * @property {string} [icon]             an `<svg` markup string, or short text; the label otherwise
- * @property {(item: import('./store.js').ImageRecord) => void} onSelect
+ * @property {(item: import('./store.js').ImageRecord) => void | Promise<void>} onSelect
+ *   a returned Promise shows the button busy until it settles; a rejection marks it failed,
+ *   titled with the reason, and is reported
+ * @property {(item: import('./store.js').ImageRecord) => string | null} [disabled]
+ *   the reason the action is unavailable for this item, used as the button's title and
+ *   aria-label; null when it is enabled. Read each time the tile is drawn
  */
 
 /** @typedef {(item: import('./store.js').ImageRecord, el: HTMLElement) => void} GalleryItemDecoration */

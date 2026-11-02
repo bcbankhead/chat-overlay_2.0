@@ -1,16 +1,25 @@
 // The gallery's wiring, apart from index.js's double-load guard so a test can drive it.
 // Capture subscribes at once, so no live share or like is missed while the database opens; the
 // Gallery button joins the sidebar's icon row through registerRailPanel, and "View images"
-// joins every user's menu, opening the flyout filtered to that sender.
+// joins every user's menu, opening the flyout filtered to that sender. With Compress stored
+// images on, originals stored before are compressed in the background once the database opens,
+// and again from the moment the setting is switched on (TDF-0036). Each tile carries Re-post
+// (TDF-0038, TDF-0043), which puts its image in the chat input box, reached only through the
+// composer's api.js.
 
 import { openDb } from '../../core/db.js';
 import { onInbound, onLiked } from '../../core/events.js';
 import { createHistory } from '../../core/history.js';
-import { createSettings } from '../../core/settings.js';
+import { createSettings, followSetting, onSettingChange } from '../../core/settings.js';
 import { registerRailPanel, registerUserMenuAction } from '../rail/api.js';
+import { stageAttachment } from '../composer/api.js';
+import { registerGalleryItemAction } from './api.js';
 import { startCapture } from './capture.js';
-import { openImage, retryImage } from './open.js';
+import { fetchShare } from './fetchShare.js';
+import { isUnavailable, openImage, retryImage } from './open.js';
 import { reportGalleryError } from './errors.js';
+import { compressOriginal } from './reencode.js';
+import { createRepostAction } from './repost.js';
 import { createImageStore } from './store.js';
 import { makeThumb } from './thumb.js';
 import { renderGallery } from './view.js';
@@ -38,8 +47,11 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
   const storeReady = ready.then((r) => r.store);
   // Reported once, above; a flyout opened later reports it again from its own load.
   storeReady.catch(() => {});
+  // Read at each tile click (view.js), which cannot await; a failed open is reported above, a
+  // failed read through report.
+  const quickview = followSetting(ready.then((r) => r.settings), 'useMediaQuickview', report);
 
-  startCapture({
+  const capture = startCapture({
     ready,
     onInbound,
     onLiked,
@@ -51,6 +63,18 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
     report,
     // The form engine-hook.js compares to mUser, which is what images.user stores.
     self: () => String(/** @type {any} */ (win).userName ?? ''),
+    compress: (blob) => compressOriginal(blob),
+  });
+  const backfill = () => capture.backfill().catch(report);
+  ready.then(
+    async ({ settings }) => {
+      if (await settings.get('compressStoredImages')) await backfill();
+    },
+    // Reported once, above.
+    () => {},
+  ).catch(report);
+  onSettingChange((key, value) => {
+    if (key === 'compressStoredImages' && value === true) backfill();
   });
 
   if (!doc.getElementById('tdf-gallery-style')) {
@@ -60,21 +84,42 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
     doc.head.appendChild(style);
   }
 
+  /** @type {object | null} */
+  let view = null;
   const panel = registerRailPanel({
     id: 'gallery',
     title: 'Gallery',
     icon: GALLERY_ICON,
     order: 10,
-    render: (container, arg) =>
-      renderGallery(container, arg, {
+    render: (container, arg) => {
+      const current = {};
+      view = current;
+      const cleanup = renderGallery(container, arg, {
         doc,
         win,
         store: storeReady,
         report,
         open: (item) => openImage(item, { win, store: storeReady, fetch, report }),
         retry: (item) => retryImage(item, { win, store: storeReady, fetch }),
-      }),
+        quickview,
+      });
+      return () => {
+        if (view === current) view = null;
+        if (typeof cleanup === 'function') cleanup();
+      };
+    },
   });
+
+  // Re-post (TDF-0043): stages the tile's image in the chat input box, then closes the flyout.
+  registerGalleryItemAction(
+    createRepostAction({
+      stage: (file) => stageAttachment(file),
+      fetchShare: (id) => fetchShare(id, { base: win.location.href, fetch }),
+      isUnavailable,
+      closeGallery: () => panel.close(),
+      galleryView: () => view,
+    }),
+  );
 
   registerUserMenuAction({
     id: 'gallery-view-images',

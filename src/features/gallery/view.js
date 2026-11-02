@@ -9,12 +9,20 @@
 // server copy, which makes the tile openable again when it loads.
 // Tiles are kept by id across refreshes, so a star or a new capture does not replay the
 // fade-in, which gallery.css keys on the rail's `tdf-settled` (set once the flyout's slide ends).
+// With Use media quickview on (TDF-0035), a tile click opens the media popover over the tiles
+// shown, in display order; its zoom is the tile's own open, and an unavailable tile still
+// retries rather than opening.
+// Registered actions sit in a bar at the lower right, opposite the size chip. One whose
+// onSelect returns a Promise holds its button busy until it settles, then returns it to idle
+// or shows the failure's reason (TDF-0038); its state is kept by item id at module scope, so
+// a redraw or a reopened flyout keeps it, and a promise settling after close still records it.
 
 import { renderIcon } from '../rail/icons.js';
 import { listGalleryItemActions, listGalleryItemDecorations, onGalleryRegistryChange } from './api.js';
 import { clearGalleryErrors, listGalleryErrors, onGalleryErrors } from './errors.js';
+import { openLightbox } from './lightbox.js';
 import { isUnavailable } from './open.js';
-import { formatBytes, isLarge } from './shareParse.js';
+import { formatBytes, isLarge, shareUrl } from './shareParse.js';
 import { onImagesChange } from './store.js';
 
 const REMOVE_MS = 180;
@@ -41,6 +49,7 @@ const ICONS = {
  * @property {(item: import('./store.js').ImageRecord) => import('./open.js').OpenResult} open  synchronous, so the tab opens inside the click
  * @property {(item: import('./store.js').ImageRecord) => Promise<void>} retry  re-probes an unavailable image; rejects while it stays unavailable
  * @property {(err: unknown) => void} report
+ * @property {() => boolean} [quickview]  read at each tile click: whether it opens the media popover
  */
 
 /**
@@ -52,7 +61,51 @@ const ICONS = {
  * @property {HTMLElement} size    the size-on-disk chip
  * @property {import('./store.js').ImageRecord} item
  * @property {string | null} url   the thumbnail's object URL
+ * @property {Map<string, { button: HTMLButtonElement, action: import('./api.js').GalleryItemAction }>} actions
  */
+
+/**
+ * A registered action's state on one item, kept at module scope rather than by the tile or the
+ * view, since a registry change rebuilds every tile and the rail renders a new view on every
+ * open. No entry is idle.
+ * @typedef {{ state: 'busy' } | { state: 'failed', reason: string }} ActionState
+ */
+
+/** @type {Map<string, Map<string, ActionState>>} item id → action id → its state */
+const actionStates = new Map();
+/** @type {Set<(itemId: string, actionId: string) => void>} each mounted view's redraw of one action */
+const actionListeners = new Set();
+
+/**
+ * @param {string} itemId
+ * @param {string} actionId
+ * @returns {ActionState | undefined}
+ */
+function getActionState(itemId, actionId) {
+  return actionStates.get(itemId)?.get(actionId);
+}
+
+/**
+ * @param {string} itemId
+ * @param {string} actionId
+ * @param {ActionState | null} next  null returns it to idle
+ */
+function setActionState(itemId, actionId, next) {
+  let byAction = actionStates.get(itemId);
+  if (next) {
+    if (!byAction) actionStates.set(itemId, (byAction = new Map()));
+    byAction.set(actionId, next);
+  } else if (byAction) {
+    byAction.delete(actionId);
+    if (!byAction.size) actionStates.delete(itemId);
+  }
+  for (const listener of [...actionListeners]) listener(itemId, actionId);
+}
+
+/** Test only: forget every action's state, so one test's in-flight or failed action does not leak into the next. */
+export function resetGalleryActionStates() {
+  actionStates.clear();
+}
 
 /**
  * @param {HTMLElement} container  the rail's flyout body
@@ -60,7 +113,11 @@ const ICONS = {
  * @param {GalleryDeps} deps
  * @returns {() => void} cleanup
  */
-export function renderGallery(container, arg, { doc, win, store: storeReady, open, retry, report }) {
+export function renderGallery(
+  container,
+  arg,
+  { doc, win, store: storeReady, open, retry, report, quickview = () => false },
+) {
   const given = /** @type {GalleryArg} */ (arg && typeof arg === 'object' ? arg : undefined);
   /** @type {{ user: string, label: string } | null} */
   let userFilter = given?.user ? { user: given.user, label: given.label || given.user } : null;
@@ -71,6 +128,8 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, ope
   let tiles = new Map();
   /** @type {import('./store.js').ImageStore | null} */
   let store = null;
+  /** @type {{ close: () => void, layer: HTMLElement, urls: string[] } | null} the popover a tile opened */
+  let popover = null;
 
   const root = doc.createElement('div');
   root.className = 'tdf-gallery';
@@ -136,9 +195,161 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, ope
     chip.append(label, clear);
   }
 
+  /** @type {Set<string>} ids whose retry is running, so each retries once at a time */
+  const retrying = new Set();
+
+  /**
+   * @param {string} itemId
+   * @param {string} actionId
+   */
+  function redrawAction(itemId, actionId) {
+    const tile = tiles.get(itemId);
+    if (tile) applyAction(tile, actionId);
+  }
+  actionListeners.add(redrawAction);
+
+  /**
+   * Draw one action button from its item and state. aria-disabled, not disabled, so a click on
+   * it is still this button's to swallow rather than falling through to the tile's open.
+   * @param {Tile} tile
+   * @param {string} actionId
+   */
+  function applyAction(tile, actionId) {
+    const entry = tile.actions.get(actionId);
+    if (!entry) return;
+    const { button, action } = entry;
+    const st = getActionState(tile.item.id, actionId);
+    /** @type {string | null} */
+    let reason = null;
+    try {
+      reason = action.disabled?.(tile.item) ?? null;
+    } catch (err) {
+      report(err);
+    }
+    const blocked = Boolean(reason) || st?.state === 'busy';
+    button.setAttribute('aria-disabled', String(blocked));
+    button.classList.toggle('tdf-busy', st?.state === 'busy');
+    button.classList.toggle('tdf-failed', st?.state === 'failed');
+    if (st?.state === 'busy') button.setAttribute('aria-busy', 'true');
+    else button.removeAttribute('aria-busy');
+    const label = reason
+      ? reason
+      : st?.state === 'busy'
+        ? `${action.label}…`
+        : st?.state === 'failed'
+          ? `${action.label} failed: ${st.reason}`
+          : action.label;
+    button.title = label;
+    button.setAttribute('aria-label', label);
+  }
+
+  /**
+   * Run a registered action from its button. A synchronous action is called as before; a
+   * returned Promise holds the button busy, then idle or failed. Its settling is recorded
+   * even once this view has closed, so the next open draws it.
+   * @param {Tile} tile
+   * @param {string} actionId
+   */
+  function runAction(tile, actionId) {
+    const entry = tile.actions.get(actionId);
+    if (!entry || entry.button.getAttribute('aria-disabled') === 'true') return;
+    const { action } = entry;
+    const current = tiles.get(tile.item.id)?.item ?? tile.item;
+    const itemId = current.id;
+    /** @type {void | Promise<void>} */
+    let result;
+    try {
+      result = action.onSelect(current);
+    } catch (err) {
+      report(err);
+      return;
+    }
+    if (!result || typeof result.then !== 'function') return;
+    setActionState(itemId, actionId, { state: 'busy' });
+    result.then(
+      () => setActionState(itemId, actionId, null),
+      (err) => {
+        setActionState(itemId, actionId, { state: 'failed', reason: err instanceof Error ? err.message : String(err) });
+        report(err);
+      },
+    );
+  }
+
+  /**
+   * A tile's own action: open the image in a new tab, or retry one that is unavailable. Nothing
+   * is awaited before open: the browser blocks a tab opened outside the click. Its store change
+   * redraws the tile.
+   * @param {import('./store.js').ImageRecord} item
+   */
+  function activate(item) {
+    if (isUnavailable(item)) {
+      if (retrying.has(item.id)) return;
+      retrying.add(item.id);
+      retry(item)
+        .catch(report)
+        .finally(() => retrying.delete(item.id));
+      return;
+    }
+    try {
+      if (open(item) === 'blocked') report(new Error('gallery: the browser blocked the new tab'));
+    } catch (err) {
+      report(err);
+    }
+  }
+
+  /**
+   * The media popover at a tile, over the tiles shown, in display order. Zoom is the tile's
+   * own action on the record as it is when zoomed.
+   * @param {Tile} tile
+   */
+  function openQuickview(tile) {
+    endPopover();
+    const host = doc.getElementById('tdf-chat');
+    const shown = [...tiles.values()];
+    /** @type {Map<string, import('./store.js').ImageRecord>} */
+    const records = new Map(shown.map((t) => [t.item.id, t.item]));
+    /** @type {string[]} */
+    const urls = [];
+    const items = shown.map((t) => {
+      // The stored original when open.js would open it (a raster blob), else the share URL.
+      const blob = t.item.blob && !isUnavailable({ broken: true, blob: t.item.blob }) ? t.item.blob : null;
+      const src = blob ? win.URL.createObjectURL(blob) : shareUrl(t.item.id, win.location.href);
+      if (blob) urls.push(src);
+      return { id: t.item.id, src, thumb: t.url, kind: /** @type {const} */ ('unknown') };
+    });
+    const { close, layer } = openLightbox({
+      doc,
+      win,
+      host,
+      items,
+      index: Math.max(0, shown.indexOf(tile)),
+      zoom: (media) => {
+        const record = tiles.get(media.id)?.item ?? records.get(media.id);
+        if (record) activate(record);
+      },
+      report,
+      opener: tile.el,
+    });
+    popover = { close, layer, urls };
+  }
+
+  /** Close the popover this gallery opened, then give back the object URLs it was showing. */
+  function endPopover() {
+    if (!popover) return;
+    const { close, urls } = popover;
+    popover = null;
+    close();
+    for (const url of urls) win.URL.revokeObjectURL(url);
+  }
+
   /** @param {Tile} tile */
   function dropTile(tile) {
-    if (tile.url) win.URL.revokeObjectURL(tile.url);
+    if (popover && !popover.layer.isConnected) endPopover();
+    // An open popover's filmstrip still shows the thumbnail, so it is given back when that closes.
+    if (tile.url) {
+      if (popover) popover.urls.push(tile.url);
+      else win.URL.revokeObjectURL(tile.url);
+    }
     tile.el.remove();
   }
 
@@ -186,6 +397,9 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, ope
     star.innerHTML = ICONS.star;
     el.append(badge, unavailable, size, trash, star);
 
+    /** @type {Tile} */
+    const tile = { el, star, trash, badge, size, item, url, actions: new Map() };
+
     const actions = listGalleryItemActions();
     if (actions.length) {
       const bar = doc.createElement('div');
@@ -200,20 +414,13 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, ope
         renderIcon(b, action.icon || action.label);
         b.addEventListener('click', (event) => {
           event.stopPropagation();
-          const current = tiles.get(item.id)?.item ?? item;
-          try {
-            action.onSelect(current);
-          } catch (err) {
-            report(err);
-          }
+          runAction(tile, action.id);
         });
+        tile.actions.set(action.id, { button: b, action });
         bar.appendChild(b);
       }
       el.appendChild(bar);
     }
-
-    /** @type {Tile} */
-    const tile = { el, star, trash, badge, size, item, url };
 
     star.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -232,22 +439,14 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, ope
         });
       }, REMOVE_MS);
     });
-    // Nothing is awaited before open: the browser blocks a tab opened outside the click. An
-    // unavailable tile retries instead, once at a time; its store change redraws the tile.
-    let retrying = false;
+    // Quickview, read at each click, opens the popover; an unavailable tile retries either way.
     const openTile = () => {
-      if (isUnavailable(tile.item)) {
-        if (retrying) return;
-        retrying = true;
-        retry(tile.item)
-          .catch(report)
-          .finally(() => {
-            retrying = false;
-          });
+      if (isUnavailable(tile.item) || !quickview()) {
+        activate(tile.item);
         return;
       }
       try {
-        if (open(tile.item) === 'blocked') report(new Error('gallery: the browser blocked the new tab'));
+        openQuickview(tile);
       } catch (err) {
         report(err);
       }
@@ -298,6 +497,7 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, ope
     const trashLabel = item.favorite ? 'Favourites cannot be deleted' : 'Delete permanently';
     tile.trash.title = trashLabel;
     tile.trash.setAttribute('aria-label', trashLabel);
+    for (const actionId of tile.actions.keys()) applyAction(tile, actionId);
   }
 
   /** @param {import('./store.js').ImageStore} s */
@@ -365,6 +565,8 @@ export function renderGallery(container, arg, { doc, win, store: storeReady, ope
     offRegistry();
     offImages();
     offErrors();
+    actionListeners.delete(redrawAction);
+    endPopover();
     for (const tile of tiles.values()) dropTile(tile);
     tiles = new Map();
     root.remove();

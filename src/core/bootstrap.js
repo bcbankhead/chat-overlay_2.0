@@ -5,7 +5,9 @@
 // second copy touches nothing past those flags. The flag is set at once, but the start waits
 // for the chat markup (ready.js): the site include may run from <head>, before the body is
 // parsed. Placed there, the body is cloaked until the page is laid out and the core and every
-// feature have reported ready (reveal.js), then fades in (cloak.js).
+// feature have reported ready (reveal.js), then fades in (cloak.js). Turned off by the user
+// (optOut.js, TDF-0037), the script only adds the Switch to Chat 2.0 link: no cloak, no engine
+// hook, no database; the flag is set first, so a second copy adds no second link.
 
 import { createAvatarResolver } from './avatarResolver.js';
 import { createBlockState } from './blockState.js';
@@ -17,6 +19,7 @@ import { emitConfirmChange, onClearView, onDeleted } from './events.js';
 import { REPLAY_CEILING, createHistory } from './history.js';
 import { MAIN_DIV } from './parse.js';
 import { historyCutoff } from './retention.js';
+import { chat2Off, installSwitchLink } from './optOut.js';
 import { createSettings, onSettingChange } from './settings.js';
 import { mount, unmount } from './shell.js';
 import { FADE_CLASS, createTheme } from './theme.js';
@@ -27,6 +30,12 @@ import { createView } from './view.js';
 
 if (!(/** @type {any} */ (window).__tdfChat2Loaded)) {
   /** @type {any} */ (window).__tdfChat2Loaded = true;
+  if (chat2Off(window)) installSwitchLink(document, window);
+  else startOverlay();
+}
+
+/** The overlay's start: the cloak while loading, then the core once the markup is parsed. */
+function startOverlay() {
   // Registered before any feature's entry runs, so the gate cannot open before the core does.
   const coreReady = expectReady('core');
   // A tag just before </body> also runs while loading, but the chat has painted by then.

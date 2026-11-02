@@ -60,7 +60,9 @@ The build exits with an error (do not upload its output) if any file would use a
    reactions and settings — have finished starting. It then fades the page in, so members
    never see the original chat, or a half-styled overlay, on a slow load. If that has not
    happened after 8 seconds the page is shown anyway, and the browser console names what was
-   still starting. A tag at the end of the body does not hide the page at all.
+   still starting. A tag at the end of the body does not hide the page at all. A member who
+   has unchecked `Use Chat 2.0` in Settings gets none of this: the page is never hidden, and
+   the original chat shows with only a small `Switch to Chat 2.0` link in its corner.
 
    Wherever the tag sits, the script waits until the page has been parsed, then needs the
    chat container and the engine's globals (`roomID`, `handleMessages`, `receiveMesReq`, …).

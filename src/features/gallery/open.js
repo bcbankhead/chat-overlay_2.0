@@ -7,6 +7,7 @@
 // with the new reason. Saving is done from the tab.
 
 import { fetchShare } from './fetchShare.js';
+import { baseType } from './reencode.js';
 import { shareUrl } from './shareParse.js';
 
 /** How long a stored original's object URL outlives the open, so the new tab has loaded it. */
@@ -38,7 +39,7 @@ const reasonOf = (err) => (err instanceof Error ? err.message : String(err));
  * @returns {Blob | null}
  */
 function rasterBlob(item) {
-  const type = item.blob?.type.split(';')[0].trim().toLowerCase();
+  const type = item.blob && baseType(item.blob.type);
   return item.blob && type && RASTER_TYPES.has(type) ? item.blob : null;
 }
 

@@ -54,12 +54,13 @@
 }
 
 #tdf-rail .tdf-opt-field input:focus-visible,
-#tdf-rail .tdf-opt-sender select:focus-visible {
+#tdf-rail .tdf-opt-sender select:focus-visible,
+#tdf-rail .tdf-opt-switch:focus-visible {
   outline: 2px solid var(--tdf-link);
   outline-offset: 1px;
 }
 
-/* A switch drawn from a checkbox. */
+/* A switch drawn from a checkbox: every boolean setting in the flyout (TDF-0039). */
 #tdf-rail .tdf-opt-switch {
   appearance: none;
   position: relative;
@@ -98,17 +99,33 @@
   opacity: 0.5;
 }
 
-/* A plain checkbox row (Include my images), in the theme's link colour. */
-#tdf-rail .tdf-opt-check {
-  flex: none;
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  accent-color: var(--tdf-link);
-  cursor: pointer;
+/* Forced colours drop the switch's background colours, so draw its track and state in system
+   colours instead. */
+@media (forced-colors: active) {
+  #tdf-rail .tdf-opt-switch {
+    forced-color-adjust: none;
+    box-sizing: border-box;
+    background: Canvas;
+    border: 1px solid ButtonText;
+  }
+
+  #tdf-rail .tdf-opt-switch::after {
+    top: 1px;
+    left: 1px;
+    background: ButtonText;
+  }
+
+  #tdf-rail .tdf-opt-switch:checked {
+    background: Highlight;
+    border-color: Highlight;
+  }
+
+  #tdf-rail .tdf-opt-switch:checked::after {
+    background: HighlightText;
+  }
 }
 
-/* A checkbox row's hint shows only a failure. */
+/* A switch row's hint shows only a failure. */
 #tdf-rail .tdf-opt-row + .tdf-opt-hint:empty {
   display: none;
 }
@@ -130,7 +147,7 @@
   border-color: var(--tdf-link);
 }
 
-/* Delete messages by user: the stored senders. */
+/* Hide messages by user: the stored senders. */
 #tdf-rail .tdf-opt-sender select {
   min-width: 0;
   max-width: 60%;
