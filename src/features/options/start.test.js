@@ -72,12 +72,12 @@ test('start registers the Settings gear at the end of the icon row and opens the
   assert.equal(body.querySelector('.tdf-opt-title')?.textContent, 'Settings');
   // Unbuilt, the version is 'dev'; the build defines the real one.
   assert.equal(body.querySelector('.tdf-opt-version')?.textContent, 'vdev');
-  const history = [...body.querySelectorAll('.tdf-opt-field')].find((f) => /Chat history/.test(String(f.textContent)));
-  assert.equal(/** @type {HTMLInputElement} */ (history?.querySelector('input')).value, '30');
+  const history = [...body.querySelectorAll('label.tdf-opt-row')].find((r) => r.textContent === 'Chat history (last 100)');
+  assert.equal(/** @type {HTMLInputElement} */ (history?.querySelector('input')).checked, true, 'on by default');
   if (typeof cleanup === 'function') cleanup();
 });
 
-test('the default 30-day limit runs once the message view exists, deleting older lines', async (t) => {
+test('the fixed 30-day storage age runs once the message view exists, deleting older lines', async (t) => {
   const win = /** @type {any} */ (new Window());
   const doc = win.document;
   const indexedDB = await seeded();
@@ -100,17 +100,20 @@ test('a load-time limit that fails is shown at the top of the flyout', async () 
   const win = /** @type {any} */ (new Window());
   const doc = win.document;
   doc.body.innerHTML = '<div id="tdf-chat"></div>';
-  // A stored value no cutoff can be made from: the key range refuses NaN.
-  const indexedDB = await seeded({ retentionDays: 'x' });
+  // A clock no cutoff can be made from: the key range refuses NaN.
+  const indexedDB = await seeded();
   const logged = console.error;
+  const clock = Date.now;
   /** @type {unknown[][]} */
   const errors = [];
   console.error = (...args) => errors.push(args);
+  Date.now = () => NaN;
   try {
     startSettings({ win, doc, css: '', indexedDB });
     await until(() => errors.length > 0);
   } finally {
     console.error = logged;
+    Date.now = clock;
   }
   const body = doc.createElement('div');
   settingsPanel()?.render(body);

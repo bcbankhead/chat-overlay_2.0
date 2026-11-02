@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
 import { timeLabel } from '../src/core/group.js';
-import { DEFAULT_REPLAY_LIMIT } from '../src/core/history.js';
+import { HISTORY_ON } from '../src/core/retention.js';
 import { createView } from '../src/core/view.js';
 
 /**
@@ -67,7 +67,12 @@ function stubResize(win) {
 // The local day the pinned record times fall on (2 Jan 2026), so those times read HH:MM.
 const NOW = new Date(2026, 0, 2, 12, 0).getTime() / 1000;
 
-async function setup({ autoScroll = true, reducedMotion = false, globals = {}, now = () => NOW } = {}) {
+// The view's row ceiling in these tests, set apart from HISTORY_ON so the trim tests do not
+// move when that value is tuned; the trim's behaviour does not depend on its size. A null
+// ceiling leaves createView's own default.
+const CEILING = 200;
+
+async function setup({ autoScroll = true, reducedMotion = false, globals = {}, now = () => NOW, ceiling = CEILING, blocks, autoCollapse } = {}) {
   const win = new Window({ url: 'https://example.test/chat/' });
   const frames = stubFrames(win);
   const resizes = stubResize(win);
@@ -79,7 +84,7 @@ async function setup({ autoScroll = true, reducedMotion = false, globals = {}, n
   const whispered = [];
   win.whisperUser = (name) => whispered.push(name);
   const container = doc.getElementById('chatContainer');
-  const view = createView({ doc, win, container, css: '#tdf-chat{}', now });
+  const view = createView({ doc, win, container, css: '#tdf-chat{}', now, ...(ceiling === null ? {} : { ceiling }), blocks, autoCollapse });
   const root = doc.getElementById('tdf-chat');
   return { win, doc, view, root, container, whispered, frames, resizes };
 }
@@ -276,10 +281,10 @@ test('removing or trimming a group\'s first message leaves the next one heading 
   assert.equal(msgs(root)[0].dataset.id, '2');
 
   const capped = await setup();
-  capped.view.replay(Array.from({ length: DEFAULT_REPLAY_LIMIT }, (_, i) => rec({ id: `r${i}`, mTime: String(1000 + i) })));
+  capped.view.replay(Array.from({ length: CEILING }, (_, i) => rec({ id: `r${i}`, mTime: String(1000 + i) })));
   assert.equal(heads(capped.root)[0], 'h');
   assert.equal(heads(capped.root)[1], 'c');
-  capped.view.append(rec({ id: 'x', mTime: String(1000 + DEFAULT_REPLAY_LIMIT) }));
+  capped.view.append(rec({ id: 'x', mTime: String(1000 + CEILING) }));
   assert.equal(msgs(capped.root)[0].dataset.id, 'r1');
   assert.equal(heads(capped.root)[0], 'h');
 });
@@ -388,21 +393,21 @@ test('clear empties every row and notice, keeps the scrollbar, and leaves nothin
 
 test('the list is capped: the oldest entries are trimmed and lookups still work', async () => {
   const { view, root } = await setup();
-  const over = DEFAULT_REPLAY_LIMIT + 5;
-  view.replay(Array.from({ length: DEFAULT_REPLAY_LIMIT }, (_, i) => rec({ id: `r${i}`, mTime: `${i}` })));
+  const over = CEILING + 5;
+  view.replay(Array.from({ length: CEILING }, (_, i) => rec({ id: `r${i}`, mTime: `${i}` })));
   for (let i = 0; i < over; i++) {
     view.append(rec({ id: `local-${i}`, mTime: '', confirm: 'pending' }));
-    assert.ok(msgs(root).length <= DEFAULT_REPLAY_LIMIT);
+    assert.ok(msgs(root).length <= CEILING);
   }
   view.notice('Chat history not saved: x');
-  assert.equal(msgs(root).length, DEFAULT_REPLAY_LIMIT);
+  assert.equal(msgs(root).length, CEILING);
   assert.equal(root.querySelector('[data-id^="r"]'), null);
   assert.equal(root.querySelector('[data-id="local-0"]'), null);
 
   view.confirm('local-0', rec({ id: 'gone', mTime: '900' })); // trimmed: nothing to confirm
   view.removeByMTime('3'); // trimmed: nothing to remove
   assert.equal(root.querySelector('[data-id="gone"]'), null);
-  assert.equal(msgs(root).length, DEFAULT_REPLAY_LIMIT);
+  assert.equal(msgs(root).length, CEILING);
 
   view.confirm(`local-${over - 1}`, rec({ id: '77', mTime: '300' }));
   view.markUnconfirmed(`local-${over - 2}`);
@@ -1083,7 +1088,7 @@ test('every record row carries its replay order; a problem notice carries none',
 
 test('a backlog re-delivered after the replay is trimmed; the newest rows stay', async () => {
   const { view, root } = await setup();
-  const newest = Array.from({ length: DEFAULT_REPLAY_LIMIT }, (_, i) => rec({ id: `n${i}`, mTime: `${10_000 + i}` }));
+  const newest = Array.from({ length: CEILING }, (_, i) => rec({ id: `n${i}`, mTime: `${10_000 + i}` }));
   view.replay(newest);
   // The engine's first poll: the server backlog, oldest first, overlapping the replay.
   // The overlap re-delivers the replayed records themselves, under their own ids.
@@ -1092,7 +1097,7 @@ test('a backlog re-delivered after the replay is trimmed; the newest rows stay',
     view.place(rec({ id: mTime >= 10_000 ? `n${mTime - 10_000}` : `b${i}`, mTime: `${mTime}` }));
   }
   const shown = ids(root);
-  assert.equal(shown.length, DEFAULT_REPLAY_LIMIT);
+  assert.equal(shown.length, CEILING);
   assert.deepEqual(shown, newest.map((r) => r.id), 'exactly the replayed window, in order');
 });
 
@@ -1198,9 +1203,9 @@ test('a row inserted above does not move a user scrolled up', async () => {
 test('a problem notice at the top is trimmed first, ahead of a lower-ordered row below it', async () => {
   const { view, root } = await setup();
   view.notice('trouble');
-  view.replay(Array.from({ length: DEFAULT_REPLAY_LIMIT }, (_, i) => rec({ id: `r${i}`, mTime: `${1000 - i}` })));
+  view.replay(Array.from({ length: CEILING }, (_, i) => rec({ id: `r${i}`, mTime: `${1000 - i}` })));
   const shown = ids(root);
-  assert.equal(shown.length, DEFAULT_REPLAY_LIMIT);
+  assert.equal(shown.length, CEILING);
   assert.equal(shown[0], 'r0', 'the notice went, every record stayed');
   assert.ok(!root.querySelector('.tdf-notice'));
 });
@@ -1224,11 +1229,11 @@ test('a row placed into a list holding only notices goes below them', async () =
 
 test('an own message ordered by a slow clock survives the trim of a full list', async () => {
   const { view, root } = await setup();
-  view.replay(Array.from({ length: DEFAULT_REPLAY_LIMIT }, (_, i) => rec({ id: `n${i}`, mTime: `${10_000 + i}` })));
+  view.replay(Array.from({ length: CEILING }, (_, i) => rec({ id: `n${i}`, mTime: `${10_000 + i}` })));
   // Before the first poll: no skew correction, and the device clock reads far behind the server.
   view.append(rec({ id: 'own', mTime: '', user: 'alice', receivedAt: 1000, confirm: 'pending' }));
   const shown = ids(root);
-  assert.equal(shown.length, DEFAULT_REPLAY_LIMIT);
+  assert.equal(shown.length, CEILING);
   assert.equal(shown.at(-1), 'own');
   assert.equal(shown[0], 'n1', 'the oldest ordered row went instead');
   view.confirm('own', rec({ id: '9', mTime: '20000', user: 'alice' }));
@@ -1257,4 +1262,222 @@ test('a server message lands below an own message its confirm re-ordered later',
   view.confirm('local-1', rec({ id: '2', mTime: '130', user: 'alice' }));
   view.place(rec({ id: '3', mTime: '110' }));
   assert.deepEqual(ids(root), ['1', '2', '3']);
+});
+
+// The count bound (TDF-0033.5): the view keeps at most its ceiling, the newest by order, and no
+// day window ages anything out.
+
+test('by default the view keeps the newest HISTORY_ON rows, however old they were received', async () => {
+  const { view, root } = await setup({ ceiling: null });
+  view.replay(Array.from({ length: HISTORY_ON + 5 }, (_, i) => rec({ id: `r${i}`, mTime: `${1000 + i}`, receivedAt: i })));
+  const shown = ids(root);
+  assert.equal(shown.length, HISTORY_ON);
+  assert.equal(shown[0], 'r5', 'the oldest went first');
+  view.place(rec({ id: 'live', mTime: '5000', receivedAt: 10 ** 12 }));
+  assert.equal(ids(root).length, HISTORY_ON, 'a live message keeps the view at the bound');
+  assert.equal(ids(root)[0], 'r6');
+});
+
+test('rows received long ago stay while under the ceiling: there is no age trim', async () => {
+  const { view, root } = await setup();
+  view.replay([
+    rec({ id: 'old', mTime: '1000', receivedAt: 1 }),
+    rec({ id: 'new', mTime: '1001', receivedAt: 10 ** 12 }),
+  ]);
+  view.place(rec({ id: 'later', mTime: '1003', receivedAt: 10 ** 13 }));
+  assert.deepEqual(ids(root), ['old', 'new', 'later']);
+});
+
+test('live appends do not trim replayed rows under the ceiling', async () => {
+  // Past the old 200-row cap, which trimmed replayed rows as live ones arrived.
+  const { view, root } = await setup({ ceiling: 300 });
+  const replayed = Array.from({ length: 250 }, (_, i) => rec({ id: `r${i}`, mTime: `${1000 + i}`, receivedAt: 10 + i }));
+  view.replay(replayed);
+  for (let i = 0; i < 20; i++) view.append(rec({ id: `local-${i}`, mTime: '', confirm: 'pending', receivedAt: 5000 + i }));
+  assert.equal(msgs(root).length, 270);
+  assert.ok(root.querySelector('[data-id="r0"]'), 'the oldest replayed row is still shown');
+});
+
+test('the ceiling binds: the oldest rows go first', async () => {
+  const { view, root } = await setup({ ceiling: 250 });
+  view.replay(Array.from({ length: 260 }, (_, i) => rec({ id: `r${i}`, mTime: `${1000 + i}`, receivedAt: i })));
+  const shown = ids(root);
+  assert.equal(shown.length, 250, 'the ceiling, not the old 200');
+  assert.equal(shown[0], 'r10', 'the oldest went first');
+});
+
+// TDF-0033.2: server-history blocks.
+
+const blockRec = (over) => rec({ backlogBlock: 'load-1', source: 'backlog', ...over });
+const blockHead = (root) => root.querySelector('.tdf-block-head');
+
+test('a block header sits just before its first row in timestamp order, counting its rows', async () => {
+  const { view, root } = await setup();
+  view.replay([rec({ id: 'a', mTime: '100' })]);
+  view.place(blockRec({ id: 'b2', mTime: '60' }));
+  view.place(blockRec({ id: 'b1', mTime: '50' }));
+  const head = blockHead(root);
+  assert.ok(head);
+  assert.equal(head.textContent, "From the chat's server history (2)");
+  assert.equal(head.nextElementSibling.dataset.id, 'b1');
+  assert.equal(head.getAttribute('aria-expanded'), 'true', 'no stored state: expanded');
+  assert.deepEqual(msgs(root).map((el) => el.dataset.id), ['b1', 'b2', 'a']);
+  assert.equal(root.querySelectorAll('.tdf-block-head').length, 1);
+});
+
+test('clicking the header collapses its rows and tells the store; clicking again expands', async () => {
+  const toggles = [];
+  const { win, view, root } = await setup({ blocks: { collapsed: () => undefined, toggle: (id, c) => toggles.push([id, c]) } });
+  view.replay([blockRec({ id: 'b1', mTime: '50' }), blockRec({ id: 'b2', mTime: '60' }), rec({ id: 'a', mTime: '100' })]);
+  const head = blockHead(root);
+  head.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+  assert.deepEqual(
+    msgs(root).map((el) => el.classList.contains('tdf-block-hidden')),
+    [true, true, false],
+  );
+  head.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  assert.ok(msgs(root).every((el) => !el.classList.contains('tdf-block-hidden')));
+  assert.deepEqual(toggles, [
+    ['load-1', true],
+    ['load-1', false],
+  ]);
+});
+
+test('a block arrives in its stored state; rows placed later into it follow that state', async () => {
+  const { view, root } = await setup({ blocks: { collapsed: (id) => (id === 'load-1' ? true : undefined), toggle() {} } });
+  view.replay([blockRec({ id: 'b1', mTime: '50' }), blockRec({ id: 'x1', mTime: '55', backlogBlock: 'load-2' })]);
+  view.place(blockRec({ id: 'b2', mTime: '52' }));
+  const [h1, h2] = root.querySelectorAll('.tdf-block-head');
+  assert.equal(h1.getAttribute('aria-expanded'), 'false');
+  assert.equal(h2.getAttribute('aria-expanded'), 'true');
+  assert.ok(root.querySelector('[data-id="b2"]').classList.contains('tdf-block-hidden'));
+  assert.ok(!root.querySelector('[data-id="x1"]').classList.contains('tdf-block-hidden'));
+});
+
+test('the header follows removals and the trim, and goes with its last row', async () => {
+  const { view, root } = await setup({ ceiling: 3 });
+  view.replay([blockRec({ id: 'b1', mTime: '50' }), blockRec({ id: 'b2', mTime: '60' }), rec({ id: 'a', mTime: '100' })]);
+  assert.equal(blockHead(root).textContent, "From the chat's server history (2)");
+  view.append(rec({ id: 'local-1', mTime: '', confirm: 'pending' })); // trims b1, the oldest
+  assert.equal(blockHead(root).textContent, "From the chat's server history (1)");
+  assert.equal(blockHead(root).nextElementSibling.dataset.id, 'b2');
+  view.removeById(['b2']);
+  assert.equal(blockHead(root), null);
+  view.replay([blockRec({ id: 'b3', mTime: '40' })]);
+  view.clear();
+  assert.equal(blockHead(root), null);
+});
+
+test('the trim never takes a header for the oldest row', async () => {
+  const { view, root } = await setup({ ceiling: 2 });
+  view.replay([blockRec({ id: 'b1', mTime: '50' }), rec({ id: 'a', mTime: '100' })]);
+  view.append(rec({ id: 'local-1', mTime: '', confirm: 'pending' }));
+  assert.deepEqual(msgs(root).map((el) => el.dataset.id), ['a', 'local-1']);
+  assert.equal(blockHead(root), null);
+});
+
+test('a live row from the same sender after a block heads its own group', async () => {
+  const { win, view, root } = await setup();
+  view.replay([blockRec({ id: 'b1', mTime: '1000' }), blockRec({ id: 'b2', mTime: '1010' })]);
+  view.place(rec({ id: 'a', mTime: '1020' }));
+  assert.deepEqual(heads(root), ['h', 'c', 'h']);
+  blockHead(root).dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  assert.deepEqual(heads(root), ['h', 'c', 'h'], 'collapsing changes no grouping');
+});
+
+// TDF-0033.3: blocks arrive in the auto-collapse setting's state, and a tick collapses the open ones.
+/** A block store over a plain object, recording each toggle and each first settle. */
+function blockStore(stored = {}) {
+  const states = { ...stored };
+  const toggles = [];
+  const settles = [];
+  return {
+    states,
+    toggles,
+    settles,
+    collapsed: (id) => states[id],
+    toggle: (id, c) => {
+      states[id] = c;
+      toggles.push([id, c]);
+    },
+    settle: (id, c) => {
+      states[id] = c;
+      settles.push([id, c]);
+    },
+  };
+}
+
+test('a new block arrives collapsed when auto-collapse is on, expanded when off, and that state is stored', async () => {
+  for (const on of [true, false]) {
+    const blocks = blockStore();
+    const { view, root } = await setup({ blocks, autoCollapse: () => on });
+    view.replay([blockRec({ id: 'b1', mTime: '50' }), rec({ id: 'a', mTime: '100' })]);
+    assert.equal(blockHead(root).getAttribute('aria-expanded'), String(!on));
+    assert.equal(root.querySelector('[data-id="b1"]').classList.contains('tdf-block-hidden'), on);
+    assert.deepEqual(blocks.settles, [['load-1', on]], 'stored once, when first rendered');
+    assert.deepEqual(blocks.toggles, []);
+  }
+});
+
+test('a block keeps its first state when the setting changes later', async () => {
+  let on = false;
+  const blocks = blockStore();
+  const { view, root } = await setup({ blocks, autoCollapse: () => on });
+  view.replay([blockRec({ id: 'b1', mTime: '50' })]);
+  on = true;
+  view.place(blockRec({ id: 'b2', mTime: '60' }));
+  assert.equal(blockHead(root).getAttribute('aria-expanded'), 'true');
+  view.place(blockRec({ id: 'x1', mTime: '70', backlogBlock: 'load-2' }));
+  const [, h2] = root.querySelectorAll('.tdf-block-head');
+  assert.equal(h2.getAttribute('aria-expanded'), 'false', 'a block arriving after the change takes it');
+});
+
+test('a block with a stored state ignores auto-collapse', async () => {
+  const blocks = blockStore({ 'load-1': false });
+  const { view, root } = await setup({ blocks, autoCollapse: () => true });
+  view.replay([blockRec({ id: 'b1', mTime: '50' })]);
+  assert.equal(blockHead(root).getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(blocks.settles, []);
+});
+
+test('collapseAll collapses and stores every open block, leaving collapsed ones alone', async () => {
+  const blocks = blockStore({ 'load-2': true });
+  const { win, view, root } = await setup({ blocks });
+  view.replay([
+    blockRec({ id: 'b1', mTime: '50' }),
+    blockRec({ id: 'x1', mTime: '55', backlogBlock: 'load-2' }),
+    blockRec({ id: 'y1', mTime: '60', backlogBlock: 'load-3' }),
+    rec({ id: 'a', mTime: '100' }),
+  ]);
+  view.collapseAll();
+  const heads3 = [...root.querySelectorAll('.tdf-block-head')];
+  assert.deepEqual(heads3.map((h) => h.getAttribute('aria-expanded')), ['false', 'false', 'false']);
+  assert.deepEqual(
+    msgs(root).map((el) => el.classList.contains('tdf-block-hidden')),
+    [true, true, true, false],
+  );
+  assert.deepEqual(blocks.toggles, [
+    ['load-1', true],
+    ['load-3', true],
+  ]);
+  // A manual toggle after the tick wins, and a second collapseAll collapses it again.
+  heads3[0].dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  assert.equal(heads3[0].getAttribute('aria-expanded'), 'true');
+  view.collapseAll();
+  assert.equal(heads3[0].getAttribute('aria-expanded'), 'false');
+  assert.deepEqual(blocks.toggles.slice(2), [
+    ['load-1', false],
+    ['load-1', true],
+  ]);
+});
+
+test('collapseAll with no blocks open stores nothing', async () => {
+  const blocks = blockStore({ 'load-1': true });
+  const { view } = await setup({ blocks });
+  view.collapseAll();
+  view.replay([blockRec({ id: 'b1', mTime: '50' })]);
+  view.collapseAll();
+  assert.deepEqual(blocks.toggles, []);
 });

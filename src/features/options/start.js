@@ -61,7 +61,8 @@ export function startSettings({ win, doc, css, indexedDB = win.indexedDB }) {
   ready
     .then(async ({ settings, limits }) => {
       await whenChatShown(doc, win);
-      await limits.pruneHistory(await settings.get('retentionDays'));
+      // Bootstrap retired any stored Chat history (days) value before the chat showed.
+      await limits.pruneHistory(await settings.get('historyCount'));
       await limits.pruneGallery(await settings.get('galleryLimitMB'));
     })
     .catch((err) => {

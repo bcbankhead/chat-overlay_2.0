@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
+import { IDBFactory, IDBKeyRange, IDBObjectStore } from 'fake-indexeddb';
 import { Window } from 'happy-dom';
 import { build } from '../build.mjs';
 import { CLOAK_FADE_MS, CLOAK_ID, CLOAK_MS } from '../src/core/cloak.js';
@@ -243,11 +243,11 @@ test('a message the engine renders during startup is shown after the replay and 
   assert.deepEqual(shownIds(third.document), ['1', '2']);
 });
 
-test('with Chat history at 0 days messages are shown but never stored, and nothing replays', async () => {
+test('with Chat history off messages are shown but never stored, and nothing replays', async () => {
   const bundle = await bundled();
   const indexedDB = new IDBFactory();
   const db = await openDb({ indexedDB });
-  await createSettings(db).set('retentionDays', 0);
+  await createSettings(db).set('historyCount', 0);
   const count = () =>
     new Promise((resolve) => {
       const req = db.transaction('messages').objectStore('messages').count();
@@ -260,7 +260,7 @@ test('with Chat history at 0 days messages are shown but never stored, and nothi
   assert.deepEqual(shownIds(first.document), ['1']);
   assert.equal(await count(), 0);
 
-  // A line stored before the 0 was set is not replayed.
+  // A line stored before Chat history was turned off is not replayed.
   const t = db.transaction('messages', 'readwrite');
   t.objectStore('messages').put({
     id: 'legacy', roomID: '1', mTime: '99', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '',
@@ -272,11 +272,119 @@ test('with Chat history at 0 days messages are shown but never stored, and nothi
   assert.deepEqual(shownIds(second.document), []);
 });
 
+test('with Chat history on, replay shows the newest 100 lines and a live message keeps the view at 100, with no day window (TDF-0033.5)', async () => {
+  const DAY = 86_400_000;
+  let clock = Date.now();
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('historyCount', 100);
+  const base = { roomID: '1', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '', size: '', family: '', text: 'hi', ircFlag: '0', lineBreakFlag: '0' };
+  const t = db.transaction('messages', 'readwrite');
+  // More than 100 lines, received over the last 24 days: inside the 30-day storage age.
+  for (let i = 0; i < 120; i++) {
+    const mTime = String(1000 + i);
+    t.objectStore('messages').put({ ...base, id: `m${i}`, mTime, receivedAt: clock - 24 * DAY + i * 4 * 3_600_000, orderKey: Number(mTime) * 1000 });
+  }
+  await new Promise((resolve) => (t.oncomplete = resolve));
+  db.close();
+
+  const { document, poll } = await page(await bundled(), indexedDB, {
+    beforeEval: (window) => {
+      window.Date.now = () => clock;
+    },
+  });
+  // 120 records take fake-indexeddb longer than one settle to read.
+  for (let i = 0; i < 100 && shownIds(document).length === 0; i++) await settle();
+  const replayed = shownIds(document);
+  assert.equal(replayed.length, 100, 'the newest 100 lines replay');
+  assert.equal(replayed[0], 'm20');
+  // Two days on, a day window would have aged rows out; only the count trims, one for one.
+  clock += 2 * DAY;
+  poll(um('9999', 'carol', 'live', '2000'));
+  await settle();
+  const shown = shownIds(document);
+  assert.equal(shown.length, 100);
+  assert.equal(shown[0], 'm21');
+  assert.equal(shown.at(-1), '9999');
+});
+
+test('replay skips lines past the 30-day storage age, before the load-time prune runs (TDF-0033.5)', async () => {
+  const DAY = 86_400_000;
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('historyCount', 100);
+  const base = { roomID: '1', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '', size: '', family: '', text: 'hi', ircFlag: '0', lineBreakFlag: '0' };
+  const t = db.transaction('messages', 'readwrite');
+  for (let i = 0; i < 6; i++) {
+    const mTime = String(1000 + i);
+    // The newest three by message time were received 40 days ago: past the storage age.
+    const receivedAt = Date.now() - (i < 3 ? 1 : 40) * DAY + i * 1000;
+    t.objectStore('messages').put({ ...base, id: `m${i}`, mTime, receivedAt, orderKey: Number(mTime) * 1000 });
+  }
+  await new Promise((resolve) => (t.oncomplete = resolve));
+  db.close();
+
+  // Every row the view ever adds, since the load-time prune would remove an old one moments later.
+  /** @type {Set<string>} */
+  const everShown = new Set();
+  const { document } = await page(await bundled(), indexedDB, {
+    beforeEval: (window) => {
+      new window.MutationObserver(() => {
+        for (const id of shownIds(window.document)) everShown.add(id);
+      }).observe(window.document.body, { childList: true, subtree: true });
+    },
+  });
+  for (let i = 0; i < 20 && shownIds(document).length === 0; i++) await settle();
+  await settle();
+  assert.deepEqual(shownIds(document), ['m0', 'm1', 'm2']);
+  assert.deepEqual([...everShown].sort(), ['m0', 'm1', 'm2'], 'no old line was ever shown');
+});
+
+for (const [label, days, replays] of /** @type {const} */ ([
+  ['a stored 0 days', 0, false],
+  ['a stored 1 day', 1, true],
+  ['a legacy no-limit days value', null, true],
+  ['a stored days value no cutoff can be made from', 'x', true],
+])) {
+  test(`${label} migrates to Chat history ${replays ? 'on' : 'off'} and is retired (TDF-0033.5)`, async () => {
+    const DAY = 86_400_000;
+    const indexedDB = new IDBFactory();
+    const db = await openDb({ indexedDB });
+    const s = db.transaction('settings', 'readwrite');
+    s.objectStore('settings').put({ key: 'retentionDays', value: days });
+    await new Promise((resolve) => (s.oncomplete = resolve));
+    const base = { roomID: '1', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '', size: '', family: '', text: 'hi', ircFlag: '0', lineBreakFlag: '0' };
+    const t = db.transaction('messages', 'readwrite');
+    // Ten days old: outside the window a 1-day setting set, inside the 30-day storage age.
+    for (let i = 0; i < 5; i++) {
+      const mTime = String(1000 + i);
+      t.objectStore('messages').put({ ...base, id: `m${i}`, mTime, receivedAt: Date.now() - 10 * DAY + i * 1000, orderKey: Number(mTime) * 1000 });
+    }
+    await new Promise((resolve) => (t.oncomplete = resolve));
+    db.close();
+
+    const { document, window } = await page(await bundled(), indexedDB);
+    for (let i = 0; i < 20 && shownIds(document).length === 0 && replays; i++) await settle();
+    await settle();
+    assert.deepEqual(shownIds(document), replays ? ['m0', 'm1', 'm2', 'm3', 'm4'] : []);
+    const after = await openDb({ indexedDB });
+    const rows = await new Promise((resolve) => {
+      const req = after.transaction('settings').objectStore('settings').getAll();
+      req.onsuccess = () => resolve(req.result);
+    });
+    after.close();
+    const keys = rows.map((r) => r.key);
+    assert.ok(!keys.includes('retentionDays'), 'retentionDays deleted');
+    assert.deepEqual(rows.find((r) => r.key === 'historyCount'), { key: 'historyCount', value: replays ? 100 : 0 });
+    await window.happyDOM.close();
+  });
+}
+
 test('a stored record that will not render is skipped with a notice; the rest replay', async () => {
   const indexedDB = new IDBFactory();
   const db = await openDb({ indexedDB });
   const base = { roomID: '1', mTime: '', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '', size: '', family: '', ircFlag: '0', lineBreakFlag: '0' };
-  // Recent, so the default 30-day Chat history limit (features/options) keeps them. Seeded
+  // Recent, so the fixed 30-day storage age (features/options) keeps them. Seeded
   // raw, so each carries the orderKey history would compute (TDF-0031).
   const now = Date.now();
   const t = db.transaction('messages', 'readwrite');
@@ -658,6 +766,258 @@ test('placed at the end of the body the include still mounts without a cloak', a
   assert.equal(added, false, 'no cloak was ever inserted');
 });
 
+// TDF-0033.2: server-history blocks, through the built bundle.
+
+/** Poll as the engine's first, history poll: `showHistory` set on entry, cleared by its end. */
+const historyPoll = (shell, ...raw) => {
+  shell.window.showHistory = 1;
+  shell.poll(...raw);
+  shell.window.showHistory = 0;
+};
+const blockHeadOf = (document) => document.querySelector('#tdf-chat .tdf-block-head');
+const storedBlockStates = async (indexedDB) => {
+  const db = await openDb({ indexedDB });
+  const row = await new Promise((resolve) => {
+    const req = db.transaction('settings').objectStore('settings').get('serverHistoryBlocks');
+    req.onsuccess = () => resolve(req.result);
+  });
+  db.close();
+  return row?.value;
+};
+
+test('the history poll shows as one block whose collapsed state survives a reload', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const first = await page(bundle, indexedDB);
+  historyPoll(first, um('1', 'bob', 'old', '100'), um('2', 'carol', 'older', '101'));
+  first.poll(um('3', 'bob', 'live', '102'));
+  await settle();
+  const head = blockHeadOf(first.document);
+  assert.equal(head.textContent, "From the chat's server history (2)");
+  assert.equal(head.nextElementSibling.dataset.id, '1');
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  head.click();
+  await settle();
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+  const block = first.document.querySelector('#tdf-chat [data-id="1"]').dataset.block;
+  assert.deepEqual(await storedBlockStates(indexedDB), { [block]: true });
+
+  // A reload replays the block collapsed; this load's own history poll re-delivers nothing new.
+  const second = await page(bundle, indexedDB);
+  historyPoll(second, um('1', 'bob', 'old', '100'));
+  await settle();
+  const heads = second.document.querySelectorAll('#tdf-chat .tdf-block-head');
+  assert.equal(heads.length, 1, 'a re-delivered record keeps its first block');
+  assert.equal(heads[0].getAttribute('aria-expanded'), 'false');
+  assert.ok(second.document.querySelector('#tdf-chat [data-id="2"]').classList.contains('tdf-block-hidden'));
+  assert.ok(!second.document.querySelector('#tdf-chat [data-id="3"]').classList.contains('tdf-block-hidden'));
+  for (const { window } of [first, second]) await window.happyDOM.close();
+});
+
+test('with Chat history off a block still toggles, but its state is not stored', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('historyCount', 0);
+  db.close();
+  const shell = await page(bundle, indexedDB);
+  historyPoll(shell, um('1', 'bob', 'old', '100'));
+  await settle();
+  const head = blockHeadOf(shell.document);
+  head.click();
+  await settle();
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+  assert.equal(await storedBlockStates(indexedDB), undefined);
+  await shell.window.happyDOM.close();
+});
+
+/**
+ * Make one IDBObjectStore method throw for one row (the block-state row by default) until the
+ * returned restore runs.
+ * @param {'get' | 'put'} method
+ * @param {string} [row]
+ */
+const failBlockState = (method, row = 'serverHistoryBlocks') => {
+  const original = IDBObjectStore.prototype[method];
+  IDBObjectStore.prototype[method] = function (...args) {
+    const key = method === 'get' ? args[0] : args[0]?.key;
+    if (key === row) throw new DOMException('injected', 'UnknownError');
+    return original.apply(this, args);
+  };
+  return () => {
+    IDBObjectStore.prototype[method] = original;
+  };
+};
+const noticeTexts = (document) => [...document.querySelectorAll('#tdf-chat .tdf-notice')].map((el) => el.textContent);
+
+test('a failed block-state read shows blocks expanded with a notice saying why', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const restore = failBlockState('get');
+  let shell;
+  try {
+    shell = await page(bundle, indexedDB);
+    historyPoll(shell, um('1', 'bob', 'old', '100'));
+    await settle();
+  } finally {
+    restore();
+  }
+  assert.ok(
+    noticeTexts(shell.document).some((t) => /Server history blocks shown expanded: their state was not read \(injected\)/.test(t)),
+  );
+  const head = blockHeadOf(shell.document);
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  head.click();
+  await settle();
+  assert.equal(head.getAttribute('aria-expanded'), 'false', 'blocks still toggle');
+  await shell.window.happyDOM.close();
+});
+
+test('a failed block-state write raises a notice, and the block still toggles', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const shell = await page(bundle, indexedDB);
+  historyPoll(shell, um('1', 'bob', 'old', '100'));
+  await settle();
+  const head = blockHeadOf(shell.document);
+  // The throw lands in the read-modify-write callback, so the transaction aborts (AbortError).
+  const restore = failBlockState('put');
+  try {
+    head.click();
+    await settle();
+  } finally {
+    restore();
+  }
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+  assert.ok(noticeTexts(shell.document).some((t) => /Server history block state not saved: \S/.test(t)));
+  // Only the block's first state, settled expanded when it rendered (TDF-0033.3), was stored;
+  // the failed collapse never reached the store.
+  assert.deepEqual(Object.values((await storedBlockStates(indexedDB)) ?? {}), [false]);
+  await shell.window.happyDOM.close();
+});
+
+test('a failed read of Collapse server history automatically starts anyway, blocks expanded, and says why', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('autoCollapseServerHistory', true);
+  db.close();
+  const restore = failBlockState('get', 'autoCollapseServerHistory');
+  let shell;
+  try {
+    shell = await page(bundle, indexedDB);
+    historyPoll(shell, um('1', 'bob', 'old', '100'));
+    await settle();
+  } finally {
+    restore();
+  }
+  assert.ok(
+    noticeTexts(shell.document).some((t) =>
+      /Collapse server history automatically not read; blocks arrive expanded \(injected\)/.test(t),
+    ),
+  );
+  assert.equal(blockHeadOf(shell.document).getAttribute('aria-expanded'), 'true');
+  assert.equal(await storedBlockStates(indexedDB), undefined, 'a fallback state is not stored as a choice');
+  await shell.window.happyDOM.close();
+});
+
+test('with Collapse server history automatically stored on, a new block arrives collapsed and is stored so', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('autoCollapseServerHistory', true);
+  db.close();
+  const shell = await page(bundle, indexedDB);
+  historyPoll(shell, um('1', 'bob', 'old', '100'));
+  await settle();
+  assert.equal(blockHeadOf(shell.document).getAttribute('aria-expanded'), 'false');
+  assert.deepEqual(Object.values((await storedBlockStates(indexedDB)) ?? {}), [true]);
+  await shell.window.happyDOM.close();
+});
+
+/** Open the rail's Settings flyout and return the checkbox labelled `label`. */
+const settingsBox = async (shell, label = 'Collapse server history automatically') => {
+  shell.document.querySelector('.tdf-rail-icon-btn[data-panel="settings"]').click();
+  await settle();
+  const row = [...shell.document.querySelectorAll('label.tdf-opt-row')].find((r) => r.textContent === label);
+  return row.querySelector('input');
+};
+const autoCollapseBox = (shell) => settingsBox(shell);
+const withRail = {
+  body: '<div id="chatContainer" style="height:300px"></div><input type="checkbox" id="autoScrollID" checked><div id="userContainer"></div>',
+};
+
+test('ticking another Settings checkbox leaves the open blocks expanded', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const shell = await page(bundle, indexedDB, withRail);
+  historyPoll(shell, um('1', 'bob', 'old', '100'));
+  await settle();
+  const box = await settingsBox(shell, 'Include my images');
+  box.checked = true;
+  box.dispatchEvent(new shell.window.Event('change'));
+  await settle();
+  assert.equal(blockHeadOf(shell.document).getAttribute('aria-expanded'), 'true');
+  await shell.window.happyDOM.close();
+});
+
+test('ticking Collapse server history automatically collapses the open blocks live; unticking leaves them', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  // A user list, so the rail mounts and its Settings flyout opens.
+  const shell = await page(bundle, indexedDB, {
+    body: '<div id="chatContainer" style="height:300px"></div><input type="checkbox" id="autoScrollID" checked><div id="userContainer"></div>',
+  });
+  historyPoll(shell, um('1', 'bob', 'old', '100'));
+  await settle();
+  const head = blockHeadOf(shell.document);
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  const box = await autoCollapseBox(shell);
+  assert.equal(box.checked, false, 'off on a fresh profile');
+  box.checked = true;
+  box.dispatchEvent(new shell.window.Event('change'));
+  await settle();
+  assert.equal(head.getAttribute('aria-expanded'), 'false', 'collapsed without a reload');
+  assert.deepEqual(Object.values((await storedBlockStates(indexedDB)) ?? {}), [true]);
+  // A hand toggle after the tick wins; unticking changes no block.
+  head.click();
+  await settle();
+  box.checked = false;
+  box.dispatchEvent(new shell.window.Event('change'));
+  await settle();
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  head.click();
+  await settle();
+  box.checked = false;
+  box.dispatchEvent(new shell.window.Event('change'));
+  await settle();
+  assert.equal(head.getAttribute('aria-expanded'), 'false', 'unticking does not expand a block left collapsed');
+  await shell.window.happyDOM.close();
+});
+
+test('a failed block-state read with auto-collapse on shows blocks collapsed, says so, and stores no first state', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('autoCollapseServerHistory', true);
+  db.close();
+  const restore = failBlockState('get');
+  let shell;
+  try {
+    shell = await page(bundle, indexedDB);
+    historyPoll(shell, um('1', 'bob', 'old', '100'));
+    await settle();
+  } finally {
+    restore();
+  }
+  assert.ok(
+    noticeTexts(shell.document).some((t) => /Server history blocks shown collapsed: their state was not read \(injected\)/.test(t)),
+  );
+  assert.equal(blockHeadOf(shell.document).getAttribute('aria-expanded'), 'false');
+  assert.equal(await storedBlockStates(indexedDB), undefined, 'a state never read is not overwritten');
+  await shell.window.happyDOM.close();
+});
+
 /** An indexedDB stand-in that records every touch, to prove the database is never opened. */
 function recordingIndexedDB() {
   /** @type {string[]} */
@@ -759,4 +1119,51 @@ test('localStorage that throws reads as on: the overlay starts as before', async
   });
   assert.ok(document.getElementById('tdf-chat'), 'overlay mounted');
   assert.equal(document.getElementById('tdf-chat2-switch'), null);
+});
+
+// TDF-0033.5: Chat history (last 100), turned off and on through the built bundle's Settings.
+
+test('unticking Chat history deletes saved lines from storage and the view, stores nothing new, and a reload replays nothing; ticking it stores again', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const stored = async () => {
+    const db = await openDb({ indexedDB });
+    const n = await new Promise((resolve) => {
+      const req = db.transaction('messages').objectStore('messages').count();
+      req.onsuccess = () => resolve(req.result);
+    });
+    db.close();
+    return n;
+  };
+  const shell = await page(bundle, indexedDB, withRail);
+  shell.poll(um('1', 'bob', 'kept', '100'), um('2', 'carol', 'kept too', '101'));
+  await settle();
+  assert.equal(await stored(), 2);
+  const box = await settingsBox(shell, 'Chat history (last 100)');
+  assert.equal(box.checked, true, 'on for a member who never set it');
+
+  box.checked = false;
+  box.dispatchEvent(new shell.window.Event('change'));
+  for (let i = 0; i < 20 && (await stored()) > 0; i++) await settle();
+  assert.equal(await stored(), 0, 'saved lines deleted');
+  assert.deepEqual(shownIds(shell.document), [], 'and gone from the view');
+
+  shell.poll(um('3', 'dave', 'live', '102'));
+  await settle();
+  assert.deepEqual(shownIds(shell.document), ['3'], 'live chat still shows');
+  assert.equal(await stored(), 0, 'but is not stored');
+  await shell.window.happyDOM.close();
+
+  const again = await page(bundle, indexedDB, withRail);
+  await settle();
+  assert.deepEqual(shownIds(again.document), [], 'a reload replays nothing');
+  const on = await settingsBox(again, 'Chat history (last 100)');
+  assert.equal(on.checked, false);
+  on.checked = true;
+  on.dispatchEvent(new again.window.Event('change'));
+  await settle();
+  again.poll(um('4', 'erin', 'stored again', '103'));
+  await settle();
+  assert.equal(await stored(), 1, 'ticking it on stores live lines again, without a reload');
+  await again.window.happyDOM.close();
 });

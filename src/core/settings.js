@@ -3,10 +3,15 @@
 // listeners, so core follows a value a feature's own connection wrote.
 
 import { STORES, done, request } from './db.js';
+import { countFromDays, parseHistoryCount } from './retention.js';
+
+/** The retired Chat history (days) key; migrateHistory() turns it into `historyCount`. */
+const RETIRED_RETENTION_KEY = 'retentionDays';
 
 export const DEFAULTS = Object.freeze({
-  // Chat history kept, in days; 0 keeps none. A stored legacy null keeps everything.
-  retentionDays: /** @type {number | null} */ (30),
+  // Chat history (last 100, TDF-0033.5): 100 replays the newest 100 lines, 0 keeps and replays
+  // none. Read through parseHistoryCount, so nothing else is ever handed on.
+  historyCount: /** @type {import('./retention.js').HistoryCount} */ (100),
   // The gallery's size limit in MB; null is no limit.
   galleryLimitMB: /** @type {number | null} */ (null),
   storeImagesOffline: false,
@@ -19,6 +24,8 @@ export const DEFAULTS = Object.freeze({
   likeIntervalSeconds: 15,
   // The chosen theme; null follows the system until the first toggle.
   theme: /** @type {'light' | 'dark' | null} */ (null),
+  // Whether server-history blocks arrive collapsed; ticking it collapses the open ones (TDF-0033.3).
+  autoCollapseServerHistory: false,
   // Whether a shared image or a gallery tile opens in the in-chat media popover (TDF-0035)
   // rather than a new tab.
   useMediaQuickview: true,
@@ -50,7 +57,30 @@ export function createSettings(db) {
     async get(key) {
       const t = db.transaction(STORES.settings, 'readonly');
       const row = await request(t.objectStore(STORES.settings).get(key));
-      return row === undefined ? DEFAULTS[key] : row.value;
+      const value = row === undefined ? DEFAULTS[key] : row.value;
+      return key === 'historyCount' ? /** @type {(typeof DEFAULTS)[K]} */ (parseHistoryCount(value)) : value;
+    },
+
+    /**
+     * Retire a stored Chat history (days) value, once (TDF-0033.5): where `historyCount` is not
+     * stored yet it becomes countFromDays(days), then `retentionDays` is deleted. One
+     * transaction, so a second caller finds nothing left to do. Announces nothing: it runs
+     * before the first read.
+     */
+    async migrateHistory() {
+      const t = db.transaction(STORES.settings, 'readwrite');
+      const store = t.objectStore(STORES.settings);
+      // Written inside the request callbacks, so the transaction is still active.
+      const old = store.get(RETIRED_RETENTION_KEY);
+      old.onsuccess = () => {
+        if (old.result === undefined) return;
+        const current = store.get('historyCount');
+        current.onsuccess = () => {
+          if (current.result === undefined) store.put({ key: 'historyCount', value: countFromDays(old.result.value) });
+          store.delete(RETIRED_RETENTION_KEY);
+        };
+      };
+      await done(t);
     },
 
     /**

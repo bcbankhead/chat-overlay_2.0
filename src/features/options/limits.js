@@ -1,13 +1,16 @@
-// The history and gallery limits of Media and Gallery Settings, applied: chat history pruned by age over the `messages` receivedAt index,
-// cleared outright, or deleted by sender over the user index; and the gallery kept under its
-// size by TDF-0009.5's store. Deleted lines are announced through core's onDeleted, so the open
-// view drops their rows and tagging, the tags store's only writer, re-derives without them. No
-// deletion here touches images or tags. Limits run on load and on commit; Clear history and
-// delete-by-sender run when the user confirms them.
+// The history and gallery limits of Settings, applied: chat history pruned by the fixed storage
+// age over the `messages` receivedAt index (all of it with Chat history off), cleared outright,
+// or deleted by sender over the user index; and the gallery kept under its size by TDF-0009.5's
+// store. Deleted lines are announced through core's onDeleted, so the open view drops their rows
+// and tagging, the tags store's only writer, re-derives without them. No deletion here touches
+// images or tags. Limits run on load and on commit; Clear history and delete-by-sender run when
+// the user confirms them.
 
+import { createBlockState } from '../../core/blockState.js';
 import { STORES, done, request } from '../../core/db.js';
+import { describeError } from '../../core/errors.js';
 import { emitDeleted } from '../../core/events.js';
-import { historyCutoff, megabytesToBytes } from './selectors.js';
+import { megabytesToBytes, storageCutoff } from './selectors.js';
 
 /**
  * The gallery store's size-limit surface (TDF-0009.5, `src/features/gallery/store.js`). It
@@ -24,6 +27,8 @@ import { historyCutoff, megabytesToBytes } from './selectors.js';
  * @param {{ db: IDBDatabase, gallery: GalleryLimit, now?: () => number }} deps
  */
 export function createLimits({ db, gallery, now = Date.now }) {
+  const blockState = createBlockState(db);
+
   /**
    * Delete the lines in `range` of `indexName` (every line when null) in one transaction; then
    * announce them, so they leave the open view and their tags.
@@ -37,6 +42,8 @@ export function createLimits({ db, gallery, now = Date.now }) {
     const source = indexName === null ? store : store.index(indexName);
     /** @type {string[]} */
     const ids = [];
+    /** @type {Set<string>} server-history blocks a deleted line belonged to */
+    const touched = new Set();
     await new Promise((resolve, reject) => {
       const req = source.openCursor(range);
       req.onerror = () => reject(req.error);
@@ -44,37 +51,58 @@ export function createLimits({ db, gallery, now = Date.now }) {
         const cursor = req.result;
         if (!cursor) return resolve(undefined);
         ids.push(/** @type {string} */ (cursor.primaryKey));
+        const block = cursor.value?.backlogBlock;
+        if (block) touched.add(block);
         cursor.delete();
         cursor.continue();
       };
     });
     await done(t);
     if (ids.length) emitDeleted(ids);
+    try {
+      await forgetBlocks(range === null ? null : touched);
+    } catch (err) {
+      // The lines are gone and announced; say so, so the failure is not read as theirs.
+      throw new Error(`lines deleted, but their server-history block state was not cleared: ${describeError(err)}`);
+    }
     return ids;
+  };
+
+  /**
+   * Drop the stored collapsed state of blocks with no line left (TDF-0033.2): every block after
+   * Clear history (null), else those of `touched` no stored line still carries. A deletion that
+   * touched no block line reads nothing more.
+   * @param {Set<string> | null} touched
+   */
+  const forgetBlocks = async (touched) => {
+    if (touched === null) return blockState.clear();
+    if (!touched.size) return;
+    const left = new Set(touched);
+    const t = db.transaction(STORES.messages, 'readonly');
+    await new Promise((resolve, reject) => {
+      const req = t.objectStore(STORES.messages).openCursor();
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor || !left.size) return resolve(undefined);
+        const block = cursor.value?.backlogBlock;
+        if (block) left.delete(block);
+        cursor.continue();
+      };
+    });
+    await blockState.prune(left);
   };
 
   return {
     /**
-     * How many stored lines `days` would delete.
-     * @param {number | null} days
-     */
-    async previewHistory(days) {
-      const cutoff = historyCutoff(days, now());
-      if (cutoff === null) return 0;
-      const t = db.transaction(STORES.messages, 'readonly');
-      const index = t.objectStore(STORES.messages).index('receivedAt');
-      return request(index.count(IDBKeyRange.upperBound(cutoff, true)));
-    },
-
-    /**
-     * Delete stored lines older than `days` in one transaction; then announce them, so they
-     * leave the open view and their tags.
-     * @param {number | null} days
+     * Delete the stored lines the Chat history setting `count` does not keep, in one
+     * transaction: those older than STORAGE_AGE_DAYS, or every line when it is off (0). Then
+     * announce them, so they leave the open view and their tags.
+     * @param {import('../../core/retention.js').HistoryCount} count
      * @returns {Promise<string[]>} the ids deleted
      */
-    async pruneHistory(days) {
-      const cutoff = historyCutoff(days, now());
-      if (cutoff === null) return [];
+    async pruneHistory(count) {
+      const cutoff = storageCutoff(count, now());
       return deleteWhere('receivedAt', IDBKeyRange.upperBound(cutoff, true));
     },
 

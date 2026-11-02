@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
-import { DEFAULT_REPLAY_LIMIT } from '../src/core/history.js';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -218,15 +217,16 @@ test('the message list gets a floating scrollbar, and trimming keeps its thumb',
   const win = new Window();
   const doc = win.document;
   doc.body.innerHTML = '<div id="chatContainer"></div>';
-  const view = createView({ doc, win, container: doc.getElementById('chatContainer'), css: '' });
+  const CEILING = 200;
+  const view = createView({ doc, win, container: doc.getElementById('chatContainer'), css: '', ceiling: CEILING });
   const list = doc.querySelector('#tdf-chat .tdf-list');
   assert.equal(list.classList.contains('tdf-scroll'), true);
   const rec = (i) => ({
     id: String(i), roomID: '1', mTime: String(i), user: 'bob', toUser: '', kind: 'public', avatar: '',
     color: '', size: '', family: '', text: 'hi', ircFlag: '0', lineBreakFlag: '0', receivedAt: i,
   });
-  view.replay(Array.from({ length: DEFAULT_REPLAY_LIMIT + 5 }, (_, i) => rec(i)));
-  assert.equal(list.querySelectorAll('.tdf-msg').length, DEFAULT_REPLAY_LIMIT);
+  view.replay(Array.from({ length: CEILING + 5 }, (_, i) => rec(i)));
+  assert.equal(list.querySelectorAll('.tdf-msg').length, CEILING);
   assert.equal(list.querySelector('.tdf-msg').dataset.id, '5');
   assert.ok(thumbOf(list), 'the thumb was not trimmed');
   assert.equal(list.querySelector('.tdf-thumb'), null, 'the thumb is outside the scrolled list');

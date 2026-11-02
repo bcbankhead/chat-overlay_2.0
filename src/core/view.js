@@ -1,11 +1,12 @@
 // The message view: a linear list overlaid on #chatContainer. The engine's container stays
 // in the DOM, hidden, so its scrolling and trimming keep working underneath.
 
+import { blockHeads, blockLabel } from './blockGroups.js';
 import { expand } from './expand.js';
 import { continuesGroup, groupTime, localDay, orderKey, timeLabel } from './group.js';
-import { DEFAULT_REPLAY_LIMIT } from './history.js';
 import { renderAvatar } from './avatar.js';
 import { adapt, THEME_BG } from './ink.js';
+import { HISTORY_ON } from './retention.js';
 import { safeDecodeURIComponent } from './parse.js';
 import { pickPreview, youtubeThumb } from './preview.js';
 import { sanitize } from './sanitize.js';
@@ -48,6 +49,23 @@ function groupKey(row) {
 }
 
 /**
+ * Each server-history block's collapsed state, as the view reads and reports it.
+ * @typedef {object} BlockStates
+ * @property {(id: string) => boolean | undefined} collapsed  the stored state; undefined when
+ *   none is stored
+ * @property {(id: string, collapsed: boolean) => void} toggle  the member toggled the block, or
+ *   ticked the setting that collapses every open block
+ * @property {(id: string, collapsed: boolean) => void} [settle]  a block with no stored state
+ *   first rendered in this state, so a later change of the setting does not flip it
+ */
+
+/** The header button heading a server-history block. */
+const BLOCK_HEAD = 'tdf-block-head';
+
+/** A row of a collapsed block. */
+const BLOCK_HIDDEN = 'tdf-block-hidden';
+
+/**
  * Mark a chat row `tdf-head` or `tdf-cont` from the row before it. Notices carry neither,
  * and break the group for the row after them.
  * @param {Element | null} el
@@ -57,7 +75,10 @@ function regroup(el) {
   const key = row && groupKey(row);
   if (!row || !key || (key.kind !== 'public' && key.kind !== 'whisper')) return;
   const prev = /** @type {HTMLElement | null} */ (row.previousElementSibling);
-  const cont = continuesGroup(prev && groupKey(prev), key);
+  // A group never continues across a server-history block's edge, so the first row after a
+  // collapsed block keeps its sender's name (TDF-0033.2).
+  const sameBlock = (prev?.dataset.block ?? '') === (row.dataset.block ?? '');
+  const cont = sameBlock && continuesGroup(prev && groupKey(prev), key);
   row.classList.toggle('tdf-cont', cont);
   row.classList.toggle('tdf-head', !cont);
 }
@@ -70,10 +91,28 @@ function regroup(el) {
  *   css: string,
  *   avatars?: import('./avatarResolver.js').AvatarResolver | null,
  *   now?: () => number,
+ *   ceiling?: number,
+ *   blocks?: BlockStates | null,
+ *   autoCollapse?: () => boolean,
  * }} deps `avatars` looks up forum pictures for every sender, preferred over the chat avatar;
- *   `now` is the current time in seconds, which decides whether a time shows its date
+ *   `now` is the current time in seconds, which decides whether a time shows its date;
+ *   `ceiling` is the most rows the list keeps, HISTORY_ON unless a test sets a smaller one,
+ *   fixed whatever the Chat history setting, since live lines show with history off too;
+ *   `blocks` holds each server-history block's stored collapsed state and is told of each
+ *   toggle; `autoCollapse` is whether a block with no stored state arrives collapsed, read
+ *   when it first renders
  */
-export function createView({ doc, win, container, css, avatars = null, now = () => Date.now() / 1000 }) {
+export function createView({
+  doc,
+  win,
+  container,
+  css,
+  avatars = null,
+  now = () => Date.now() / 1000,
+  ceiling = HISTORY_ON,
+  blocks = null,
+  autoCollapse = () => false,
+}) {
   const style = doc.createElement('style');
   style.id = 'tdf-chat-style';
   style.textContent = css;
@@ -317,6 +356,10 @@ export function createView({ doc, win, container, css, avatars = null, now = () 
     el.dataset.t = String(t);
     // The value a reload sorts by (TDF-0031), so a live row is placed where a replay puts it.
     el.dataset.order = String(orderKey(record));
+    if (record.backlogBlock) {
+      el.dataset.block = record.backlogBlock;
+      blocksDirty = true;
+    }
     const chat = record.kind === 'public' || record.kind === 'whisper';
 
     // Sender family and size are ignored: every message uses the UI font (theme.css).
@@ -466,6 +509,7 @@ export function createView({ doc, win, container, css, avatars = null, now = () 
    */
   function remove(el) {
     const next = el.nextElementSibling;
+    if (/** @type {HTMLElement} */ (el).dataset.block) blocksDirty = true;
     unindex(el);
     resized?.unobserve(el);
     el.remove();
@@ -481,8 +525,8 @@ export function createView({ doc, win, container, css, avatars = null, now = () 
   const appended = new WeakSet();
 
   /**
-   * A row's replay order, or null for a problem notice, which has none, and for an appended row,
-   * which is passed over the same way.
+   * A row's replay order, or null for a problem notice or a block header, which have none, and
+   * for an appended row, which is passed over the same way.
    * @param {Element} el
    */
   const orderOf = (el) => {
@@ -491,13 +535,20 @@ export function createView({ doc, win, container, css, avatars = null, now = () 
     return order === undefined ? null : Number(order);
   };
 
-  // Scans walk the list's children, which are only its rows: indexing the live `shown`
-  // collection re-reads the DOM per access, quadratic over a 200-row list.
+  // Scans walk the list's children, its rows plus any server-history block headers, which every
+  // scan passes over (orderOf is null for them, isHead skips them): indexing the live `shown`
+  // collection re-reads the DOM per access, quadratic over a list of thousands of rows.
+
+  /** @param {Element | null} el */
+  const isHead = (el) => Boolean(el?.classList.contains(BLOCK_HEAD));
 
   // The oldest row: a problem notice or appended row at the top goes first, as it always has;
-  // otherwise the row with the lowest order, the first of equals (TDF-0032).
+  // otherwise the row with the lowest order, the first of equals (TDF-0032). Block headers are
+  // not rows and are passed over.
   function oldest() {
-    const first = /** @type {HTMLElement} */ (list.firstElementChild);
+    let start = list.firstElementChild;
+    while (isHead(start)) start = /** @type {Element} */ (start).nextElementSibling;
+    const first = /** @type {HTMLElement} */ (start);
     let min = orderOf(first);
     if (min === null) return first;
     let pick = first;
@@ -520,9 +571,102 @@ export function createView({ doc, win, container, css, avatars = null, now = () 
     return null;
   }
 
-  // The list keeps no more than a replay shows; the oldest entries go first.
+  // The list keeps no more than the ceiling; the oldest entries go first (TDF-0033.1).
   function trim() {
-    while (shown.length > DEFAULT_REPLAY_LIMIT) remove(oldest());
+    while (shown.length > ceiling) remove(oldest());
+    syncBlocks();
+  }
+
+  // Server-history blocks (TDF-0033.2). Rows stay flat in the list; each block gets one header
+  // button just before its first row, and a collapsed block's rows are hidden by class.
+  /** @type {Map<string, HTMLButtonElement>} */
+  const heads = new Map();
+  /** @type {Map<string, boolean>} states toggled or first settled this load, ahead of the stored ones */
+  const toggled = new Map();
+  // Set when a block row is rendered or removed, or a block is toggled; otherwise no header can
+  // need moving, relabelling or hiding, and the scan is skipped, so a live row with no block
+  // costs no walk of the list.
+  let blocksDirty = false;
+
+  // A block with no stored state takes the setting's state when first asked for, and keeps it:
+  // stored at once, so a later change of the setting never flips it (TDF-0033.3).
+  /** @param {string} id */
+  function isCollapsed(id) {
+    const held = toggled.get(id) ?? blocks?.collapsed(id);
+    if (held !== undefined) return held;
+    const initial = autoCollapse();
+    toggled.set(id, initial);
+    blocks?.settle?.(id, initial);
+    return initial;
+  }
+
+  /** @param {string} id */
+  function makeHead(id) {
+    const head = doc.createElement('button');
+    head.type = 'button';
+    head.className = BLOCK_HEAD;
+    head.dataset.headOf = id;
+    return head;
+  }
+
+  // Place, label and remove headers to match the rows now in the list, and hide the rows of
+  // collapsed blocks.
+  function syncBlocks() {
+    if (!blocksDirty) return;
+    blocksDirty = false;
+    /** @type {HTMLElement[]} */
+    const rows = [];
+    for (let el = list.firstElementChild; el; el = el.nextElementSibling) {
+      if (!isHead(el)) rows.push(/** @type {HTMLElement} */ (el));
+    }
+    const found = blockHeads(rows.map((row) => row.dataset.block));
+    const live = new Set(found.map((b) => b.block));
+    for (const [id, head] of heads) {
+      if (live.has(id)) continue;
+      const next = head.nextElementSibling;
+      head.remove();
+      heads.delete(id);
+      regroup(next);
+    }
+    for (const { block, index, count } of found) {
+      const first = rows[index];
+      let head = heads.get(block);
+      if (!head) heads.set(block, (head = makeHead(block)));
+      if (head.nextElementSibling !== first) {
+        const oldNext = head.parentNode ? head.nextElementSibling : null;
+        first.before(head);
+        regroup(oldNext);
+      }
+      const collapsed = isCollapsed(block);
+      const label = blockLabel(count);
+      if (head.textContent !== label) head.textContent = label;
+      head.setAttribute('aria-expanded', String(!collapsed));
+    }
+    for (const row of rows) {
+      const block = row.dataset.block;
+      row.classList.toggle(BLOCK_HIDDEN, Boolean(block) && isCollapsed(/** @type {string} */ (block)));
+    }
+  }
+
+  // Clicking a header, or Enter or Space on it, collapses or expands its block and stores that.
+  list.addEventListener('click', (event) => {
+    const head = /** @type {Element} */ (event.target).closest?.(`.${BLOCK_HEAD}`);
+    const id = /** @type {HTMLElement | null} */ (head)?.dataset.headOf;
+    if (!id) return;
+    const collapsed = !isCollapsed(id);
+    toggled.set(id, collapsed);
+    blocksDirty = true;
+    syncBlocks();
+    blocks?.toggle(id, collapsed);
+    keepPinned();
+  });
+
+  // A block's rows hidden or shown change the list's height; a pinned view stays at its bottom.
+  function keepPinned() {
+    if (pinned && autoOn()) {
+      stopSlide();
+      toBottom();
+    }
   }
 
   /**
@@ -660,6 +804,7 @@ export function createView({ doc, win, container, css, avatars = null, now = () 
         a.compareDocumentPosition(b) & 4 /* DOCUMENT_POSITION_FOLLOWING */ ? -1 : 1,
       );
       if (first) remove(first);
+      syncBlocks();
     },
 
     /**
@@ -668,14 +813,35 @@ export function createView({ doc, win, container, css, avatars = null, now = () 
      */
     removeById(ids) {
       for (const id of ids) for (const el of entries('id', id)) remove(el);
+      syncBlocks();
     },
 
-    /** Empty the list: every entry and notice goes. */
+    /**
+     * Collapse every server-history block now expanded and store each collapsed: the setting
+     * was ticked (TDF-0033.3). Collapsed blocks are left alone.
+     */
+    collapseAll() {
+      syncBlocks();
+      /** @type {string[]} */
+      const open = [];
+      for (const id of heads.keys()) if (!isCollapsed(id)) open.push(id);
+      if (open.length === 0) return;
+      for (const id of open) toggled.set(id, true);
+      blocksDirty = true;
+      syncBlocks();
+      for (const id of open) blocks?.toggle(id, true);
+      keepPinned();
+    },
+
+    /** Empty the list: every entry, notice and block header goes. */
     clear() {
       for (const el of [...shown]) {
         resized?.unobserve(el);
         el.remove();
       }
+      for (const head of heads.values()) head.remove();
+      heads.clear();
+      blocksDirty = false;
       byKey.id.clear();
       byKey.mtime.clear();
       stopSlide();

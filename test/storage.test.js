@@ -425,6 +425,37 @@ test('recent orders by message time; one mTime second keeps first-seen arrival o
   );
 });
 
+test('recent bounds by count alone: receipt age skips nothing (TDF-0033.5)', async () => {
+  const h = createHistory(await fresh());
+  // Message time and receipt time disagree on purpose: the order is by message time.
+  await h.put(msg({ id: 'old-late', mTime: '400', receivedAt: 100 }));
+  await h.put(msg({ id: 'a', mTime: '100', receivedAt: 600 }));
+  await h.put(msg({ id: 'b', mTime: '200', receivedAt: 500 }));
+  await h.put(msg({ id: 'c', mTime: '300', receivedAt: 700 }));
+  assert.deepEqual((await h.recent('1', Infinity)).map((r) => r.id), ['a', 'b', 'c', 'old-late']);
+  assert.deepEqual((await h.recent('1', 2)).map((r) => r.id), ['c', 'old-late']);
+});
+
+test('recent skips records received before since, still newest by message time', async () => {
+  const h = createHistory(await fresh());
+  await h.put(msg({ id: 'old-late', mTime: '400', receivedAt: 100 }));
+  await h.put(msg({ id: 'a', mTime: '100', receivedAt: 600 }));
+  await h.put(msg({ id: 'b', mTime: '200', receivedAt: 500 }));
+  await h.put(msg({ id: 'c', mTime: '300', receivedAt: 700 }));
+  assert.deepEqual((await h.recent('1', Infinity, 500)).map((r) => r.id), ['a', 'b', 'c']);
+  // The skipped record does not use up the limit.
+  assert.deepEqual((await h.recent('1', 2, 500)).map((r) => r.id), ['b', 'c']);
+});
+
+test('recent by default returns the newest 100 records', async () => {
+  const h = createHistory(await fresh());
+  for (let i = 0; i < 120; i++) await h.put(msg({ id: `m${i}`, mTime: String(1000 + i), receivedAt: i + 1 }));
+  const recent = await h.recent('1');
+  assert.equal(recent.length, 100);
+  assert.equal(recent[0].id, 'm20');
+  assert.equal(recent.at(-1).id, 'm119');
+});
+
 test('a pending echo orders by receipt time, then takes its server time once confirmed', async () => {
   const db = await fresh();
   const h = createHistory(db);
@@ -572,29 +603,138 @@ test('deleteByMTime removes only the room\'s earliest-received record with that 
 
 test('settings return the contract defaults for absent keys', async () => {
   const s = createSettings(await fresh());
-  assert.equal(await s.get('retentionDays'), 30);
+  assert.equal(await s.get('historyCount'), 100);
   assert.equal(await s.get('galleryLimitMB'), null);
   assert.equal(await s.get('storeImagesOffline'), false);
   assert.equal(await s.get('includeMyImages'), false);
   assert.equal(await s.get('likeIntervalSeconds'), 15);
   assert.equal(await s.get('theme'), null);
+  assert.equal(await s.get('autoCollapseServerHistory'), false);
   assert.equal(await s.get('useMediaQuickview'), true);
   await s.set('theme', 'dark');
   assert.equal(await s.get('theme'), 'dark');
   await assert.rejects(s.set('nope', 1), /unknown setting/);
   assert.ok(Object.isFrozen(DEFAULTS));
   assert.ok(!Object.hasOwn(DEFAULTS, 'historyEnabled') && !Object.hasOwn(DEFAULTS, 'likeEmoji'));
+  assert.ok(!Object.hasOwn(DEFAULTS, 'retentionDays'), 'retired by TDF-0033.5');
+  await assert.rejects(s.set(/** @type {any} */ ('retentionDays'), 30), /unknown setting/);
+});
+
+// TDF-0033.5: Chat history (last 100) replaces Chat history (days).
+
+/** Write a raw settings row, as an older build stored it. @param {IDBDatabase} db */
+const putRaw = (db, key, value) =>
+  new Promise((resolve, reject) => {
+    const t = db.transaction('settings', 'readwrite');
+    t.objectStore('settings').put({ key, value });
+    t.oncomplete = resolve;
+    t.onerror = () => reject(t.error);
+  });
+/** @param {IDBDatabase} db */
+const rawRow = (db, key) =>
+  new Promise((resolve, reject) => {
+    const req = db.transaction('settings').objectStore('settings').get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+
+test('migrateHistory turns a stored retentionDays into historyCount once, and deletes it', async () => {
+  for (const [days, count] of [[0, 0], [30, 100], [1, 100], [null, 100]]) {
+    const db = await fresh();
+    await putRaw(db, 'retentionDays', days);
+    const s = createSettings(db);
+    await s.migrateHistory();
+    assert.equal(await s.get('historyCount'), count, `${days} days`);
+    assert.deepEqual(await rawRow(db, 'historyCount'), { key: 'historyCount', value: count });
+    assert.equal(await rawRow(db, 'retentionDays'), undefined, 'retentionDays deleted');
+    await s.migrateHistory();
+    assert.equal(await s.get('historyCount'), count, 'a second run changes nothing');
+  }
+});
+
+test('migrateHistory leaves a stored historyCount alone, still deleting retentionDays', async () => {
+  const db = await fresh();
+  await putRaw(db, 'historyCount', 0);
+  await putRaw(db, 'retentionDays', 30);
+  await createSettings(db).migrateHistory();
+  assert.equal(await createSettings(db).get('historyCount'), 0);
+  assert.equal(await rawRow(db, 'retentionDays'), undefined);
+});
+
+test('a member who never set Chat history gets 100 (on), and migrateHistory writes nothing', async () => {
+  const db = await fresh();
+  const s = createSettings(db);
+  await s.migrateHistory();
+  assert.equal(await s.get('historyCount'), 100);
+  assert.equal(await rawRow(db, 'historyCount'), undefined);
+});
+
+test('a stored historyCount other than 0 or 100 reads as 100', async () => {
+  for (const bad of [50, -1, '0', null, true, 1e9]) {
+    const db = await fresh();
+    await putRaw(db, 'historyCount', bad);
+    assert.equal(await createSettings(db).get('historyCount'), 100, String(bad));
+  }
 });
 
 test('a committed set is announced to setting-change listeners, through any Settings', async () => {
   const db = await fresh();
   const seen = [];
   const off = onSettingChange((key, value) => seen.push([key, value]));
-  await createSettings(db).set('retentionDays', 0);
+  await createSettings(db).set('historyCount', 0);
   await createSettings(db).set('theme', 'light');
   off();
   await createSettings(db).set('theme', 'dark');
-  assert.deepEqual(seen, [['retentionDays', 0], ['theme', 'light']]);
+  assert.deepEqual(seen, [['historyCount', 0], ['theme', 'light']]);
+});
+
+// TDF-0033.2: the backlog tag is first-seen, and block state lives in one settings row.
+
+test('a record first stored from the backlog keeps its tag; a re-delivery keeps it too', async () => {
+  const history = createHistory(await fresh());
+  await history.put(msg({ id: '50', source: 'backlog', backlogBlock: 'load-a' }));
+  await history.put(msg({ id: '50', source: 'backlog', backlogBlock: 'load-b', receivedAt: 9 }));
+  const got = await history.get('50');
+  assert.equal(got.source, 'backlog');
+  assert.equal(got.backlogBlock, 'load-a', 'the first block keeps the record');
+});
+
+test('a record stored live is never tagged by a later backlog re-delivery', async () => {
+  const history = createHistory(await fresh());
+  await history.put(msg({ id: '51' }));
+  await history.put(msg({ id: '51', source: 'backlog', backlogBlock: 'load-a', receivedAt: 9 }));
+  const got = await history.get('51');
+  assert.equal(got.source, undefined);
+  assert.equal(got.backlogBlock, undefined);
+  assert.equal(got.receivedAt, 1);
+});
+
+test('a live re-delivery of a backlog record does not untag it', async () => {
+  const history = createHistory(await fresh());
+  await history.put(msg({ id: '52', source: 'backlog', backlogBlock: 'load-a' }));
+  await history.put(msg({ id: '52' }));
+  assert.equal((await history.get('52')).backlogBlock, 'load-a');
+});
+
+test('block state round-trips, merges per block, prunes and clears', async () => {
+  const { createBlockState, BLOCK_STATE_KEY } = await import('../src/core/blockState.js');
+  const db = await fresh();
+  const a = createBlockState(db);
+  const b = createBlockState(db);
+  assert.deepEqual(await a.load(), {});
+  await Promise.all([a.set('x', true), b.set('y', false)]);
+  assert.deepEqual(await a.load(), { x: true, y: false }, 'two writers keep both blocks');
+  await a.set('x', false);
+  assert.deepEqual(await b.load(), { x: false, y: false });
+  await a.prune([]);
+  assert.deepEqual(await a.load(), { x: false, y: false }, 'pruning nothing changes nothing');
+  await a.prune(['x']);
+  assert.deepEqual(await a.load(), { y: false });
+  await a.clear();
+  assert.deepEqual(await a.load(), {});
+  const settings = createSettings(db);
+  assert.equal(Object.hasOwn(DEFAULTS, BLOCK_STATE_KEY), false, 'not a member setting');
+  assert.ok(settings);
 });
 
 test('followSetting reads synchronously: the default, then the stored value, then every committed set', async () => {

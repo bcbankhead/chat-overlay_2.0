@@ -1,18 +1,21 @@
 // The Settings flyout (UI design 2026-10-27, Flyouts → Settings), in two sections (TDF-0039).
 // Chat: Use Chat 2.0 (TDF-0037), Auto-scroll over the engine's #autoScrollID, Clear chat buffer,
-// Chat history (days), Clear history now and Hide messages by user (TDF-0010, TDF-0044). Media
-// and Gallery Settings, one flat list: Include my images (TDF-0009.13), Store images offline,
-// Compress stored images (TDF-0036), Use media quickview (TDF-0035) and Gallery size limit (MB).
-// Every boolean setting is a checkbox drawn as a switch (tdf-opt-switch). A hint under each field says
-// what the typed value would delete; the
-// setting is written, and the deletion runs, only when the value is committed (change: Enter or
-// leaving the field). The two deletions ask first, inline. The rail gives the flyout body its
-// scrollbar.
+// Collapse server history automatically (TDF-0033.3), Chat history (last 100, TDF-0033.5), Clear
+// history now and Hide messages by user (TDF-0010, TDF-0044). Media and Gallery Settings, one
+// flat list: Include my images (TDF-0009.13), Store images offline, Compress stored images
+// (TDF-0036), Use media quickview (TDF-0035) and Gallery size limit (MB). Every boolean setting
+// is a checkbox drawn as a switch (tdf-opt-switch). Chat history (last 100) is one too: on
+// replays the newest 100 lines on reload, and turning it off deletes every saved line at once,
+// its hint saying how many beforehand. A hint under the gallery field says what the typed value
+// would delete; the setting is written, and the deletion runs, only when the value is committed
+// (change: Enter or leaving the field). The two deletions ask first, inline. The rail gives the
+// flyout body its scrollbar.
 
 import { describeError } from '../../core/errors.js';
 import { clearView } from '../../core/events.js';
 import { chat2Off, setChat2Off } from '../../core/optOut.js';
-import { MB_BYTES, parseDays, parseMegabytes, senderLabel } from './selectors.js';
+import { parseHistoryCount } from '../../core/retention.js';
+import { HISTORY_ON, MB_BYTES, parseMegabytes, senderLabel } from './selectors.js';
 
 /**
  * @typedef {object} PanelDeps
@@ -63,6 +66,40 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   if (failure !== null) {
     root.append(el('div', 'tdf-opt-hint tdf-warn', `The storage limits did not run on load: ${failure}`));
   }
+
+  /**
+   * A checkbox row over a boolean setting, written on change, appended where it is called. An
+   * optional static hint says what the box does; a second hint shows only a failure.
+   * @param {'autoCollapseServerHistory' | 'includeMyImages' | 'storeImagesOffline' | 'compressStoredImages' | 'useMediaQuickview'} key
+   * @param {string} label
+   * @param {string} [about]
+   */
+  const check = (key, label, about) => {
+    const row = el('label', 'tdf-opt-row');
+    const box = el('input', 'tdf-opt-switch');
+    box.type = 'checkbox';
+    row.append(el('span', '', label), box);
+    root.append(row);
+    if (about !== undefined) root.append(el('div', 'tdf-opt-hint', about));
+    const hint = el('div', 'tdf-opt-hint tdf-warn');
+    hint.setAttribute('aria-live', 'polite');
+    root.append(hint);
+    /** @param {string} text */
+    const failed = (text) => {
+      if (!closed) hint.textContent = text;
+    };
+    box.addEventListener('change', () => {
+      hint.textContent = '';
+      settings.set(key, box.checked).catch((err) => failed(`Could not apply: ${describeError(err)}`));
+    });
+    settings.get(key).then(
+      (on) => {
+        if (!closed) box.checked = on;
+      },
+      (err) => failed(`Could not read settings: ${describeError(err)}`),
+    );
+  };
+
   root.append(el('div', 'tdf-opt-section tdf-opt-first', 'Chat'));
 
   // Use Chat 2.0: unchecking records the choice (optOut.js, TDF-0037) and reloads into the
@@ -125,6 +162,8 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     clear,
     el('div', 'tdf-opt-hint', 'Empties the message view. Saved history is kept and returns on reload.'),
   );
+  // Collapse server history automatically (TDF-0033.3): core follows the setting live.
+  check('autoCollapseServerHistory', 'Collapse server history automatically', 'Server-history blocks arrive collapsed.');
 
   /**
    * @param {string} label
@@ -145,36 +184,15 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     return { input, hint };
   };
 
-  /**
-   * A toggle row over a boolean setting, written on change; its hint shows only a failure.
-   * @param {'includeMyImages' | 'storeImagesOffline' | 'compressStoredImages' | 'useMediaQuickview'} key
-   * @param {string} label
-   */
-  const check = (key, label) => {
-    const row = el('label', 'tdf-opt-row');
-    const box = el('input', 'tdf-opt-switch');
-    box.type = 'checkbox';
-    row.append(el('span', '', label), box);
-    const hint = el('div', 'tdf-opt-hint tdf-warn');
-    hint.setAttribute('aria-live', 'polite');
-    root.append(row, hint);
-    /** @param {string} text */
-    const failed = (text) => {
-      if (!closed) hint.textContent = text;
-    };
-    box.addEventListener('change', () => {
-      hint.textContent = '';
-      settings.set(key, box.checked).catch((err) => failed(`Could not apply: ${describeError(err)}`));
-    });
-    settings.get(key).then(
-      (on) => {
-        if (!closed) box.checked = on;
-      },
-      (err) => failed(`Could not read settings: ${describeError(err)}`),
-    );
-  };
-
-  const history = field('Chat history (days)', '');
+  // Chat history (last 100, TDF-0033.5): a switch over `historyCount`, 100 on and 0 off.
+  const historyRow = el('label', 'tdf-opt-row');
+  const historyBox = el('input', 'tdf-opt-switch');
+  historyBox.type = 'checkbox';
+  historyRow.append(el('span', '', 'Chat history (last 100)'), historyBox);
+  const historyHint = el('div', 'tdf-opt-hint');
+  historyHint.setAttribute('aria-live', 'polite');
+  root.append(historyRow, historyHint);
+  const history = { box: historyBox, hint: historyHint };
 
   /**
    * A button that asks before it deletes: the first click counts what would go and shows that
@@ -406,26 +424,20 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   const showHistory = hinter(history.hint);
   const showGallery = hinter(gallery.hint);
 
-  /** @type {number | null} the committed Chat history days; null is a stored legacy no-limit */
-  let storedDays = null;
-
   // A number input the browser cannot parse ('-', 'e') reports '' — read as invalid, not empty.
   /** @param {HTMLInputElement} input */
   const valueOf = (input) => (input.validity?.badInput ? null : input.value);
 
-  /** @param {string | null} input */
-  const historyText = async (input) => {
-    if (input !== null && input.trim() === '') {
-      if (storedDays === null) return { text: 'Keeping all history. Enter 0 or more days to set a limit.' };
-      return { text: `Enter 0 or more whole days. The current ${plural(storedDays, 'day')} limit stays.`, warn: true };
-    }
-    const parsed = input === null ? { ok: /** @type {const} */ (false) } : parseDays(input);
-    if (!parsed.ok) return { text: 'Enter 0 or more whole days.', warn: true };
-    const days = parsed.value;
-    const n = await limits.previewHistory(days);
-    const base =
-      days === 0 ? 'No chat history is kept.' : `Lines older than ${plural(days, 'day')} are deleted, oldest first.`;
-    return { text: base + (n ? ` This removes ${plural(n, 'line')} now.` : ''), warn: n > 0 };
+  /**
+   * What the Chat history switch does in its state: on, how many saved lines turning it off
+   * would delete.
+   * @param {boolean} on
+   */
+  const historyText = async (on) => {
+    if (!on) return { text: 'No chat history is kept or replayed.' };
+    const base = `Replays the newest ${HISTORY_ON} lines on reload.`;
+    const n = await limits.countAll();
+    return { text: base + (n ? ` Turning it off deletes ${plural(n, 'saved line')}.` : '') };
   };
 
   /** @param {string | null} input */
@@ -442,8 +454,6 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     return { text: `${used}. Oldest images go first; favorites are kept.${removes}`, warn: preview.count > 0 };
   };
 
-  /** @param {string | null} input */
-  const historyHint = (input) => showHistory(() => historyText(input));
   /** @param {string | null} input */
   const galleryHint = (input) => showGallery(() => galleryText(input));
 
@@ -463,24 +473,36 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
       return text();
     });
 
-  history.input.addEventListener('input', () => historyHint(valueOf(history.input)));
   gallery.input.addEventListener('input', () => galleryHint(valueOf(gallery.input)));
 
-  history.input.addEventListener('change', () => {
-    const value = valueOf(history.input);
-    if (value === null) return;
-    const parsed = parseDays(value);
-    if (!parsed.ok) return;
-    const days = parsed.value;
+  // Ticking writes 100. Unticking writes 0, then deletes every saved line, announced so the open
+  // view and tags follow, as Clear history now does. A refused write shows the stored value
+  // again. Only the latest toggle reverts or clears, so a quick off-then-on never deletes after
+  // it, and an earlier refusal never overrides a later choice.
+  let historySeq = 0;
+  history.box.addEventListener('change', () => {
+    const on = history.box.checked;
+    const mine = ++historySeq;
     commit(
       showHistory,
       async () => {
-        await settings.set('retentionDays', days);
-        storedDays = days;
-        await limits.pruneHistory(days);
+        try {
+          await settings.set('historyCount', on ? HISTORY_ON : 0);
+        } catch (err) {
+          if (mine === historySeq) {
+            const stored = await settings.get('historyCount').then(
+              (value) => parseHistoryCount(value) !== 0,
+              () => !on,
+            );
+            if (!closed && mine === historySeq) history.box.checked = stored;
+          }
+          throw err;
+        }
+        if (on || mine !== historySeq) return;
+        await limits.clearHistory();
         refreshSenders();
       },
-      () => historyText(value),
+      () => historyText(on),
     );
   });
 
@@ -500,13 +522,12 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     );
   });
 
-  Promise.all([settings.get('retentionDays'), settings.get('galleryLimitMB')]).then(
-    ([days, mb]) => {
+  Promise.all([settings.get('historyCount'), settings.get('galleryLimitMB')]).then(
+    ([count, mb]) => {
       if (closed) return;
-      storedDays = days;
-      history.input.value = days === null ? '' : String(days);
+      history.box.checked = count !== 0;
       gallery.input.value = mb === null ? '' : String(mb);
-      historyHint(history.input.value);
+      showHistory(() => historyText(count !== 0));
       galleryHint(gallery.input.value);
     },
     (err) => {

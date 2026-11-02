@@ -1,5 +1,5 @@
 // Entry point. The double-load guard is the first statement (TDF-0009 Shared Contract): a
-// second copy — userscript plus site include — sets up nothing. Features open their own
+// second copy â€” userscript plus site include â€” sets up nothing. Features open their own
 // database connections, wrap engine globals and write the DOM themselves, so each guards
 // itself with its own `__tdfChat2*` flag; build.mjs's checkSecondCopyInert verifies that a
 // second copy touches nothing past those flags. The flag is set at once, but the start waits
@@ -10,6 +10,7 @@
 // hook, no database; the flag is set first, so a second copy adds no second link.
 
 import { createAvatarResolver } from './avatarResolver.js';
+import { createBlockState } from './blockState.js';
 import { CLOAK_MS, cloak } from './cloak.js';
 import { openDb } from './db.js';
 import { installEngineHook } from './engine-hook.js';
@@ -17,6 +18,7 @@ import { describeError } from './errors.js';
 import { emitConfirmChange, onClearView, onDeleted } from './events.js';
 import { createHistory } from './history.js';
 import { MAIN_DIV } from './parse.js';
+import { parseHistoryCount, storageCutoff } from './retention.js';
 import { chat2Off, installSwitchLink } from './optOut.js';
 import { createSettings, onSettingChange } from './settings.js';
 import { mount, unmount } from './shell.js';
@@ -135,21 +137,97 @@ async function start(lift, coreReady) {
     theme = createTheme({ win, settings, root: html });
     await theme.load();
     mount(theme);
-    // Chat history at 0 days keeps nothing: the hook stores nothing, and the replay shows
-    // nothing left from before the limit was set. Followed live, as Settings writes it.
-    let retentionDays = await settings.get('retentionDays');
+    // Chat history (last 100, TDF-0033.5): a stored Chat history (days) value is retired first,
+    // so this read sees its migrated count. Off keeps nothing: the hook stores nothing, and the
+    // replay shows nothing left from before it was turned off. Followed live, as Settings
+    // writes it.
+    await settings.migrateHistory();
+    let historyCount = await settings.get('historyCount');
     unsubscribe.push(
       onSettingChange((key, value) => {
-        if (key === 'retentionDays') retentionDays = /** @type {number | null} */ (value);
+        if (key === 'historyCount') historyCount = parseHistoryCount(value);
       }),
     );
     const { expired, pending } = await history.expirePending(roomID);
-    const records = retentionDays === 0 ? [] : await history.recent(roomID);
+    // Replay shows the newest historyCount lines; the view keeps at most HISTORY_ON either way.
+    // Lines past the storage age are skipped here rather than left to the Options feature's
+    // load-time prune, which may finish after this read.
+    const records =
+      historyCount === 0 ? [] : await history.recent(roomID, historyCount, storageCutoff(historyCount, Date.now()));
 
     // Published for the rail and the profile flyout, which show the same avatars.
     const avatars = createAvatarResolver({ win, db });
     win.__tdfChat2Avatars = avatars;
-    const view = createView({ doc: document, win, container, css, avatars });
+    // Each server-history block's collapsed state (TDF-0033.2), read once; a block's first state
+    // and each toggle update the loaded copy and store it, except with Chat history off, when
+    // the block's records are not stored.
+    const blockState = createBlockState(db);
+    // A failed read is not worth failing the start over: blocks arrive in the setting's state,
+    // and say why.
+    /** @type {string | null} */
+    let blockStatesFailed = null;
+    /** @type {import('./blockState.js').BlockStates} */
+    const blockStates = await blockState.load().catch((err) => {
+      blockStatesFailed = describeError(err);
+      return {};
+    });
+    /** @type {import('./view.js').View | null} */
+    let blockView = null;
+    /** @param {string} id @param {boolean} collapsed */
+    const storeBlock = (id, collapsed) => {
+      blockStates[id] = collapsed;
+      if (historyCount === 0) return;
+      blockState
+        .set(id, collapsed)
+        .catch((err) => blockView?.notice(`Server history block state not saved: ${describeError(err)}`));
+    };
+    /** @type {import('./view.js').BlockStates} */
+    const blocks = {
+      collapsed: (id) => blockStates[id],
+      toggle: storeBlock,
+      // A block's first state is stored too, so a later change of the setting does not flip it
+      // (TDF-0033.3); not after a failed block-state read, where it would overwrite a state never
+      // read, nor after a failed read of the setting, whose fallback is no member's choice.
+      settle: (id, collapsed) => {
+        if (blockStatesFailed === null && autoCollapseFailed === null) storeBlock(id, collapsed);
+      },
+    };
+    // Whether a block with no stored state arrives collapsed (TDF-0033.3), followed live; every
+    // tick collapses the blocks now open, and unticking leaves every block as it is.
+    // A failed read is not worth failing the start over either: blocks arrive expanded, and say why.
+    /** @type {string | null} */
+    let autoCollapseFailed = null;
+    let autoCollapse = await settings.get('autoCollapseServerHistory').then(
+      (value) => value === true,
+      (err) => {
+        autoCollapseFailed = describeError(err);
+        return false;
+      },
+    );
+    unsubscribe.push(
+      onSettingChange((key, value) => {
+        if (key !== 'autoCollapseServerHistory') return;
+        autoCollapse = value === true;
+        if (autoCollapse) blockView?.collapseAll();
+      }),
+    );
+    const view = createView({
+      doc: document,
+      win,
+      container,
+      css,
+      avatars,
+      blocks,
+      autoCollapse: () => autoCollapse,
+    });
+    blockView = view;
+    if (autoCollapseFailed !== null) {
+      view.notice(`Collapse server history automatically not read; blocks arrive expanded (${autoCollapseFailed})`);
+    }
+    if (blockStatesFailed !== null) {
+      const shownAs = autoCollapse ? 'collapsed' : 'expanded';
+      view.notice(`Server history blocks shown ${shownAs}: their state was not read (${blockStatesFailed})`);
+    }
     unsubscribe.push(
       onDeleted((ids) => view.removeById(ids)),
       onClearView(() => view.clear()),
@@ -157,7 +235,7 @@ async function start(lift, coreReady) {
     replay(view, records);
     shown = view;
     coreReady();
-    hook.attach({ history, view, pending, replayed: records, storing: () => retentionDays !== 0 });
+    hook.attach({ history, view, pending, replayed: records, storing: () => historyCount !== 0 });
     // Expired with no inbound event; a feature that read the room before the expiry follows it.
     if (expired.length) {
       try {

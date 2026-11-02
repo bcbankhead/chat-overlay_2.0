@@ -416,3 +416,44 @@
   font-style: normal;
   border-left: 3px solid #d1242f;
 }
+
+/* Server-history blocks (TDF-0033.2): a header button before each block's first row; a
+   collapsed block's rows are hidden. Colours are the theme tokens, so both themes follow. */
+#tdf-chat .tdf-block-head {
+  display: block;
+  width: 100%;
+  margin: 4px 0;
+  padding: 3px 10px;
+  border: 0;
+  border-top: 1px solid var(--tdf-border);
+  border-bottom: 1px solid var(--tdf-border);
+  background: var(--tdf-hover-bg);
+  color: var(--tdf-muted);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+#tdf-chat .tdf-block-head::before {
+  content: "\25BE";
+  display: inline-block;
+  width: 1em;
+}
+
+#tdf-chat .tdf-block-head[aria-expanded="false"]::before {
+  content: "\25B8";
+}
+
+#tdf-chat .tdf-block-head:hover {
+  color: var(--tdf-fg);
+}
+
+#tdf-chat .tdf-block-head:focus-visible {
+  outline: 2px solid var(--tdf-link);
+  outline-offset: -2px;
+}
+
+#tdf-chat .tdf-block-hidden {
+  display: none;
+}
