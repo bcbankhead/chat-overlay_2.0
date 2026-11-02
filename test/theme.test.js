@@ -173,3 +173,12 @@ test('TDF-0042: the chat list pads 16px below its last row, clear of the window 
   const css = readFileSync(new URL('../src/core/theme.css', import.meta.url), 'utf8');
   assert.match(css, /#tdf-chat \.tdf-list \{[^}]*padding: 4px 0 16px;/);
 });
+
+test('TDF-0048: the composer pads 28px above its hint line, and the hint is 9px on an opaque backing', () => {
+  const css = readFileSync(new URL('../src/features/composer/composer.css', import.meta.url), 'utf8');
+  assert.match(css, /:root\[data-tdf-theme\] #optionsBar \{[^}]*padding: 6px 52px 28px 8px !important;/);
+  const hint = css.match(/:root\[data-tdf-theme\] \.tdf-attach-hint \{([^}]*)\}/);
+  assert.ok(hint, 'the .tdf-attach-hint rule exists');
+  assert.match(hint[1], /font: 9px /);
+  assert.match(hint[1], /background: var\(--tdf-bg\);/);
+});
