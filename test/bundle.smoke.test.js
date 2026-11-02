@@ -272,15 +272,16 @@ test('with Chat history off messages are shown but never stored, and nothing rep
   assert.deepEqual(shownIds(second.document), []);
 });
 
-test('with Chat history on, replay shows the newest 100 lines and a live message keeps the view at 100, with no day window (TDF-0033.5)', async () => {
+test('with Chat history on, replay shows the newest 25 lines and live messages grow the view up to 200, with no day window (TDF-0033.5, TDF-0056)', async () => {
   const DAY = 86_400_000;
   let clock = Date.now();
   const indexedDB = new IDBFactory();
   const db = await openDb({ indexedDB });
+  // The old look-back's on value, as an earlier build stored it: it reads as on with no migration.
   await createSettings(db).set('historyCount', 100);
   const base = { roomID: '1', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '', size: '', family: '', text: 'hi', ircFlag: '0', lineBreakFlag: '0' };
   const t = db.transaction('messages', 'readwrite');
-  // More than 100 lines, received over the last 24 days: inside the 30-day storage age.
+  // More than 25 lines, received over the last 24 days: inside the 30-day storage age.
   for (let i = 0; i < 120; i++) {
     const mTime = String(1000 + i);
     t.objectStore('messages').put({ ...base, id: `m${i}`, mTime, receivedAt: clock - 24 * DAY + i * 4 * 3_600_000, orderKey: Number(mTime) * 1000 });
@@ -296,23 +297,36 @@ test('with Chat history on, replay shows the newest 100 lines and a live message
   // 120 records take fake-indexeddb longer than one settle to read.
   for (let i = 0; i < 100 && shownIds(document).length === 0; i++) await settle();
   const replayed = shownIds(document);
-  assert.equal(replayed.length, 100, 'the newest 100 lines replay');
-  assert.equal(replayed[0], 'm20');
-  // Two days on, a day window would have aged rows out; only the count trims, one for one.
+  assert.equal(replayed.length, 25, 'the newest 25 lines replay');
+  assert.equal(replayed[0], 'm95');
+  // Two days on, a day window would have aged rows out; live lines grow the view past the
+  // look-back, nothing trimmed until the live ceiling.
   clock += 2 * DAY;
   poll(um('9999', 'carol', 'live', '2000'));
   await settle();
-  const shown = shownIds(document);
-  assert.equal(shown.length, 100);
-  assert.equal(shown[0], 'm21');
+  let shown = shownIds(document);
+  assert.equal(shown.length, 26, 'a live line is kept beside the 25 replayed');
+  assert.equal(shown[0], 'm95');
   assert.equal(shown.at(-1), '9999');
+  // 174 more lines fill the view to its live ceiling of 200; one more trims the oldest.
+  poll(...Array.from({ length: 174 }, (_, i) => um(String(7000 + i), 'carol', `live ${i}`, String(2001 + i))));
+  await settle();
+  shown = shownIds(document);
+  assert.equal(shown.length, 200, 'the view keeps 200 live rows');
+  assert.equal(shown[0], 'm95');
+  poll(um('8000', 'bob', 'one more', '3000'));
+  await settle();
+  shown = shownIds(document);
+  assert.equal(shown.length, 200, 'the live ceiling binds at 200');
+  assert.equal(shown[0], 'm96', 'the oldest went first');
+  assert.equal(shown.at(-1), '8000');
 });
 
 test('replay skips lines past the 30-day storage age, before the load-time prune runs (TDF-0033.5)', async () => {
   const DAY = 86_400_000;
   const indexedDB = new IDBFactory();
   const db = await openDb({ indexedDB });
-  await createSettings(db).set('historyCount', 100);
+  await createSettings(db).set('historyCount', 25);
   const base = { roomID: '1', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '', size: '', family: '', text: 'hi', ircFlag: '0', lineBreakFlag: '0' };
   const t = db.transaction('messages', 'readwrite');
   for (let i = 0; i < 6; i++) {
@@ -375,7 +389,7 @@ for (const [label, days, replays] of /** @type {const} */ ([
     after.close();
     const keys = rows.map((r) => r.key);
     assert.ok(!keys.includes('retentionDays'), 'retentionDays deleted');
-    assert.deepEqual(rows.find((r) => r.key === 'historyCount'), { key: 'historyCount', value: replays ? 100 : 0 });
+    assert.deepEqual(rows.find((r) => r.key === 'historyCount'), { key: 'historyCount', value: replays ? 25 : 0 });
     await window.happyDOM.close();
   });
 }
@@ -1121,7 +1135,7 @@ test('localStorage that throws reads as on: the overlay starts as before', async
   assert.equal(document.getElementById('tdf-chat2-switch'), null);
 });
 
-// TDF-0033.5: Chat history (last 100), turned off and on through the built bundle's Settings.
+// TDF-0033.5: Chat history (last 25, TDF-0056), turned off and on through the built bundle's Settings.
 
 test('unticking Chat history deletes saved lines from storage and the view, stores nothing new, and a reload replays nothing; ticking it stores again', async () => {
   const bundle = await bundled();
@@ -1139,7 +1153,7 @@ test('unticking Chat history deletes saved lines from storage and the view, stor
   shell.poll(um('1', 'bob', 'kept', '100'), um('2', 'carol', 'kept too', '101'));
   await settle();
   assert.equal(await stored(), 2);
-  const box = await settingsBox(shell, 'Chat history (last 100)');
+  const box = await settingsBox(shell, 'Chat history (last 25)');
   assert.equal(box.checked, true, 'on for a member who never set it');
 
   box.checked = false;
@@ -1157,7 +1171,7 @@ test('unticking Chat history deletes saved lines from storage and the view, stor
   const again = await page(bundle, indexedDB, withRail);
   await settle();
   assert.deepEqual(shownIds(again.document), [], 'a reload replays nothing');
-  const on = await settingsBox(again, 'Chat history (last 100)');
+  const on = await settingsBox(again, 'Chat history (last 25)');
   assert.equal(on.checked, false);
   on.checked = true;
   on.dispatchEvent(new again.window.Event('change'));
@@ -1181,7 +1195,7 @@ test('the history-off mirror is written at start and follows the Chat history sw
   db.close();
   const shell = await page(bundle, indexedDB, withRail);
   assert.equal(shell.window.localStorage.getItem(MIRROR_KEY), '1', 'written at start');
-  const box = await settingsBox(shell, 'Chat history (last 100)');
+  const box = await settingsBox(shell, 'Chat history (last 25)');
   box.checked = true;
   box.dispatchEvent(new shell.window.Event('change'));
   await settle();
@@ -1225,7 +1239,7 @@ test('blocked site data leaves the history-off mirror unwritten without a notice
   });
   assert.ok(shell.document.getElementById('tdf-chat'), 'the overlay started');
   assert.deepEqual(banners(shell.document), []);
-  const box = await settingsBox(shell, 'Chat history (last 100)');
+  const box = await settingsBox(shell, 'Chat history (last 25)');
   box.checked = true;
   box.dispatchEvent(new shell.window.Event('change'));
   await settle();
@@ -1256,7 +1270,7 @@ test('any other failed mirror write raises a notice saying why, at start and liv
   assert.deepEqual(mirrorNotices(shell.document), [
     'Chat history off not recorded for the next page load, which may show messages sent before it loads (injected set)',
   ]);
-  const box = await settingsBox(shell, 'Chat history (last 100)');
+  const box = await settingsBox(shell, 'Chat history (last 25)');
   box.checked = true;
   box.dispatchEvent(new shell.window.Event('change'));
   await settle();

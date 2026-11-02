@@ -1100,24 +1100,38 @@ test('a Date header read that throws before attach shows its notice once attache
 const preLoadBacklog = (n, first = 3000) =>
   Array.from({ length: n }, (_, i) => um(String(first + i), i % 2 ? 'bob' : 'carol', `line ${i}`, String(SERVER_NOW - 10000 + i)));
 
-test('history on: of 150 pre-load messages only the newest 100 reach the engine; the older 50 are not stored, shown or announced', () => {
+test('history on: of 150 pre-load messages only the newest 25 reach the engine; the older 125 are not stored, shown or announced', () => {
   const { win, calls, poll } = datedSetup();
   const seen = [];
   const off = onInbound((r) => seen.push(r.id));
   poll(...preLoadBacklog(150));
   off();
-  const newest = Array.from({ length: 100 }, (_, i) => String(3050 + i));
-  assert.equal(win.engineCalls, 100);
-  assert.equal(win.showMessages, 100);
+  const newest = Array.from({ length: 25 }, (_, i) => String(3125 + i));
+  assert.equal(win.engineCalls, 25);
+  assert.equal(win.showMessages, 25);
   assert.deepEqual(calls.filter((c) => c[0] === 'put').map((c) => c[1].id), newest);
   assert.deepEqual(calls.filter((c) => c[0] === 'view.place').map((c) => c[1].id), newest);
   assert.deepEqual(seen, newest);
 });
 
-test('history on: under 100 pre-load messages all draw', () => {
+test('history on: under 25 pre-load messages all draw', () => {
   const { win, poll } = datedSetup();
-  poll(...preLoadBacklog(40));
-  assert.equal(win.engineCalls, 40);
+  poll(...preLoadBacklog(20));
+  assert.equal(win.engineCalls, 20);
+});
+
+test('history on: exactly 25 pre-load messages all draw', () => {
+  const { win, calls, poll } = datedSetup();
+  poll(...preLoadBacklog(25));
+  assert.equal(win.engineCalls, 25);
+  assert.deepEqual(calls.filter((c) => c[0] === 'put').map((c) => c[1].id), Array.from({ length: 25 }, (_, i) => String(3000 + i)));
+});
+
+test('history on: of 26 pre-load messages only the oldest is held back', () => {
+  const { win, calls, poll } = datedSetup();
+  poll(...preLoadBacklog(26));
+  assert.equal(win.engineCalls, 25);
+  assert.deepEqual(calls.filter((c) => c[0] === 'put').map((c) => c[1].id), Array.from({ length: 25 }, (_, i) => String(3001 + i)));
 });
 
 test('history on: pre-load moderation commands and deletes reach the engine and do not use the budget', () => {
@@ -1130,7 +1144,7 @@ test('history on: pre-load moderation commands and deletes reach the engine and 
   ];
   // The oldest moderation record precedes the backlog; the rest follow it, among the newest.
   poll(moderation[0], ...preLoadBacklog(110), ...moderation.slice(1));
-  assert.equal(win.engineCalls, 104);
+  assert.equal(win.engineCalls, 29);
 });
 
 test('history on: pre-load private-window messages are neither counted nor suppressed', () => {
@@ -1144,16 +1158,16 @@ test('history on: pre-load private-window messages are neither counted nor suppr
     }),
   );
   poll(...preLoadBacklog(120), ...privates);
-  assert.equal(win.engineCalls, 120);
+  assert.equal(win.engineCalls, 45);
 });
 
 test('history on: live messages after the load still draw beside a capped backlog', () => {
   const { win, calls, poll } = datedSetup();
   poll(...preLoadBacklog(105), um('6000', 'bob', 'now', postLoad));
-  assert.equal(win.engineCalls, 101);
+  assert.equal(win.engineCalls, 26);
   assert.ok(calls.some((c) => c[0] === 'view.place' && c[1].id === '6000'));
   poll(um('6001', 'carol', 'later', String(SERVER_NOW + 30)));
-  assert.equal(win.engineCalls, 102);
+  assert.equal(win.engineCalls, 27);
 });
 
 test('history on: without a usable Date header nothing is suppressed', () => {

@@ -1,12 +1,12 @@
 // The Settings flyout (UI design 2026-10-27, Flyouts → Settings), in two sections (TDF-0039).
 // Chat: Use Chat 2.0 (TDF-0037), Auto-scroll over the engine's #autoScrollID, Clear chat buffer,
-// Collapse server history automatically (TDF-0033.3), Chat history (last 100, TDF-0033.5), Clear
-// history now and Hide messages by user (TDF-0010, TDF-0044). Media and Gallery Settings, one
-// flat list: Include my images (TDF-0009.13), Store images offline, Compress stored images
-// (TDF-0036), Use media quickview (TDF-0035) and Gallery size limit (MB). Every boolean setting
-// is a checkbox drawn as a switch (tdf-opt-switch). Chat history (last 100) is one too: on
-// replays the newest 100 lines on reload, and turning it off deletes every saved line at once,
-// its hint saying how many beforehand. A hint under the gallery field says what the typed value
+// Collapse server history automatically (TDF-0033.3), Chat history (last HISTORY_ON,
+// TDF-0033.5), Clear history now and Hide messages by user (TDF-0010, TDF-0044). Media and
+// Gallery Settings, one flat list: Include my images (TDF-0009.13), Store images offline,
+// Compress stored images (TDF-0036), Use media quickview (TDF-0035) and Gallery size limit (MB).
+// Every boolean setting is a checkbox drawn as a switch (tdf-opt-switch). Chat history (last
+// HISTORY_ON) is one too: on replays the newest HISTORY_ON lines on reload, and turning it off
+// deletes every saved line at once, its hint saying how many beforehand. A hint under the gallery field says what the typed value
 // would delete; the setting is written, and the deletion runs, only when the value is committed
 // (change: Enter or leaving the field). The two deletions ask first, inline. The rail gives the
 // flyout body its scrollbar.
@@ -184,11 +184,12 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     return { input, hint };
   };
 
-  // Chat history (last 100, TDF-0033.5): a switch over `historyCount`, 100 on and 0 off.
+  // Chat history (last HISTORY_ON, TDF-0033.5): a switch over `historyCount`, HISTORY_ON on and
+  // 0 off. The label's count derives from the constant, so it cannot disagree with the cap.
   const historyRow = el('label', 'tdf-opt-row');
   const historyBox = el('input', 'tdf-opt-switch');
   historyBox.type = 'checkbox';
-  historyRow.append(el('span', '', 'Chat history (last 100)'), historyBox);
+  historyRow.append(el('span', '', `Chat history (last ${HISTORY_ON})`), historyBox);
   const historyHint = el('div', 'tdf-opt-hint');
   historyHint.setAttribute('aria-live', 'polite');
   root.append(historyRow, historyHint);
@@ -481,7 +482,7 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
 
   gallery.input.addEventListener('input', () => galleryHint(valueOf(gallery.input)));
 
-  // Ticking writes 100. Unticking writes 0, then deletes every saved line, announced so the open
+  // Ticking writes HISTORY_ON. Unticking writes 0, then deletes every saved line, announced so the open
   // view and tags follow, as Clear history now does. A refused write shows the stored value
   // again. Only the latest toggle reverts or clears, so a quick off-then-on never deletes after
   // it, and an earlier refusal never overrides a later choice.

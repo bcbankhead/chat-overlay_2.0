@@ -138,10 +138,10 @@ async function start(lift, coreReady) {
     theme = createTheme({ win, settings, root: html });
     await theme.load();
     mount(theme);
-    // Chat history (last 100, TDF-0033.5): a stored Chat history (days) value is retired first,
-    // so this read sees its migrated count. Off keeps nothing: the hook stores nothing, and the
-    // replay shows nothing left from before it was turned off. Followed live, as Settings
-    // writes it.
+    // Chat history (last HISTORY_ON, TDF-0033.5): a stored Chat history (days) value is retired
+    // first, so this read sees its migrated count. Off keeps nothing: the hook stores nothing,
+    // and the replay shows nothing left from before it was turned off. Followed live, as
+    // Settings writes it.
     await settings.migrateHistory();
     let historyCount = await settings.get('historyCount');
     // The engine hook reads this synchronous copy while the next load's first polls arrive,
@@ -158,7 +158,7 @@ async function start(lift, coreReady) {
       }),
     );
     const { expired, pending } = await history.expirePending(roomID);
-    // Replay shows the newest historyCount lines; the view keeps at most HISTORY_ON either way.
+    // Replay shows the newest historyCount lines; the view keeps at most LIVE_CEILING either way.
     // Lines past the storage age are skipped here rather than left to the Options feature's
     // load-time prune, which may finish after this read.
     const records =

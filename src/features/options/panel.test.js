@@ -23,13 +23,13 @@ function mediaSwitches(/** @type {HTMLElement} */ container) {
   return boxes;
 }
 const AUTOSCROLL = 'input.tdf-opt-autoscroll';
-const HISTORY = 'Chat history (last 100)';
+const HISTORY = 'Chat history (last 25)';
 
 /** A settings stand-in over a plain object; `fail` makes every read reject, `failWrite` every write. */
 function stubSettings(values = {}, { fail = false, failWrite = false } = {}) {
   /** @type {Record<string, unknown>} */
   const store = {
-    historyCount: 100,
+    historyCount: 25,
     galleryLimitMB: null,
     includeMyImages: false,
     storeImagesOffline: false,
@@ -154,14 +154,14 @@ function setup({ settings = stubSettings(), limits = stubLimits(), engine = true
   return { win, doc, container, cleanup, history, gallery, hints, type, toggle, settings, limits };
 }
 
-// TDF-0033.5: Chat history (last 100), a switch over historyCount.
+// TDF-0033.5, TDF-0056: Chat history (last 25), a switch over historyCount.
 
-const ON_HINT = 'Replays the newest 100 lines on reload.';
+const ON_HINT = 'Replays the newest 25 lines on reload.';
 const OFF_HINT = 'No chat history is kept or replayed.';
 
 test('Chat history is a switch, on, saying how many saved lines turning it off deletes', async () => {
   const { history, gallery, hints } = setup({
-    settings: stubSettings({ historyCount: 100, galleryLimitMB: 50 }),
+    settings: stubSettings({ historyCount: 25, galleryLimitMB: 50 }),
     limits: stubLimits({ stored: { a: 2, b: 1 } }),
   });
   await settle();
@@ -211,13 +211,13 @@ test('unticking Chat history writes 0, then deletes every saved line, and says n
   assert.equal(hints()[0], OFF_HINT);
 });
 
-test('ticking Chat history writes 100 and deletes nothing', async () => {
+test('ticking Chat history writes 25 and deletes nothing', async () => {
   const limits = stubLimits({ stored: { a: 2 } });
   const { hints, toggle, settings } = setup({ settings: stubSettings({ historyCount: 0 }), limits });
   await settle();
   toggle(true);
   await settle();
-  assert.deepEqual(settings.writes, [['historyCount', 100]]);
+  assert.deepEqual(settings.writes, [['historyCount', 25]]);
   assert.deepEqual(deletions(limits), []);
   assert.equal(hints()[0], `${ON_HINT} Turning it off deletes 2 saved lines.`);
 });
@@ -240,7 +240,7 @@ test('a quick off-then-on writes both, and the stale untick deletes nothing', as
   toggle(false);
   toggle(true);
   await settle();
-  assert.deepEqual(settings.writes, [['historyCount', 0], ['historyCount', 100]]);
+  assert.deepEqual(settings.writes, [['historyCount', 0], ['historyCount', 25]]);
   assert.deepEqual(deletions(limits), []);
   assert.equal(history.checked, true);
 });
@@ -252,7 +252,7 @@ test('refused writes on a quick off-then-on leave the switch showing the stored 
   toggle(false);
   toggle(true);
   await settle();
-  assert.equal(history.checked, true, 'stored 100: on');
+  assert.equal(history.checked, true, 'stored 25: on');
   assert.deepEqual(deletions(limits), []);
 });
 

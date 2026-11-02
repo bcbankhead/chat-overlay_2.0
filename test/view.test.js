@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
 import { timeLabel } from '../src/core/group.js';
-import { HISTORY_ON } from '../src/core/retention.js';
+import { HISTORY_ON, LIVE_CEILING } from '../src/core/retention.js';
 import { createView } from '../src/core/view.js';
 
 /**
@@ -67,10 +67,11 @@ function stubResize(win) {
 // The local day the pinned record times fall on (2 Jan 2026), so those times read HH:MM.
 const NOW = new Date(2026, 0, 2, 12, 0).getTime() / 1000;
 
-// The view's row ceiling in these tests, set apart from HISTORY_ON so the trim tests do not
-// move when that value is tuned; the trim's behaviour does not depend on its size. A null
-// ceiling leaves createView's own default.
-const CEILING = 200;
+// The view's row ceiling in these tests, distinct from LIVE_CEILING (and from HISTORY_ON) so a
+// trim test fails if createView ignores the `ceiling` it is given, and does not move when the
+// default is tuned; the trim's behaviour does not depend on its size. A null ceiling leaves
+// createView's own default.
+const CEILING = 150;
 
 async function setup({ autoScroll = true, reducedMotion = false, globals = {}, now = () => NOW, ceiling = CEILING, blocks, autoCollapse } = {}) {
   const win = new Window({ url: 'https://example.test/chat/' });
@@ -1092,7 +1093,7 @@ test('a backlog re-delivered after the replay is trimmed; the newest rows stay',
   view.replay(newest);
   // The engine's first poll: the server backlog, oldest first, overlapping the replay.
   // The overlap re-delivers the replayed records themselves, under their own ids.
-  for (let i = 0; i < 300; i++) {
+  for (let i = 0; i < 100 + CEILING; i++) {
     const mTime = 9_900 + i;
     view.place(rec({ id: mTime >= 10_000 ? `n${mTime - 10_000}` : `b${i}`, mTime: `${mTime}` }));
   }
@@ -1267,15 +1268,25 @@ test('a server message lands below an own message its confirm re-ordered later',
 // The count bound (TDF-0033.5): the view keeps at most its ceiling, the newest by order, and no
 // day window ages anything out.
 
-test('by default the view keeps the newest HISTORY_ON rows, however old they were received', async () => {
+test('by default the view keeps the newest LIVE_CEILING rows, however old they were received', async () => {
   const { view, root } = await setup({ ceiling: null });
-  view.replay(Array.from({ length: HISTORY_ON + 5 }, (_, i) => rec({ id: `r${i}`, mTime: `${1000 + i}`, receivedAt: i })));
+  view.replay(Array.from({ length: LIVE_CEILING + 5 }, (_, i) => rec({ id: `r${i}`, mTime: `${1000 + i}`, receivedAt: i })));
   const shown = ids(root);
-  assert.equal(shown.length, HISTORY_ON);
+  assert.equal(shown.length, LIVE_CEILING);
   assert.equal(shown[0], 'r5', 'the oldest went first');
   view.place(rec({ id: 'live', mTime: '5000', receivedAt: 10 ** 12 }));
-  assert.equal(ids(root).length, HISTORY_ON, 'a live message keeps the view at the bound');
+  assert.equal(ids(root).length, LIVE_CEILING, 'a live message keeps the view at the bound');
   assert.equal(ids(root)[0], 'r6');
+});
+
+test('the default ceiling is the live ceiling, not the look-back: live rows grow past HISTORY_ON (TDF-0056)', async () => {
+  assert.equal(LIVE_CEILING, 200);
+  assert.notEqual(LIVE_CEILING, HISTORY_ON);
+  const { view, root } = await setup({ ceiling: null });
+  view.replay(Array.from({ length: HISTORY_ON }, (_, i) => rec({ id: `r${i}`, mTime: `${1000 + i}`, receivedAt: i })));
+  for (let i = 0; i < 10; i++) view.place(rec({ id: `live${i}`, mTime: `${5000 + i}`, receivedAt: 10 ** 12 + i }));
+  assert.equal(ids(root).length, HISTORY_ON + 10, 'nothing trimmed under the live ceiling');
+  assert.equal(ids(root)[0], 'r0');
 });
 
 test('rows received long ago stay while under the ceiling: there is no age trim', async () => {
