@@ -4,7 +4,8 @@
 // users, duplicates, commands, PM rules) still decide what is shown and stored. Wraps
 // `sendData` to confirm each own message by its sendData.php response. With Chat history
 // off nothing is written to history; messages are still shown and announced, except those the
-// server sent from before the page loaded, which skip the engine entirely (TDF-0054).
+// server sent from before the page loaded, which skip the engine entirely (TDF-0054). With it
+// on, only the newest HISTORY_ON of those reach the engine (TDF-0055).
 
 import { describeError } from './errors.js';
 import { emitConfirmChange, emitDeleted, emitInbound } from './events.js';
@@ -20,6 +21,7 @@ import {
   whisperTarget,
 } from './parse.js';
 import { PENDING_TTL_MS, findPending, isExpired, provisionalId } from './reconcile.js';
+import { HISTORY_ON } from './retention.js';
 
 /** @typedef {import('./history.js').MessageRecord} MessageRecord */
 /** @typedef {import('./parse.js').ServerMessage} ServerMessage */
@@ -127,6 +129,12 @@ export function installEngineHook({ win, roomID }) {
   /** Server records of the poll being handled, in createMessageDiv call order. */
   /** @type {ServerMessage[]} */
   let queue = [];
+  /**
+   * The poll's pre-load main-div records the engine may draw with Chat history on: its newest
+   * HISTORY_ON, moderation commands aside (TDF-0055).
+   * @type {Set<ServerMessage>}
+   */
+  let backlogAllowed = new Set();
   let inPoll = false;
   /** Whether the poll being handled is the page load's history poll. */
   let inHistoryPoll = false;
@@ -173,6 +181,17 @@ export function installEngineHook({ win, roomID }) {
   let cutoffRead = false;
   /** @type {string[]} notices raised before `attach`, shown once it sets the view */
   let earlyNotices = [];
+
+  /**
+   * Whether a server record was sent before this page loaded, to the main div, and is not a
+   * moderation command: the records the load cutoff may hold back from the engine.
+   * @param {ServerMessage} server
+   */
+  const heldBackable = (server) =>
+    server.targetDiv === MAIN_DIV &&
+    loadCutoff !== null &&
+    Number(server.mTime) < loadCutoff &&
+    !isModeration(server.body);
 
   /** Whether Chat history is off: the setting once attached, its synchronous mirror before. */
   const historyOff = () => (buffered ? historyOffNow(win) : !storing());
@@ -342,6 +361,15 @@ export function installEngineHook({ win, roomID }) {
       queue = Array.from(req.responseXML.getElementsByTagName('usermessage'), (node) =>
         parseUserMessage(/** @type {Element} */ (node).textContent ?? ''),
       );
+      // Poll order is oldest first, so the newest pre-load records are the last ones. Counted
+      // here, before the engine draws any of them, so a record the engine then skips still
+      // takes one of the HISTORY_ON places. A throw allows the whole poll to draw.
+      const polled = queue;
+      backlogAllowed =
+        guard('History backlog not capped, drawing every message', () => {
+          const held = polled.filter(heldBackable);
+          return new Set(held.slice(Math.max(0, held.length - HISTORY_ON)));
+        }) ?? new Set(polled);
       inPoll = true;
       // The engine sends history=1 on the first poll only and clears the flag at the end of
       // this same call, so it is read here, on entry.
@@ -353,6 +381,7 @@ export function installEngineHook({ win, roomID }) {
       inPoll = false;
       inHistoryPoll = false;
       queue = [];
+      backlogAllowed = new Set();
     }
   };
   const wrappedHandle = win.handleMessages;
@@ -389,17 +418,16 @@ export function installEngineHook({ win, roomID }) {
         queue = queue.slice(i + 1);
       }
     }
-    // With Chat history off, a message the server sent from before this page loaded skips the
-    // engine: no row, no sound, no image or avatar requests, and nothing stored, shown or
-    // announced (TDF-0054). Without a server Date header nothing is suppressed. Moderation
-    // commands still reach the engine, which applies them, and private windows are out of scope.
+    // A message the server sent from before this page loaded skips the engine: no row, no
+    // sound, no image or avatar requests, and nothing stored, shown or announced. With Chat
+    // history off every one does (TDF-0054); with it on, all but the poll's newest HISTORY_ON
+    // (TDF-0055). Without a server Date header nothing is suppressed. Moderation commands still
+    // reach the engine, which applies them, and private windows are out of scope. A setting read
+    // that throws draws the message.
     if (
       server &&
-      mDiv === MAIN_DIV &&
-      loadCutoff !== null &&
-      Number(server.mTime) < loadCutoff &&
-      !isModeration(message) &&
-      guard('History setting not read', historyOff)
+      heldBackable(server) &&
+      guard('History setting not read', () => historyOff() || !backlogAllowed.has(server))
     ) {
       return false;
     }
