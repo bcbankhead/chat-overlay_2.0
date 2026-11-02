@@ -435,7 +435,26 @@ export function installEngineHook({ win, roomID }) {
     const send = inPoll ? null : lastSend;
     if (!inPoll) lastSend = null;
     const before = win.showMessages;
-    const result = origCreate.apply(this, arguments);
+    // A pre-load message that still reaches the engine (Chat history on, within HISTORY_ON) is
+    // drawn silently, in whichever poll carries it: doSound is swapped for a no-op for this one
+    // call, so no Audio is created and no mp3 requested, then restored even if the engine throws.
+    // Own echoes and engine-local notices have no server record and keep their sounds (TDF-0051).
+    // This relies on the engine calling the page global doSound by name, synchronously, inside
+    // createMessageDiv (message.js.php:1144-1157); a held reference or a deferred play escapes it.
+    const mute = Boolean(server && heldBackable(server)) && typeof win.doSound === 'function';
+    /** @type {unknown} */
+    let result;
+    if (mute) {
+      const doSound = win.doSound;
+      win.doSound = () => {};
+      try {
+        result = origCreate.apply(this, arguments);
+      } finally {
+        win.doSound = doSound;
+      }
+    } else {
+      result = origCreate.apply(this, arguments);
+    }
     /** @type {Observed} */
     const observed = {
       call,
