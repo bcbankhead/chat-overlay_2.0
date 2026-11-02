@@ -1,24 +1,17 @@
-// Post (TDF-0038): a gallery tile action that reposts its image into the chat. The image is
-// re-uploaded through the Share Files plugin (composer/share.js uploadShare), the route composer
-// attach uses, so the destination follows the same whisper rule: privately to the user in
-// #whisperID while whispering, otherwise to the room. The source is the stored original when one
-// was kept, else the share fetched again. Every I/O is injected; start.js wires the real ones.
+// Re-post (TDF-0038, TDF-0043): a gallery tile action that puts its image in the chat input box
+// as the waiting attachment (composer/api.js stageAttachment), the same thumbnail a dropped file
+// gets, and closes the flyout. Nothing is uploaded at the click: the member posts it with Enter or
+// Send, where the composer applies the whisper rule, and can add text or drop it with ×. The
+// source is the stored original when one was kept, else the share fetched again. Every I/O is
+// injected; start.js wires the real ones.
 
 import { baseType } from './reencode.js';
 
-/** Shown as the button's title, and the reason Post is disabled, on a tile with nothing to send. */
+/** Shown as the button's title, and the reason Re-post is disabled, on a tile with nothing to send. */
 export const POST_UNAVAILABLE = 'Image unavailable from server';
 
-/** How long a tile's Post stays disabled after a successful post. */
-export const POST_COOLDOWN_MS = 5000;
-
-/** A paper plane, stroked like the tile's trash (view.js ICONS). */
-const POST_ICON =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg>';
-
 /**
- * The fields of a gallery record (store.js ImageRecord) Post reads.
+ * The fields of a gallery record (store.js ImageRecord) Re-post reads.
  * @typedef {object} RepostItem
  * @property {string} id
  * @property {string} contentType
@@ -28,18 +21,17 @@ const POST_ICON =
 
 /**
  * @typedef {object} RepostDeps
- * @property {(file: File, toUser: string) => Promise<void>} upload  uploadShare: rejects with the refusal's reason
+ * @property {(file: File) => string | null} stage  composer/api.js stageAttachment: a refusal reason, or null when staged
  * @property {(id: string) => Promise<{ blob: Blob, contentType: string }>} fetchShare
- * @property {() => string} whisperTo  the user being whispered, '' for the room
  * @property {(item: RepostItem) => boolean} isUnavailable  open.js isUnavailable
+ * @property {() => void} closeGallery  closes the gallery flyout, moving no focus
+ * @property {() => unknown} galleryView  the open flyout's render, or null while closed: changed across the fetch, the flyout closed
  */
 
 /**
  * @typedef {object} RepostAction
  * @property {string} id
- * @property {string} label
- * @property {string} icon
- * @property {number} cooldownMs
+ * @property {string} label  rendered as the button's text (no icon), title and accessible name
  * @property {(item: RepostItem) => string | null} disabled
  * @property {(item: RepostItem) => Promise<void>} onSelect
  */
@@ -61,21 +53,24 @@ export function extensionFor(type) {
  * @param {RepostDeps} deps
  * @returns {RepostAction}
  */
-export function createRepostAction({ upload, fetchShare, whisperTo, isUnavailable }) {
+export function createRepostAction({ stage, fetchShare, isUnavailable, closeGallery, galleryView }) {
   return {
     id: 'post',
-    label: 'Post',
-    icon: POST_ICON,
-    cooldownMs: POST_COOLDOWN_MS,
+    label: 'Re-post',
     disabled: (item) => (isUnavailable(item) ? POST_UNAVAILABLE : null),
     onSelect: async (item) => {
       if (isUnavailable(item)) throw new Error(`gallery: ${POST_UNAVAILABLE.toLowerCase()}`);
-      // Read at the click, before any await, so a whisper ended mid-upload still goes where it was aimed.
-      const toUser = whisperTo();
+      const view = galleryView();
       const source = item.blob ? { blob: item.blob, contentType: item.contentType } : await fetchShare(item.id);
+      // Closed during the fetch: staging now would replace the box's attachment and take focus.
+      if (galleryView() !== view) return;
       const type = source.blob.type || source.contentType;
       const file = new File([source.blob], `${item.id}.${extensionFor(type)}`, { type: baseType(type) });
-      await upload(file, toUser);
+      // A refusal marks the button failed with the reason (view.js) and leaves the flyout open.
+      const reason = stage(file);
+      if (reason) throw new Error(reason);
+      // The box already holds focus (attach.js); closing moves none.
+      closeGallery();
     },
   };
 }

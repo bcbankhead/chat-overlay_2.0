@@ -6,6 +6,7 @@ import { openDb } from '../../core/db.js';
 import { emitInbound, emitLiked } from '../../core/events.js';
 import { createHistory } from '../../core/history.js';
 import { createSettings } from '../../core/settings.js';
+import { COMPOSER_NOT_READY, installStager } from '../composer/api.js';
 import { installRailHost, listPanels, listUserMenuActions } from '../rail/api.js';
 import { listGalleryItemActions } from './api.js';
 import { clearGalleryErrors } from './errors.js';
@@ -54,7 +55,7 @@ test('start wires capture, the Gallery panel and the "View images" menu action',
 
     /** @type {unknown[]} */
     const opened = [];
-    const uninstall = installRailHost({ open: (p, arg) => opened.push([p.id, arg]), report: () => {} });
+    const uninstall = installRailHost({ open: (p, arg) => opened.push([p.id, arg]), close: () => {}, report: () => {} });
     const user = { uuID: '9', name: 'bob b', rawName: 'bob%20b', roomID: '1', userID: '2', avatar: '', block: '1', ip: '', statusText: '' };
     const action = listUserMenuActions(user, () => {}).find((a) => a.id === 'gallery-view-images');
     assert.equal(action?.label, 'View images');
@@ -253,46 +254,40 @@ test('with Compress stored images off nothing is compressed, until it is switche
   }
 });
 
-test('start registers Post as a gallery item action', async () => {
+test('start registers Re-post as a gallery item action', async () => {
   const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   startGallery({ win, doc: win.document, css: '', indexedDB: new IDBFactory() });
   const post = listGalleryItemActions().find((a) => a.id === 'post');
   assert.ok(post);
-  assert.equal(post.label, 'Post');
-  assert.equal(post.cooldownMs, 5000);
+  assert.equal(post.label, 'Re-post');
+  assert.equal(post.icon, undefined);
+  assert.equal('cooldownMs' in post, false);
   assert.equal(post.disabled?.(/** @type {any} */ ({ id: ID, broken: true, contentType: '' })), 'Image unavailable from server');
   assert.equal(post.disabled?.(/** @type {any} */ ({ id: ID, broken: false, contentType: 'image/png' })), null);
   await settle();
   clearGalleryErrors();
 });
 
-const SHARE_FORM = `<form action="index.php" method="post" enctype="multipart/form-data">
-  <label><input type="radio" name="shareID" value="1" checked> Public</label>
-  <label><input type="radio" name="shareID" value="2"> Private</label>
-</form>`;
-
-test('Post fetches a record without a blob relative to win.location.href, then uploads it to the whispered user, or the room', async () => {
+test('Re-post fetches a record without a blob relative to win.location.href, stages it through composer/api.js and closes the gallery; nothing is uploaded', async () => {
   const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   const doc = win.document;
-  doc.body.innerHTML = '<input id="whisperID" value="bob b">';
   /** @type {string[]} */
   const fetched = [];
   win.fetch = async (/** @type {unknown} */ input) => {
     fetched.push(String(input));
     return new Response(new Blob([new Uint8Array(10)]), { headers: { 'content-type': 'image/png' } });
   };
-  // uploadShare (composer/share.js) reads the page's own globals, as the bundle does in the page.
-  const g = /** @type {any} */ (globalThis);
-  const saved = { fetch: g.fetch, location: g.location, DOMParser: g.DOMParser };
-  /** @type {{ url: string, method: string, body: any }[]} */
-  const uploads = [];
-  g.fetch = async (/** @type {unknown} */ url, /** @type {any} */ init = {}) => {
-    const method = init.method ?? 'GET';
-    uploads.push({ url: String(url), method, body: init.body });
-    return new Response(method === 'POST' ? 'File shared.' : SHARE_FORM, { status: 200 });
-  };
-  g.location = win.location;
-  g.DOMParser = win.DOMParser;
+  /** @type {File[]} */
+  const staged = [];
+  /** @type {string | null} */
+  let refusal = null;
+  const uninstallStager = installStager((file) => {
+    staged.push(file);
+    return refusal;
+  });
+  /** @type {string[]} */
+  const closed = [];
+  const uninstallHost = installRailHost({ open: () => {}, close: (p) => void closed.push(p.id), report: () => {} });
   try {
     startGallery({ win, doc, css: '', indexedDB: new IDBFactory() });
     const post = listGalleryItemActions().find((a) => a.id === 'post');
@@ -300,27 +295,54 @@ test('Post fetches a record without a blob relative to win.location.href, then u
     const item = /** @type {any} */ ({ id: ID, broken: false, contentType: 'image/png' });
 
     await post.onSelect(item);
-    assert.deepEqual(fetched, [shareUrl(ID, win.location.href)]);
-    assert.deepEqual(uploads.map((u) => [u.method, u.url]), [
-      ['GET', 'https://chat.example.com/forum/chat/plugins/share/?shareWithUser=bob%20b'],
-      ['POST', 'https://chat.example.com/forum/chat/plugins/share/index.php'],
-    ]);
-    const sent = uploads[1].body;
-    assert.deepEqual([sent.get('shareID'), sent.get('shareWithUser'), sent.get('uploadedfile').name], ['2', 'bob b', `${ID}.png`]);
+    assert.deepEqual(fetched, [shareUrl(ID, win.location.href)], 'only the share is fetched: no upload');
+    assert.deepEqual(staged.map((f) => [f.name, f.type, f.size]), [[`${ID}.png`, 'image/png', 10]]);
+    assert.deepEqual(closed, ['gallery']);
 
-    uploads.length = 0;
-    doc.getElementById('whisperID').value = '';
-    await post.onSelect(item);
-    assert.deepEqual(uploads.map((u) => [u.method, u.url]), [
-      ['GET', 'https://chat.example.com/forum/chat/plugins/share/'],
-      ['POST', 'https://chat.example.com/forum/chat/plugins/share/index.php'],
-    ]);
-    assert.deepEqual([uploads[1].body.get('shareID'), uploads[1].body.get('shareWithUser')], ['1', '']);
+    refusal = 'A file is still uploading';
+    await assert.rejects(Promise.resolve(post.onSelect(item)), { message: 'A file is still uploading' });
+    assert.equal(staged.length, 2);
+    assert.deepEqual(closed, ['gallery'], 'a refusal leaves the gallery open');
+
+    uninstallStager();
+    await assert.rejects(Promise.resolve(post.onSelect(item)), { message: COMPOSER_NOT_READY });
   } finally {
-    for (const [key, value] of Object.entries(saved)) {
-      if (value === undefined) delete g[key];
-      else g[key] = value;
-    }
+    uninstallStager();
+    uninstallHost();
+    await settle();
+    clearGalleryErrors();
+  }
+});
+
+test('Re-post stages nothing when the Gallery flyout closes while the share is still being fetched', async () => {
+  const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
+  /** @type {(r: Response) => void} */
+  let respond = () => {};
+  win.fetch = () => new Promise((resolve) => (respond = resolve));
+  /** @type {File[]} */
+  const staged = [];
+  const uninstallStager = installStager((file) => {
+    staged.push(file);
+    return null;
+  });
+  /** @type {string[]} */
+  const closed = [];
+  const uninstallHost = installRailHost({ open: () => {}, close: (p) => void closed.push(p.id), report: () => {} });
+  try {
+    startGallery({ win, doc: win.document, css: '', indexedDB: new IDBFactory() });
+    const panel = listPanels().find((p) => p.id === 'gallery');
+    const post = listGalleryItemActions().find((a) => a.id === 'post');
+    assert.ok(panel && post);
+    const cleanup = panel.render(win.document.createElement('div'));
+    const pending = Promise.resolve(post.onSelect(/** @type {any} */ ({ id: ID, broken: false, contentType: 'image/png' })));
+    if (typeof cleanup === 'function') cleanup();
+    respond(new Response(new Blob([new Uint8Array(10)]), { headers: { 'content-type': 'image/png' } }));
+    await pending;
+    assert.deepEqual(staged, []);
+    assert.deepEqual(closed, []);
+  } finally {
+    uninstallStager();
+    uninstallHost();
     await settle();
     clearGalleryErrors();
   }

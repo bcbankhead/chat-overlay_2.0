@@ -57,29 +57,40 @@ export function overLimit(items, limitBytes) {
 
 const UNITS = ['B', 'KB', 'MB', 'GB'];
 
-/** The size at which a tile's size chip turns orange: 1 MB in formatBytes's binary units. */
+/** 1 MB in formatBytes's binary units. */
 export const LARGE_BYTES = 1024 * 1024;
 
 /**
- * Whether a record's size on disk reads as large on its tile.
+ * The first byte count formatBytes shows in MB: 1023.5 KB, the first count whose whole-KB
+ * rounding would read `1024 KB`. From here up a size reads `1.0 MB`, and the chip is orange.
+ */
+export const MB_FROM = LARGE_BYTES - 512;
+
+/**
+ * Whether a record's size on disk reads as large on its tile: from the size formatBytes first
+ * shows in MB, so the colour and the text agree.
  * @param {number} bytes
  * @returns {boolean}
  */
 export function isLarge(bytes) {
-  return bytes >= LARGE_BYTES;
+  return bytes >= MB_FROM;
 }
 
 /**
- * A byte count for the header: `0 B`, `512 B`, `14.2 KB`, `3.1 MB`.
+ * A byte count for the header and the tile chip: whole numbers below 1 MB (`0 B`, `512 B`,
+ * `14 KB`), one decimal from there (`1.0 MB`, `3.1 MB`); never `1024 KB`.
  * @param {number} bytes
  * @returns {string}
  */
 export function formatBytes(bytes) {
-  let value = Math.max(0, bytes || 0);
-  let unit = 0;
+  const n = Math.max(0, bytes || 0);
+  if (n < 1024) return `${n} ${UNITS[0]}`;
+  if (n < MB_FROM) return `${Math.round(n / 1024)} ${UNITS[1]}`;
+  let value = n / LARGE_BYTES;
+  let unit = 2;
   while (value >= 1024 && unit < UNITS.length - 1) {
     value /= 1024;
     unit += 1;
   }
-  return unit === 0 ? `${value} ${UNITS[0]}` : `${value.toFixed(1)} ${UNITS[unit]}`;
+  return `${value.toFixed(1)} ${UNITS[unit]}`;
 }

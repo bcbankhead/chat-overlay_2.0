@@ -3,16 +3,16 @@
 // Gallery button joins the sidebar's icon row through registerRailPanel, and "View images"
 // joins every user's menu, opening the flyout filtered to that sender. With Compress stored
 // images on, originals stored before are compressed in the background once the database opens,
-// and again from the moment the setting is switched on (TDF-0036). Each tile carries Post
-// (TDF-0038), which reposts its image into the chat.
+// and again from the moment the setting is switched on (TDF-0036). Each tile carries Re-post
+// (TDF-0038, TDF-0043), which puts its image in the chat input box, reached only through the
+// composer's api.js.
 
 import { openDb } from '../../core/db.js';
 import { onInbound, onLiked } from '../../core/events.js';
 import { createHistory } from '../../core/history.js';
 import { createSettings, followSetting, onSettingChange } from '../../core/settings.js';
 import { registerRailPanel, registerUserMenuAction } from '../rail/api.js';
-import { uploadShare } from '../composer/share.js';
-import { whisperTarget } from '../composer/whisper.js';
+import { stageAttachment } from '../composer/api.js';
 import { registerGalleryItemAction } from './api.js';
 import { startCapture } from './capture.js';
 import { fetchShare } from './fetchShare.js';
@@ -84,13 +84,17 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
     doc.head.appendChild(style);
   }
 
+  /** @type {object | null} */
+  let view = null;
   const panel = registerRailPanel({
     id: 'gallery',
     title: 'Gallery',
     icon: GALLERY_ICON,
     order: 10,
-    render: (container, arg) =>
-      renderGallery(container, arg, {
+    render: (container, arg) => {
+      const current = {};
+      view = current;
+      const cleanup = renderGallery(container, arg, {
         doc,
         win,
         store: storeReady,
@@ -98,16 +102,22 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
         open: (item) => openImage(item, { win, store: storeReady, fetch, report }),
         retry: (item) => retryImage(item, { win, store: storeReady, fetch }),
         quickview,
-      }),
+      });
+      return () => {
+        if (view === current) view = null;
+        if (typeof cleanup === 'function') cleanup();
+      };
+    },
   });
 
-  // Post (TDF-0038): re-uploads the tile's image, to the whispered user as composer attach does.
+  // Re-post (TDF-0043): stages the tile's image in the chat input box, then closes the flyout.
   registerGalleryItemAction(
     createRepostAction({
-      upload: (file, toUser) => uploadShare(file, toUser),
+      stage: (file) => stageAttachment(file),
       fetchShare: (id) => fetchShare(id, { base: win.location.href, fetch }),
-      whisperTo: () => whisperTarget(doc),
       isUnavailable,
+      closeGallery: () => panel.close(),
+      galleryView: () => view,
     }),
   );
 

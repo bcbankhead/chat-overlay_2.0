@@ -22,14 +22,16 @@ import { describeError } from '../../core/errors.js';
 
 /**
  * What `registerRailPanel` returns: call it to unregister; `open(arg?)` shows the panel's
- * flyout in the mounted rail.
- * @typedef {(() => void) & { open: (arg?: unknown) => void }} RailPanelHandle
+ * flyout in the mounted rail; `close()` closes the flyout while it is this panel's, moving no
+ * focus, and does nothing otherwise.
+ * @typedef {(() => void) & { open: (arg?: unknown) => void, close: () => void }} RailPanelHandle
  */
 
 /**
- * The mounted rail, as `open` reaches it.
+ * The mounted rail, as `open` and `close` reach it.
  * @typedef {object} RailHost
  * @property {(panel: RailPanel, arg: unknown) => void} open  only ever given a registered panel
+ * @property {(panel: RailPanel) => void} close  closes the flyout only while `panel` is the open one
  * @property {(err: unknown) => void} report
  */
 
@@ -105,7 +107,7 @@ function sorted(map) {
 /**
  * Add a panel to the rail.
  * @param {RailPanel} panel
- * @returns {RailPanelHandle} unregister, carrying `open(arg?)`
+ * @returns {RailPanelHandle} unregister, carrying `open(arg?)` and `close()`
  */
 export function registerRailPanel(panel) {
   if (typeof panel?.render !== 'function') throw new TypeError('rail panel needs a render function');
@@ -120,11 +122,12 @@ export function registerRailPanel(panel) {
     }
     host.open(panel, arg);
   };
-  return Object.assign(unregister, { open });
+  const close = () => host?.close(panel);
+  return Object.assign(unregister, { open, close });
 }
 
 /**
- * Called by the rail on mount; `open` handles reach it until the returned function runs.
+ * Called by the rail on mount; `open` and `close` handles reach it until the returned function runs.
  * @param {RailHost} rail
  * @returns {() => void} uninstall
  */
