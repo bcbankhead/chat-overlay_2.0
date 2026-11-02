@@ -9,6 +9,9 @@
 // server copy, which makes the tile openable again when it loads.
 // Tiles are kept by id across refreshes, so a star or a new capture does not replay the
 // fade-in, which gallery.css keys on the rail's `tdf-settled` (set once the flyout's slide ends).
+// A refresh reconciles the grid by key and never detaches a tile that stays (TDF-0047):
+// detaching every tile emptied the grid mid-redraw, which reset the flyout's scroll to the top
+// and dropped focus from the star just clicked.
 // With Use media quickview on (TDF-0035), a tile click opens the media popover over the tiles
 // shown, in display order; its zoom is the tile's own open, and an unavailable tile still
 // retries rather than opening.
@@ -100,6 +103,20 @@ function setActionState(itemId, actionId, next) {
     if (!byAction.size) actionStates.delete(itemId);
   }
   for (const listener of [...actionListeners]) listener(itemId, actionId);
+}
+
+/**
+ * Put `els` into `parent` in order, moving only the ones not already in place. Children that
+ * are not in `els` are left for the caller to remove; any still present end up after `els`.
+ * @param {Element} parent
+ * @param {Element[]} els
+ */
+function reconcile(parent, els) {
+  let cursor = parent.firstElementChild;
+  for (const el of els) {
+    if (el === cursor) cursor = cursor.nextElementSibling;
+    else parent.insertBefore(el, cursor);
+  }
 }
 
 /** Test only: forget every action's state, so one test's in-flight or failed action does not leak into the next. */
@@ -534,7 +551,7 @@ export function renderGallery(
       });
       for (const [id, tile] of tiles) if (!next.has(id)) dropTile(tile);
       tiles = next;
-      grid.replaceChildren(...[...next.values()].map((t) => t.el));
+      reconcile(grid, [...next.values()].map((t) => t.el));
 
       empty.hidden = shown.length > 0;
       empty.textContent = favOnly
