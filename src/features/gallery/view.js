@@ -12,6 +12,10 @@
 // With Use media quickview on (TDF-0035), a tile click opens the media popover over the tiles
 // shown, in display order; its zoom is the tile's own open, and an unavailable tile still
 // retries rather than opening.
+// Registered actions sit in a bar at the lower right, opposite the size chip. One whose
+// onSelect returns a Promise holds its button busy until it settles, then cools down or shows
+// the failure's reason (TDF-0038's Post); its state is kept by item id at module scope, so a
+// redraw or a reopened flyout keeps it, and a promise settling after close still records it.
 
 import { renderIcon } from '../rail/icons.js';
 import { listGalleryItemActions, listGalleryItemDecorations, onGalleryRegistryChange } from './api.js';
@@ -57,7 +61,55 @@ const ICONS = {
  * @property {HTMLElement} size    the size-on-disk chip
  * @property {import('./store.js').ImageRecord} item
  * @property {string | null} url   the thumbnail's object URL
+ * @property {Map<string, { button: HTMLButtonElement, action: import('./api.js').GalleryItemAction }>} actions
  */
+
+/**
+ * A registered action's state on one item, kept at module scope rather than by the tile or the
+ * view, since a registry change rebuilds every tile and the rail renders a new view on every
+ * open. No entry is idle; neither is a cooling one past its `until` (a Date.now() time).
+ * @typedef {{ state: 'busy' } | { state: 'cooling', until: number } | { state: 'failed', reason: string }} ActionState
+ */
+
+/** @type {Map<string, Map<string, ActionState>>} item id → action id → its state */
+const actionStates = new Map();
+/** @type {Set<(itemId: string, actionId: string) => void>} each mounted view's redraw of one action */
+const actionListeners = new Set();
+
+/**
+ * @param {string} itemId
+ * @param {string} actionId
+ * @returns {ActionState | undefined}
+ */
+function getActionState(itemId, actionId) {
+  const st = actionStates.get(itemId)?.get(actionId);
+  if (st?.state !== 'cooling' || Date.now() < st.until) return st;
+  setActionState(itemId, actionId, null, false);
+  return undefined;
+}
+
+/**
+ * @param {string} itemId
+ * @param {string} actionId
+ * @param {ActionState | null} next  null returns it to idle
+ * @param {boolean} [notify]  false skips telling the mounted views
+ */
+function setActionState(itemId, actionId, next, notify = true) {
+  let byAction = actionStates.get(itemId);
+  if (next) {
+    if (!byAction) actionStates.set(itemId, (byAction = new Map()));
+    byAction.set(actionId, next);
+  } else if (byAction) {
+    byAction.delete(actionId);
+    if (!byAction.size) actionStates.delete(itemId);
+  }
+  if (notify) for (const listener of [...actionListeners]) listener(itemId, actionId);
+}
+
+/** Test only: forget every action's state, so one test's in-flight or cooling action does not leak into the next. */
+export function resetGalleryActionStates() {
+  actionStates.clear();
+}
 
 /**
  * @param {HTMLElement} container  the rail's flyout body
@@ -149,6 +201,102 @@ export function renderGallery(
 
   /** @type {Set<string>} ids whose retry is running, so each retries once at a time */
   const retrying = new Set();
+
+  /** @type {Map<string, ReturnType<typeof setTimeout>>} item id + action id → this view's timer to redraw a cooldown's end, cleared on close */
+  const cooldowns = new Map();
+
+  /**
+   * @param {string} itemId
+   * @param {string} actionId
+   */
+  function redrawAction(itemId, actionId) {
+    const tile = tiles.get(itemId);
+    if (tile) applyAction(tile, actionId);
+  }
+  actionListeners.add(redrawAction);
+
+  /**
+   * Draw one action button from its item and state. aria-disabled, not disabled, so a click on
+   * it is still this button's to swallow rather than falling through to the tile's open.
+   * @param {Tile} tile
+   * @param {string} actionId
+   */
+  function applyAction(tile, actionId) {
+    const entry = tile.actions.get(actionId);
+    if (!entry) return;
+    const { button, action } = entry;
+    const itemId = tile.item.id;
+    const st = getActionState(itemId, actionId);
+    const key = `${itemId} ${actionId}`;
+    if (st?.state === 'cooling' && !cooldowns.has(key)) {
+      cooldowns.set(
+        key,
+        win.setTimeout(() => {
+          cooldowns.delete(key);
+          redrawAction(itemId, actionId);
+        }, Math.max(0, st.until - Date.now())),
+      );
+    }
+    /** @type {string | null} */
+    let reason = null;
+    try {
+      reason = action.disabled?.(tile.item) ?? null;
+    } catch (err) {
+      report(err);
+    }
+    const blocked = Boolean(reason) || st?.state === 'busy' || st?.state === 'cooling';
+    button.setAttribute('aria-disabled', String(blocked));
+    button.classList.toggle('tdf-busy', st?.state === 'busy');
+    button.classList.toggle('tdf-failed', st?.state === 'failed');
+    if (st?.state === 'busy') button.setAttribute('aria-busy', 'true');
+    else button.removeAttribute('aria-busy');
+    const label = reason
+      ? reason
+      : st?.state === 'busy'
+        ? `${action.label}…`
+        : st?.state === 'cooling'
+          ? `${action.label} — done`
+          : st?.state === 'failed'
+            ? `${action.label} failed: ${st.reason}`
+            : action.label;
+    button.title = label;
+    button.setAttribute('aria-label', label);
+  }
+
+  /**
+   * Run a registered action from its button. A synchronous action is called as before; a
+   * returned Promise holds the button busy, then cooling or failed. Its settling is recorded
+   * even once this view has closed, so the next open draws it.
+   * @param {Tile} tile
+   * @param {string} actionId
+   */
+  function runAction(tile, actionId) {
+    const entry = tile.actions.get(actionId);
+    if (!entry || entry.button.getAttribute('aria-disabled') === 'true') return;
+    const { action } = entry;
+    const current = tiles.get(tile.item.id)?.item ?? tile.item;
+    const itemId = current.id;
+    /** @type {void | Promise<void>} */
+    let result;
+    try {
+      result = action.onSelect(current);
+    } catch (err) {
+      report(err);
+      return;
+    }
+    if (!result || typeof result.then !== 'function') return;
+    setActionState(itemId, actionId, { state: 'busy' });
+    result.then(
+      () => {
+        const ms = action.cooldownMs ?? 0;
+        setActionState(itemId, actionId, ms > 0 ? { state: 'cooling', until: Date.now() + ms } : null);
+      },
+      (err) => {
+        setActionState(itemId, actionId, { state: 'failed', reason: err instanceof Error ? err.message : String(err) });
+        report(err);
+      },
+    );
+  }
 
   /**
    * A tile's own action: open the image in a new tab, or retry one that is unavailable. Nothing
@@ -272,6 +420,9 @@ export function renderGallery(
     star.innerHTML = ICONS.star;
     el.append(badge, unavailable, size, trash, star);
 
+    /** @type {Tile} */
+    const tile = { el, star, trash, badge, size, item, url, actions: new Map() };
+
     const actions = listGalleryItemActions();
     if (actions.length) {
       const bar = doc.createElement('div');
@@ -286,20 +437,13 @@ export function renderGallery(
         renderIcon(b, action.icon || action.label);
         b.addEventListener('click', (event) => {
           event.stopPropagation();
-          const current = tiles.get(item.id)?.item ?? item;
-          try {
-            action.onSelect(current);
-          } catch (err) {
-            report(err);
-          }
+          runAction(tile, action.id);
         });
+        tile.actions.set(action.id, { button: b, action });
         bar.appendChild(b);
       }
       el.appendChild(bar);
     }
-
-    /** @type {Tile} */
-    const tile = { el, star, trash, badge, size, item, url };
 
     star.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -376,6 +520,7 @@ export function renderGallery(
     const trashLabel = item.favorite ? 'Favourites cannot be deleted' : 'Delete permanently';
     tile.trash.title = trashLabel;
     tile.trash.setAttribute('aria-label', trashLabel);
+    for (const actionId of tile.actions.keys()) applyAction(tile, actionId);
   }
 
   /** @param {import('./store.js').ImageStore} s */
@@ -443,6 +588,9 @@ export function renderGallery(
     offRegistry();
     offImages();
     offErrors();
+    actionListeners.delete(redrawAction);
+    for (const timer of cooldowns.values()) win.clearTimeout(timer);
+    cooldowns.clear();
     endPopover();
     for (const tile of tiles.values()) dropTile(tile);
     tiles = new Map();

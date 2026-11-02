@@ -7,6 +7,7 @@ import { emitInbound, emitLiked } from '../../core/events.js';
 import { createHistory } from '../../core/history.js';
 import { createSettings } from '../../core/settings.js';
 import { installRailHost, listPanels, listUserMenuActions } from '../rail/api.js';
+import { listGalleryItemActions } from './api.js';
 import { clearGalleryErrors } from './errors.js';
 import { shareUrl } from './shareParse.js';
 import { startGallery } from './start.js';
@@ -248,6 +249,79 @@ test('with Compress stored images off nothing is compressed, until it is switche
     assert.deepEqual([after.blob?.size, after.contentType, after.compressChecked], [4, 'image/jpeg', true]);
   } finally {
     restore();
+    clearGalleryErrors();
+  }
+});
+
+test('start registers Post as a gallery item action', async () => {
+  const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
+  startGallery({ win, doc: win.document, css: '', indexedDB: new IDBFactory() });
+  const post = listGalleryItemActions().find((a) => a.id === 'post');
+  assert.ok(post);
+  assert.equal(post.label, 'Post');
+  assert.equal(post.cooldownMs, 5000);
+  assert.equal(post.disabled?.(/** @type {any} */ ({ id: ID, broken: true, contentType: '' })), 'Image unavailable from server');
+  assert.equal(post.disabled?.(/** @type {any} */ ({ id: ID, broken: false, contentType: 'image/png' })), null);
+  await settle();
+  clearGalleryErrors();
+});
+
+const SHARE_FORM = `<form action="index.php" method="post" enctype="multipart/form-data">
+  <label><input type="radio" name="shareID" value="1" checked> Public</label>
+  <label><input type="radio" name="shareID" value="2"> Private</label>
+</form>`;
+
+test('Post fetches a record without a blob relative to win.location.href, then uploads it to the whispered user, or the room', async () => {
+  const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
+  const doc = win.document;
+  doc.body.innerHTML = '<input id="whisperID" value="bob b">';
+  /** @type {string[]} */
+  const fetched = [];
+  win.fetch = async (/** @type {unknown} */ input) => {
+    fetched.push(String(input));
+    return new Response(new Blob([new Uint8Array(10)]), { headers: { 'content-type': 'image/png' } });
+  };
+  // uploadShare (composer/share.js) reads the page's own globals, as the bundle does in the page.
+  const g = /** @type {any} */ (globalThis);
+  const saved = { fetch: g.fetch, location: g.location, DOMParser: g.DOMParser };
+  /** @type {{ url: string, method: string, body: any }[]} */
+  const uploads = [];
+  g.fetch = async (/** @type {unknown} */ url, /** @type {any} */ init = {}) => {
+    const method = init.method ?? 'GET';
+    uploads.push({ url: String(url), method, body: init.body });
+    return new Response(method === 'POST' ? 'File shared.' : SHARE_FORM, { status: 200 });
+  };
+  g.location = win.location;
+  g.DOMParser = win.DOMParser;
+  try {
+    startGallery({ win, doc, css: '', indexedDB: new IDBFactory() });
+    const post = listGalleryItemActions().find((a) => a.id === 'post');
+    assert.ok(post);
+    const item = /** @type {any} */ ({ id: ID, broken: false, contentType: 'image/png' });
+
+    await post.onSelect(item);
+    assert.deepEqual(fetched, [shareUrl(ID, win.location.href)]);
+    assert.deepEqual(uploads.map((u) => [u.method, u.url]), [
+      ['GET', 'https://chat.example.com/forum/chat/plugins/share/?shareWithUser=bob%20b'],
+      ['POST', 'https://chat.example.com/forum/chat/plugins/share/index.php'],
+    ]);
+    const sent = uploads[1].body;
+    assert.deepEqual([sent.get('shareID'), sent.get('shareWithUser'), sent.get('uploadedfile').name], ['2', 'bob b', `${ID}.png`]);
+
+    uploads.length = 0;
+    doc.getElementById('whisperID').value = '';
+    await post.onSelect(item);
+    assert.deepEqual(uploads.map((u) => [u.method, u.url]), [
+      ['GET', 'https://chat.example.com/forum/chat/plugins/share/'],
+      ['POST', 'https://chat.example.com/forum/chat/plugins/share/index.php'],
+    ]);
+    assert.deepEqual([uploads[1].body.get('shareID'), uploads[1].body.get('shareWithUser')], ['1', '']);
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete g[key];
+      else g[key] = value;
+    }
+    await settle();
     clearGalleryErrors();
   }
 });

@@ -3,17 +3,23 @@
 // Gallery button joins the sidebar's icon row through registerRailPanel, and "View images"
 // joins every user's menu, opening the flyout filtered to that sender. With Compress stored
 // images on, originals stored before are compressed in the background once the database opens,
-// and again from the moment the setting is switched on (TDF-0036).
+// and again from the moment the setting is switched on (TDF-0036). Each tile carries Post
+// (TDF-0038), which reposts its image into the chat.
 
 import { openDb } from '../../core/db.js';
 import { onInbound, onLiked } from '../../core/events.js';
 import { createHistory } from '../../core/history.js';
 import { createSettings, followSetting, onSettingChange } from '../../core/settings.js';
 import { registerRailPanel, registerUserMenuAction } from '../rail/api.js';
+import { uploadShare } from '../composer/share.js';
+import { whisperTarget } from '../composer/whisper.js';
+import { registerGalleryItemAction } from './api.js';
 import { startCapture } from './capture.js';
-import { openImage, retryImage } from './open.js';
+import { fetchShare } from './fetchShare.js';
+import { isUnavailable, openImage, retryImage } from './open.js';
 import { reportGalleryError } from './errors.js';
 import { compressOriginal } from './reencode.js';
+import { createRepostAction } from './repost.js';
 import { createImageStore } from './store.js';
 import { makeThumb } from './thumb.js';
 import { renderGallery } from './view.js';
@@ -94,6 +100,16 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
         quickview,
       }),
   });
+
+  // Post (TDF-0038): re-uploads the tile's image, to the whispered user as composer attach does.
+  registerGalleryItemAction(
+    createRepostAction({
+      upload: (file, toUser) => uploadShare(file, toUser),
+      fetchShare: (id) => fetchShare(id, { base: win.location.href, fetch }),
+      whisperTo: () => whisperTarget(doc),
+      isUnavailable,
+    }),
+  );
 
   registerUserMenuAction({
     id: 'gallery-view-images',

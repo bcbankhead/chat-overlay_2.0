@@ -15,6 +15,7 @@
 import { describeError } from '../../core/errors.js';
 import { MAIN_DIV } from '../../core/parse.js';
 import { uploadShare } from './share.js';
+import { whisperTarget } from './whisper.js';
 
 const UPLOAD_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>';
@@ -162,7 +163,7 @@ export function installAttach(bar, host) {
     thumb.classList.remove('tdf-attach-failed');
     thumb.classList.add('tdf-attach-busy');
     // Private to the whispered user while whispering; to the room otherwise.
-    const toUser = /** @type {HTMLInputElement | null} */ (document.getElementById('whisperID'))?.value ?? '';
+    const toUser = whisperTarget(document);
     try {
       await uploadShare(current.file, toUser);
     } catch (error) {
