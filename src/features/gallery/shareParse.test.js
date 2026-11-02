@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { extractShareIds, formatBytes, isLarge, LARGE_BYTES, overLimit, shareUrl } from './shareParse.js';
+import { extractShareIds, formatBytes, isLarge, LARGE_BYTES, MB_FROM, overLimit, shareUrl } from './shareParse.js';
 
 // The observed share text (reference/ANALYSIS.md, Images).
 const SHARE =
@@ -57,17 +57,33 @@ test('overLimit picks oldest non-favourites until the gallery fits, never a favo
   assert.deepEqual(overLimit([], 0), []);
 });
 
-test('formatBytes', () => {
+test('formatBytes shows whole numbers below 1 MB and one decimal from it', () => {
   assert.equal(formatBytes(0), '0 B');
   assert.equal(formatBytes(512), '512 B');
-  assert.equal(formatBytes(1536), '1.5 KB');
+  assert.equal(formatBytes(1023), '1023 B');
+  assert.equal(formatBytes(1024), '1 KB');
+  assert.equal(formatBytes(1536), '2 KB');
+  assert.equal(formatBytes(14.2 * 1024), '14 KB');
+  // The last count below MB_FROM rounds to 1023 KB; MB_FROM itself would round to 1024 KB.
+  assert.equal(formatBytes(1048063), '1023 KB');
+  assert.equal(formatBytes(1048064), '1.0 MB');
+  assert.equal(formatBytes(1048576), '1.0 MB');
+  assert.equal(formatBytes(3.1 * 1024 * 1024), '3.1 MB');
   assert.equal(formatBytes(3 * 1024 * 1024), '3.0 MB');
+  assert.equal(formatBytes(2 * 1024 * 1024 * 1024), '2.0 GB');
 });
 
-test('isLarge turns at 1 MB in binary units, inclusive', () => {
+test('formatBytes never reads 1024 KB', () => {
+  for (let n = 1024; n < 1048576 + 2048; n += 97) assert.doesNotMatch(formatBytes(n), /^1024(\.\d)? KB$/);
+  for (let n = 1047552; n <= 1048576; n += 1) assert.doesNotMatch(formatBytes(n), /^1024(\.\d)? KB$/, `${n}`);
+});
+
+test('isLarge turns where formatBytes first shows MB, inclusive', () => {
   assert.equal(LARGE_BYTES, 1048576);
+  assert.equal(MB_FROM, 1048064);
   assert.equal(isLarge(0), false);
-  assert.equal(isLarge(1048575), false);
+  assert.equal(isLarge(1048063), false);
+  assert.equal(isLarge(1048064), true);
   assert.equal(isLarge(1048576), true);
   assert.equal(isLarge(3 * 1048576), true);
 });
