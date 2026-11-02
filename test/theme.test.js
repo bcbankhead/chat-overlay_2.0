@@ -168,3 +168,8 @@ test('TDF-0027: a message time never wraps inside its full-date label', () => {
   const css = readFileSync(new URL('../src/core/theme.css', import.meta.url), 'utf8');
   assert.match(css, /#tdf-chat \.tdf-time \{[^}]*white-space: nowrap/);
 });
+
+test('TDF-0042: the chat list pads 16px below its last row, clear of the window edge', () => {
+  const css = readFileSync(new URL('../src/core/theme.css', import.meta.url), 'utf8');
+  assert.match(css, /#tdf-chat \.tdf-list \{[^}]*padding: 4px 0 16px;/);
+});
