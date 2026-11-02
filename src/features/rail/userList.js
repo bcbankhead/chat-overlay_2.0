@@ -1,10 +1,14 @@
 // The sidebar's rooms: each a chip-accordion (name, count, caret) over its user list. The
 // current room is open by default and fills the height; the others sit collapsed at the
-// bottom, and an expanded one offers Join room. A name opens the name menu.
+// bottom, and an expanded one offers Join room. A name opens the name menu. Below the current
+// room's online users, under a rule and a `Recently online` header, the users its entry and exit
+// lines name who are not online show ghosted; a ghosted row opens the profile only (TDF-0058).
 
 import { renderAvatar } from '../../core/avatar.js';
 import { safeDecodeURIComponent } from '../../core/parse.js';
+import { presence as pagePresence } from '../../core/presence.js';
 import { ICONS, renderIcon } from './icons.js';
+import { offlineProfileCall } from './menuModel.js';
 import { readRooms } from './rowParse.js';
 
 /**
@@ -71,6 +75,24 @@ export function createUserStore(win, container, onError) {
   };
 }
 
+/** At most this many rows in the current room's list; online users are never hidden (TDF-0058). */
+export const LIST_CAP = 20;
+
+const NO_PROFILE = 'Profile unavailable: this user has not been seen online since the page loaded';
+const PROFILES_OFF = 'Profile unavailable: profiles are turned off in this chat';
+const PROFILE_REF_UNKNOWN = "Profile unavailable: this chat's profile setting is not supported";
+
+/**
+ * Why a ghosted row has no profile call, for its tooltip.
+ * @param {import('./menuModel.js').EngineFlags} flags
+ * @returns {string}
+ */
+const noProfileReason = (flags) => {
+  if (!flags.profileOn) return PROFILES_OFF;
+  if (![0, 1, 2].includes(Number(flags.profileRef))) return PROFILE_REF_UNKNOWN;
+  return NO_PROFILE;
+};
+
 /**
  * @typedef {object} RoomView
  * @property {HTMLElement} section
@@ -94,10 +116,21 @@ export function createUserStore(win, container, onError) {
  *   onUser: (user: import('./rowParse.js').RailUser, x: number, y: number) => void,
  *   onError: (err: unknown) => void,
  *   avatars?: () => import('../../core/avatarResolver.js').AvatarResolver | null,
- * }} deps `avatars` is read per render: the bootstrap publishes it after the rail may mount
+ *   presence?: import('../../core/presence.js').Presence,
+ * }} deps `avatars` is read per render: the bootstrap publishes it after the rail may mount.
+ *   `presence` defaults to the page's store, which the engine hook writes
  * @returns {(slots: { current: HTMLElement, others: HTMLElement }) => () => void} mount, returning unmount
  */
-export function createRoomList({ doc, engine, store, attachScrollbar, onUser, onError, avatars = () => null }) {
+export function createRoomList({
+  doc,
+  engine,
+  store,
+  attachScrollbar,
+  onUser,
+  onError,
+  avatars = () => null,
+  presence = pagePresence,
+}) {
   return (slots) => {
     /** @type {Map<string, boolean>} opened or closed by the user, this page load */
     const chosen = new Map();
@@ -105,6 +138,14 @@ export function createRoomList({ doc, engine, store, attachScrollbar, onUser, on
     const views = new Map();
     /** @type {Map<string, import('./rowParse.js').RailUser>} by `uuID|roomID`, for the name menu */
     let users = new Map();
+    /** @type {Map<string, import('./menuModel.js').OfflineUser>} ghosted rows by `uuID|roomID` */
+    let offline = new Map();
+    /**
+     * What each user's online rows told this page load, by uuID: a ghosted row needs the forum
+     * userID under profileRef 2, and the engine's own form of the name.
+     * @type {Map<string, { userID: string, rawName: string }>}
+     */
+    const remembered = new Map();
 
     const empty = doc.createElement('div');
     empty.className = 'tdf-rail-empty';
@@ -184,6 +225,60 @@ export function createRoomList({ doc, engine, store, attachScrollbar, onUser, on
     }
 
     /**
+     * The current room's ghosted rows: rule, header, then each recently online user not online
+     * now, newest line first, as many as the cap leaves room for.
+     * @param {import('./rowParse.js').RailRoom} room
+     * @param {ReadonlySet<string>} online uuIDs online in any room the rail lists: a user who
+     *   moved to another room is not offline
+     * @returns {HTMLElement[]}
+     */
+    function renderOffline(room, online) {
+      const cap = Math.max(0, LIST_CAP - room.users.length);
+      const away = presence
+        .seen(room.roomID)
+        .filter((line) => !online.has(line.uuID))
+        .slice(0, cap);
+      if (away.length === 0) return [];
+      const rule = doc.createElement('li');
+      rule.className = 'tdf-rail-rule';
+      rule.setAttribute('role', 'separator');
+      const head = doc.createElement('li');
+      head.className = 'tdf-rail-section-head';
+      head.textContent = 'Recently online';
+      /** @type {HTMLElement[]} */
+      const rows = [rule, head];
+      const flags = engine.flags();
+      for (const line of away) {
+        const known = remembered.get(line.uuID);
+        /** @type {import('./menuModel.js').OfflineUser} */
+        const user = { uuID: line.uuID, name: line.name, ...(line.rawName ? { rawName: line.rawName } : {}), ...(known ?? {}) };
+        offline.set(`${user.uuID}|${room.roomID}`, user);
+        const li = doc.createElement('li');
+        li.className = 'tdf-rail-user tdf-rail-offline';
+        li.dataset.uuid = user.uuID;
+        li.dataset.room = room.roomID;
+        if (!offlineProfileCall(user, flags)) {
+          li.classList.add('tdf-rail-inert');
+          li.title = noProfileReason(flags);
+        }
+        const img = renderAvatar(doc, {
+          name: user.name,
+          userID: user.userID ?? '',
+          file: '',
+          src: '',
+          className: 'tdf-rail-avatar',
+          resolver: avatars(),
+        });
+        const name = doc.createElement('span');
+        name.className = 'tdf-rail-user-name';
+        name.textContent = user.name;
+        li.append(img, name);
+        rows.push(li);
+      }
+      return rows;
+    }
+
+    /**
      * Put `children` into `parent` in order, moving only what is out of place: a scroll
      * area taken out of the document loses its position.
      * @param {HTMLElement} parent
@@ -206,6 +301,15 @@ export function createRoomList({ doc, engine, store, attachScrollbar, onUser, on
         views.delete(id);
       }
       users = new Map();
+      offline = new Map();
+      /** @type {Set<string>} */
+      const online = new Set();
+      for (const room of rooms) {
+        for (const user of room.users) {
+          remembered.set(user.uuID, { userID: user.userID, rawName: user.rawName });
+          online.add(user.uuID);
+        }
+      }
       /** @type {HTMLElement[]} */
       const others = [];
       /** @type {HTMLElement | null} */
@@ -229,6 +333,8 @@ export function createRoomList({ doc, engine, store, attachScrollbar, onUser, on
           none.textContent = 'Nobody here';
           rows.push(none);
         }
+        // The history poll is per room, so only the current room knows who left it.
+        if (isCurrent) rows.push(...renderOffline(room, online));
         v.list.replaceChildren(...rows);
         for (const user of room.users) users.set(`${user.uuID}|${user.roomID}`, user);
         if (isCurrent) here = v.section;
@@ -242,7 +348,21 @@ export function createRoomList({ doc, engine, store, attachScrollbar, onUser, on
     const onName = (event) => {
       const target = /** @type {Element | null} */ (event.target);
       const row = /** @type {HTMLElement | null} */ (target?.closest?.('.tdf-rail-user') ?? null);
-      const user = row && users.get(`${row.dataset.uuid}|${row.dataset.room}`);
+      if (!row) return;
+      const key = `${row.dataset.uuid}|${row.dataset.room}`;
+      if (row.classList.contains('tdf-rail-offline')) {
+        event.preventDefault();
+        try {
+          // Built in the same render as the row, so a ghosted row always has its user.
+          const away = /** @type {import('./menuModel.js').OfflineUser} */ (offline.get(key));
+          const call = offlineProfileCall(away, engine.flags());
+          if (call) engine.call([call]);
+        } catch (err) {
+          onError(err);
+        }
+        return;
+      }
+      const user = users.get(key);
       if (!user) return;
       event.preventDefault();
       try {
@@ -256,10 +376,19 @@ export function createRoomList({ doc, engine, store, attachScrollbar, onUser, on
       slot.addEventListener('contextmenu', onName);
     }
 
+    const safeRender = () => {
+      try {
+        render();
+      } catch (err) {
+        onError(err);
+      }
+    };
     render();
     const offStore = store.subscribe(render);
+    const offPresence = presence.subscribe(safeRender);
     return () => {
       offStore();
+      offPresence();
       for (const slot of [slots.current, slots.others]) {
         slot.removeEventListener('click', onName);
         slot.removeEventListener('contextmenu', onName);

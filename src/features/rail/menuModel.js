@@ -83,7 +83,7 @@ const infoBox = (text) => ['showInfoBox', 'system', '220', '300', '200', '', tex
 
 /**
  * The profile id `userPanel` passes to `viewProfile`, per `profileRef`.
- * @param {import('./rowParse.js').RailUser} user
+ * @param {Pick<import('./rowParse.js').RailUser, 'uuID' | 'rawName' | 'userID'>} user
  * @param {unknown} profileRef
  */
 export function profileID(user, profileRef) {
@@ -97,6 +97,31 @@ export function profileID(user, profileRef) {
     default:
       return '';
   }
+}
+
+/**
+ * A recently online user the rail shows ghosted: known from an entry or exit line, plus what
+ * an online row this page load told it (TDF-0058).
+ * @typedef {object} OfflineUser
+ * @property {string} uuID
+ * @property {string} name     decoded, from the line
+ * @property {string} [rawName] the name in the engine's encoded form: from the user's online row
+ *   this load when there was one, else from the line
+ * @property {string} [userID]  forum user id, when an online row gave one
+ */
+
+/**
+ * The one engine call a ghosted row makes: open the profile, or null when it cannot. Under
+ * `profileRef` 2 the forum userID is known only from the user's online row earlier this load.
+ * @param {OfflineUser} user
+ * @param {EngineFlags} flags
+ * @returns {EngineCall | null}
+ */
+export function offlineProfileCall(user, flags) {
+  if (!flags.profileOn) return null;
+  const name = user.rawName || user.name;
+  const id = profileID({ uuID: user.uuID, rawName: name, userID: user.userID ?? '' }, flags.profileRef);
+  return id ? ['viewProfile', id, name] : null;
 }
 
 /**

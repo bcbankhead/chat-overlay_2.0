@@ -273,6 +273,38 @@ body:has(#tdf-rail:not(.tdf-rail-failed)) :is(#roomIcon, #roomCreate, #roomSelec
   font-size: 12px;
 }
 
+/* Recently online (TDF-0058): a thin rule, a muted header, then ghosted rows. */
+#tdf-rail .tdf-rail-rule {
+  height: 0;
+  margin: 6px 8px 2px;
+  border-top: 1px solid var(--tdf-rail-chip-border);
+}
+
+#tdf-rail .tdf-rail-section-head {
+  padding: 2px 8px;
+  color: var(--tdf-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+#tdf-rail .tdf-rail-offline {
+  opacity: 0.5;
+}
+
+#tdf-rail .tdf-rail-offline:hover {
+  opacity: 0.75;
+}
+
+#tdf-rail .tdf-rail-offline.tdf-rail-inert {
+  cursor: default;
+}
+
+#tdf-rail .tdf-rail-offline.tdf-rail-inert:hover {
+  background: none;
+  opacity: 0.5;
+}
+
 #tdf-rail .tdf-rail-empty {
   padding: 4px 8px;
   color: var(--tdf-muted);

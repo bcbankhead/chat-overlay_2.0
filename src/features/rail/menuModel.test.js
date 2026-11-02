@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { builtInActions, profileID } from './menuModel.js';
+import { builtInActions, offlineProfileCall, profileID } from './menuModel.js';
 
 const user = {
   uuID: '12',
@@ -140,4 +140,23 @@ test('labels come from the engine lang strings when present', () => {
   const actions = builtInActions(user, flags({ lang: { lang33: 'PM', lang36: '' } }));
   assert.equal(find(actions, 'private').label, 'PM');
   assert.equal(find(actions, 'profile').label, 'View Profile');
+});
+
+// A ghosted, recently online user's row opens the profile only (TDF-0058).
+test('offlineProfileCall: profileRef 0 passes the uuID, 1 the name, 2 the remembered forum id', () => {
+  const away = { uuID: '40', name: 'Dan B' };
+  assert.deepEqual(offlineProfileCall(away, flags({ profileRef: 0 })), ['viewProfile', '40', 'Dan B']);
+  assert.deepEqual(offlineProfileCall(away, flags({ profileRef: 1 })), ['viewProfile', 'Dan B', 'Dan B']);
+  assert.equal(offlineProfileCall(away, flags({ profileRef: 2 })), null, 'no forum id seen this load');
+  const known = { ...away, rawName: 'Dan%20B', userID: '573' };
+  assert.deepEqual(offlineProfileCall(known, flags({ profileRef: 2 })), ['viewProfile', '573', 'Dan%20B']);
+  assert.deepEqual(offlineProfileCall(known, flags({ profileRef: 1 })), ['viewProfile', 'Dan%20B', 'Dan%20B'], 'the engine form of the name when an online row gave it');
+  const fromLine = { ...away, rawName: 'Dan%20B' };
+  assert.deepEqual(offlineProfileCall(fromLine, flags({ profileRef: 1 })), ['viewProfile', 'Dan%20B', 'Dan%20B'], "the line's encoded name for a user never online this load");
+});
+
+test('offlineProfileCall is null with profiles off, or an unknown profileRef', () => {
+  const away = { uuID: '40', name: 'Dan', userID: '573' };
+  assert.equal(offlineProfileCall(away, flags({ profileOn: 0, profileRef: 0 })), null);
+  assert.equal(offlineProfileCall(away, flags({ profileRef: 9 })), null);
 });

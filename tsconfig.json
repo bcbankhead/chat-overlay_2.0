@@ -30,6 +30,7 @@
     "src/core/blockGroups.js",
     "src/core/optOut.js",
     "src/core/historyMirror.js",
+    "src/core/presence.js",
     "src/features/composer/link.js",
     "src/features/composer/sharetext.js",
     "src/features/composer/refocus.js",
