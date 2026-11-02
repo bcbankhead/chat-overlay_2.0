@@ -1,9 +1,9 @@
 // The Settings flyout (UI design 2026-10-27, Flyouts → Settings), in two sections (TDF-0039).
-// Chat: Use Chat 2.0 (TDF-0037), Auto-scroll over the engine's #autoScrollID, and Clear chat
-// buffer. Media and Gallery Settings, one flat list: Include my images (TDF-0009.13), Store images
-// offline, Compress stored images (TDF-0036), Use media quickview (TDF-0035), Gallery size limit
-// (MB), Chat history (days), Clear history now and Delete messages by user (TDF-0010). Every
-// boolean setting is a checkbox drawn as a switch (tdf-opt-switch). A hint under each field says
+// Chat: Use Chat 2.0 (TDF-0037), Auto-scroll over the engine's #autoScrollID, Clear chat buffer,
+// Chat history (days), Clear history now and Hide messages by user (TDF-0010, TDF-0044). Media
+// and Gallery Settings, one flat list: Include my images (TDF-0009.13), Store images offline,
+// Compress stored images (TDF-0036), Use media quickview (TDF-0035) and Gallery size limit (MB).
+// Every boolean setting is a checkbox drawn as a switch (tdf-opt-switch). A hint under each field says
 // what the typed value would delete; the
 // setting is written, and the deletion runs, only when the value is committed (change: Enter or
 // leaving the field). The two deletions ask first, inline. The rail gives the flyout body its
@@ -124,7 +124,6 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     scrollRow,
     clear,
     el('div', 'tdf-opt-hint', 'Empties the message view. Saved history is kept and returns on reload.'),
-    el('div', 'tdf-opt-section', 'Media and Gallery Settings'),
   );
 
   /**
@@ -175,21 +174,6 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     );
   };
 
-  // Include my images: whether capture keeps the user's own shares, from the next share.
-  check('includeMyImages', 'Include my images');
-  // Store images offline: whether capture also keeps each new image's full copy, not only its
-  // thumbnail, from the next share.
-  check('storeImagesOffline', 'Store images offline');
-  // Compress stored images: each stored original is re-encoded as a smaller JPEG at its own
-  // dimensions, from the next share, and those already stored in the background (TDF-0036).
-  check('compressStoredImages', 'Compress stored images');
-  // Use media quickview: a shared image or gallery tile opens in the in-chat popover; off opens
-  // a new tab. Read at each click, so it applies without a reload (TDF-0035).
-  check('useMediaQuickview', 'Use media quickview');
-
-  const gallery = field('Gallery size limit (MB)', 'No limit');
-  gallery.input.min = '1';
-
   const history = field('Chat history (days)', '');
 
   /**
@@ -202,11 +186,25 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
    *   none: () => string,
    *   question: (n: number) => string,
    *   run: () => Promise<string[]>,
+   *   done?: (n: number) => string,
+   *   failed?: (err: string) => string,
    *   after?: () => void,
    *   lock?: (on: boolean) => void,
    * }} step
    */
-  const confirmStep = (label, { count, none, question, run, after = () => {}, lock = () => {} }) => {
+  const confirmStep = (
+    label,
+    {
+      count,
+      none,
+      question,
+      run,
+      done = (n) => `Deleted ${plural(n, 'message')}.`,
+      failed = (err) => `Could not delete: ${err}`,
+      after = () => {},
+      lock = () => {},
+    },
+  ) => {
     const button = el('button', 'tdf-opt-clear', label);
     button.type = 'button';
     const ask = el('div', 'tdf-opt-confirm');
@@ -265,11 +263,11 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
         const ids = await run();
         if (closed) return;
         reset();
-        report(`Deleted ${plural(ids.length, 'message')}.`);
+        report(done(ids.length));
       } catch (err) {
         if (closed) return;
         reset();
-        report(`Could not delete: ${describeError(err)}`, true);
+        report(failed(describeError(err)), true);
       }
       after();
     });
@@ -287,11 +285,12 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   });
   root.append(clearHistory.button, clearHistory.ask, clearHistory.hint);
 
-  // Delete messages by user: any sender in stored history, online or not. The option value is
-  // the stored sender, which is what the user index holds; the label is decoded.
+  // Hide messages by user: any sender in stored history, online or not. It removes their lines
+  // from local history only, so it says hide: the chat server may replay those messages. The
+  // option value is the stored sender, which is what the user index holds; the label is decoded.
   const senderRow = el('label', 'tdf-opt-row tdf-opt-sender');
   const sender = el('select', '');
-  senderRow.append(el('span', '', 'Delete messages by user'), sender);
+  senderRow.append(el('span', '', 'Hide messages by user'), sender);
   // The sender asked about, fixed for that question; the picker is locked while it is open.
   let asked = '';
   let locked = false;
@@ -301,14 +300,16 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     sender.disabled = locked || unavailable;
     if (!locked) byUser.button.disabled = unavailable;
   };
-  const byUser = confirmStep('Delete', {
+  const byUser = confirmStep('Hide', {
     count: () => {
       asked = sender.value;
       return limits.countByUser(asked);
     },
-    none: () => `No saved messages from ${senderLabel(asked)}.`,
-    question: (n) => `Delete ${plural(n, 'message')} from ${senderLabel(asked)}?`,
+    none: () => `No saved messages from ${senderLabel(asked)} to hide.`,
+    question: (n) => `Hide ${plural(n, 'message')} from ${senderLabel(asked)}?`,
     run: () => limits.deleteByUser(asked),
+    done: (n) => `Hid ${plural(n, 'message')}.`,
+    failed: (err) => `Could not hide: ${err}`,
     after: () => refreshSenders(),
     lock: (on) => {
       locked = on;
@@ -316,6 +317,23 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     },
   });
   root.append(senderRow, byUser.button, byUser.ask, byUser.hint);
+
+  root.append(el('div', 'tdf-opt-section', 'Media and Gallery Settings'));
+
+  // Include my images: whether capture keeps the user's own shares, from the next share.
+  check('includeMyImages', 'Include my images');
+  // Store images offline: whether capture also keeps each new image's full copy, not only its
+  // thumbnail, from the next share.
+  check('storeImagesOffline', 'Store images offline');
+  // Compress stored images: each stored original is re-encoded as a smaller JPEG at its own
+  // dimensions, from the next share, and those already stored in the background (TDF-0036).
+  check('compressStoredImages', 'Compress stored images');
+  // Use media quickview: a shared image or gallery tile opens in the in-chat popover; off opens
+  // a new tab. Read at each click, so it applies without a reload (TDF-0035).
+  check('useMediaQuickview', 'Use media quickview');
+
+  const gallery = field('Gallery size limit (MB)', 'No limit');
+  gallery.input.min = '1';
 
   // Only the latest read fills the list.
   let senderSeq = 0;
@@ -493,8 +511,11 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     },
     (err) => {
       if (closed) return;
-      history.hint.textContent = `Could not read settings: ${describeError(err)}`;
-      history.hint.classList.add('tdf-warn');
+      // The two fields sit in different sections (TDF-0044), so each carries the warning.
+      for (const field of [history, gallery]) {
+        field.hint.textContent = `Could not read settings: ${describeError(err)}`;
+        field.hint.classList.add('tdf-warn');
+      }
     },
   );
 
