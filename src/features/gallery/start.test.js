@@ -95,6 +95,41 @@ test('with Include my images on, only the signed-in user\'s own share, named by 
   }
 });
 
+for (const on of [false, true]) {
+  test(`My Images' empty state follows Include my images (${on ? 'on: no hint' : 'off: the hint'}) through start's wiring (TDF-0046)`, async () => {
+    const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
+    win.userName = 'me';
+    const doc = win.document;
+    const logged = console.error;
+    console.error = () => {};
+    try {
+      const indexedDB = new IDBFactory();
+      if (on) await createSettings(await openDb({ indexedDB })).set('includeMyImages', true);
+      startGallery({ win, doc, css: '', indexedDB });
+      const panel = listPanels().find((p) => p.id === 'gallery');
+      assert.ok(panel);
+      const body = doc.createElement('div');
+      const cleanup = panel.render(body);
+      await settle();
+      const mine = /** @type {HTMLButtonElement} */ (body.querySelector('.tdf-gallery-minefilter'));
+      assert.equal(mine.hidden, false);
+      mine.click();
+      await settle();
+      const empty = /** @type {HTMLElement} */ (body.querySelector('.tdf-gallery-empty'));
+      assert.equal(
+        empty.textContent,
+        on
+          ? 'No images from you yet.'
+          : 'No images from you yet. Include my images is off, so only images saved before it was turned off are kept.',
+      );
+      if (typeof cleanup === 'function') cleanup();
+    } finally {
+      console.error = logged;
+      clearGalleryErrors();
+    }
+  });
+}
+
 test('with Use media quickview off, clicking a Gallery tile opens its share URL in a new tab through win.open', async () => {
   const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   const doc = win.document;

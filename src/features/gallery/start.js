@@ -50,6 +50,11 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
   // Read at each tile click (view.js), which cannot await; a failed open is reported above, a
   // failed read through report.
   const quickview = followSetting(ready.then((r) => r.settings), 'useMediaQuickview', report);
+  // Read for My Images' empty state (TDF-0046): with it off, only own images saved earlier remain.
+  const includeMine = followSetting(ready.then((r) => r.settings), 'includeMyImages', report);
+  // The form engine-hook.js compares to mUser, which is what images.user stores. One reader for
+  // capture and My Images (TDF-0046), so what is saved as yours and what is shown as yours agree.
+  const self = () => String(/** @type {any} */ (win).userName ?? '');
 
   const capture = startCapture({
     ready,
@@ -61,8 +66,7 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
     makeThumb: (blob) => makeThumb(blob),
     base: () => win.location.href,
     report,
-    // The form engine-hook.js compares to mUser, which is what images.user stores.
-    self: () => String(/** @type {any} */ (win).userName ?? ''),
+    self,
     compress: (blob) => compressOriginal(blob),
   });
   const backfill = () => capture.backfill().catch(report);
@@ -102,6 +106,8 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
         open: (item) => openImage(item, { win, store: storeReady, fetch, report }),
         retry: (item) => retryImage(item, { win, store: storeReady, fetch }),
         quickview,
+        includeMine,
+        self,
       });
       return () => {
         if (view === current) view = null;

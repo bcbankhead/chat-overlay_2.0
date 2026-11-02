@@ -61,7 +61,8 @@
   cursor: pointer;
 }
 
-:root[data-tdf-theme] #tdf-rail .tdf-gallery-favfilter {
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-favfilter,
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-minefilter {
   display: grid;
   place-items: center;
   width: 28px;
@@ -74,7 +75,8 @@
   cursor: pointer;
 }
 
-:root[data-tdf-theme] #tdf-rail .tdf-gallery-favfilter svg {
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-favfilter svg,
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-minefilter svg {
   width: 16px;
   height: 16px;
 }
@@ -82,6 +84,17 @@
 :root[data-tdf-theme] #tdf-rail .tdf-gallery-favfilter[aria-pressed="true"] {
   color: var(--tdf-gallery-star);
   border-color: var(--tdf-gallery-star);
+}
+
+/* My Images (TDF-0046): pressed in the link accent, so it never reads as the star filter. */
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-minefilter[aria-pressed="true"] {
+  color: var(--tdf-link);
+  border-color: var(--tdf-link);
+}
+
+/* display: grid above outranks the hidden attribute; hidden while no user name is known. */
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-minefilter[hidden] {
+  display: none;
 }
 
 /* Failures recorded while the gallery was closed (errors.js); a click dismisses them. */
