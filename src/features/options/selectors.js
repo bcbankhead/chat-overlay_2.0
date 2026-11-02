@@ -1,6 +1,6 @@
-// Pure rules behind the Settings flyout's Storage section: what a typed value means, which
-// records a limit removes, and how a stored sender is shown. No I/O; limits.js applies them to
-// the stores.
+// Pure rules behind the Settings flyout's history and gallery limits (Media and Gallery
+// Settings): what a typed value means, which records a limit removes, and how a stored sender is
+// shown. No I/O; limits.js applies them to the stores.
 
 import { safeDecodeURIComponent } from '../../core/parse.js';
 

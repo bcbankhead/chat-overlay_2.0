@@ -1,9 +1,10 @@
-// The Settings flyout (UI design 2026-10-27, Flyouts → Settings). Chat: Use Chat 2.0 (TDF-0037),
-// the Auto-scroll switch
-// over the engine's #autoScrollID, and Clear chat buffer. Storage: Chat history (days), Clear
-// history now and Delete messages by user (TDF-0010), Gallery size limit (MB), Include my images
-// (TDF-0009.13), Store images offline and Compress stored images (TDF-0036). Media: Use media
-// quickview (TDF-0035). A hint under each field says what the typed value would delete; the
+// The Settings flyout (UI design 2026-10-27, Flyouts → Settings), in two sections (TDF-0039).
+// Chat: Use Chat 2.0 (TDF-0037), Auto-scroll over the engine's #autoScrollID, and Clear chat
+// buffer. Media and Gallery Settings, one flat list: Include my images (TDF-0009.13), Store images
+// offline, Compress stored images (TDF-0036), Use media quickview (TDF-0035), Gallery size limit
+// (MB), Chat history (days), Clear history now and Delete messages by user (TDF-0010). Every
+// boolean setting is a checkbox drawn as a switch (tdf-opt-switch). A hint under each field says
+// what the typed value would delete; the
 // setting is written, and the deletion runs, only when the value is committed (change: Enter or
 // leaving the field). The two deletions ask first, inline. The rail gives the flyout body its
 // scrollbar.
@@ -68,7 +69,7 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   // original chat, asking nothing; its Switch to Chat 2.0 link turns it back on. A write the
   // browser refuses says so here and does not reload.
   const chat2Row = el('label', 'tdf-opt-row');
-  const chat2 = el('input', 'tdf-opt-check tdf-opt-chat2');
+  const chat2 = el('input', 'tdf-opt-switch tdf-opt-chat2');
   chat2.type = 'checkbox';
   chat2.checked = !chat2Off(win);
   chat2Row.append(el('span', '', 'Use Chat 2.0'), chat2);
@@ -90,7 +91,7 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
 
   // Auto-scroll: the engine's own checkbox, both ways; the engine reads it on every line.
   const scrollRow = el('label', 'tdf-opt-row');
-  const scroll = el('input', 'tdf-opt-switch');
+  const scroll = el('input', 'tdf-opt-switch tdf-opt-autoscroll');
   scroll.type = 'checkbox';
   scrollRow.append(el('span', '', 'Auto-scroll'), scroll);
   const engineScroll = doc.getElementById('autoScrollID');
@@ -123,7 +124,7 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     scrollRow,
     clear,
     el('div', 'tdf-opt-hint', 'Empties the message view. Saved history is kept and returns on reload.'),
-    el('div', 'tdf-opt-section', 'Storage'),
+    el('div', 'tdf-opt-section', 'Media and Gallery Settings'),
   );
 
   /**
@@ -144,6 +145,50 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     root.append(row, hint);
     return { input, hint };
   };
+
+  /**
+   * A toggle row over a boolean setting, written on change; its hint shows only a failure.
+   * @param {'includeMyImages' | 'storeImagesOffline' | 'compressStoredImages' | 'useMediaQuickview'} key
+   * @param {string} label
+   */
+  const check = (key, label) => {
+    const row = el('label', 'tdf-opt-row');
+    const box = el('input', 'tdf-opt-switch');
+    box.type = 'checkbox';
+    row.append(el('span', '', label), box);
+    const hint = el('div', 'tdf-opt-hint tdf-warn');
+    hint.setAttribute('aria-live', 'polite');
+    root.append(row, hint);
+    /** @param {string} text */
+    const failed = (text) => {
+      if (!closed) hint.textContent = text;
+    };
+    box.addEventListener('change', () => {
+      hint.textContent = '';
+      settings.set(key, box.checked).catch((err) => failed(`Could not apply: ${describeError(err)}`));
+    });
+    settings.get(key).then(
+      (on) => {
+        if (!closed) box.checked = on;
+      },
+      (err) => failed(`Could not read settings: ${describeError(err)}`),
+    );
+  };
+
+  // Include my images: whether capture keeps the user's own shares, from the next share.
+  check('includeMyImages', 'Include my images');
+  // Store images offline: whether capture also keeps each new image's full copy, not only its
+  // thumbnail, from the next share.
+  check('storeImagesOffline', 'Store images offline');
+  // Compress stored images: each stored original is re-encoded as a smaller JPEG at its own
+  // dimensions, from the next share, and those already stored in the background (TDF-0036).
+  check('compressStoredImages', 'Compress stored images');
+  // Use media quickview: a shared image or gallery tile opens in the in-chat popover; off opens
+  // a new tab. Read at each click, so it applies without a reload (TDF-0035).
+  check('useMediaQuickview', 'Use media quickview');
+
+  const gallery = field('Gallery size limit (MB)', 'No limit');
+  gallery.input.min = '1';
 
   const history = field('Chat history (days)', '');
 
@@ -313,51 +358,6 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     syncSender();
   };
   refreshSenders();
-  const gallery = field('Gallery size limit (MB)', 'No limit');
-  gallery.input.min = '1';
-
-  /**
-   * A checkbox row over a boolean setting, written on change; its hint shows only a failure.
-   * @param {'includeMyImages' | 'storeImagesOffline' | 'compressStoredImages' | 'useMediaQuickview'} key
-   * @param {string} label
-   */
-  const check = (key, label) => {
-    const row = el('label', 'tdf-opt-row');
-    const box = el('input', 'tdf-opt-check');
-    box.type = 'checkbox';
-    row.append(el('span', '', label), box);
-    const hint = el('div', 'tdf-opt-hint tdf-warn');
-    hint.setAttribute('aria-live', 'polite');
-    root.append(row, hint);
-    /** @param {string} text */
-    const failed = (text) => {
-      if (!closed) hint.textContent = text;
-    };
-    box.addEventListener('change', () => {
-      hint.textContent = '';
-      settings.set(key, box.checked).catch((err) => failed(`Could not apply: ${describeError(err)}`));
-    });
-    settings.get(key).then(
-      (on) => {
-        if (!closed) box.checked = on;
-      },
-      (err) => failed(`Could not read settings: ${describeError(err)}`),
-    );
-  };
-
-  // Include my images: whether capture keeps the user's own shares, from the next share.
-  check('includeMyImages', 'Include my images');
-  // Store images offline: whether capture also keeps each new image's full copy, not only its
-  // thumbnail, from the next share.
-  check('storeImagesOffline', 'Store images offline');
-  // Compress stored images: each stored original is re-encoded as a smaller JPEG at its own
-  // dimensions, from the next share, and those already stored in the background (TDF-0036).
-  check('compressStoredImages', 'Compress stored images');
-
-  // Use media quickview: a shared image or gallery tile opens in the in-chat popover; off opens
-  // a new tab. Read at each click, so it applies without a reload (TDF-0035).
-  root.append(el('div', 'tdf-opt-section', 'Media'));
-  check('useMediaQuickview', 'Use media quickview');
 
   container.appendChild(root);
 

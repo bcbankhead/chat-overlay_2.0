@@ -10,9 +10,10 @@ import { MB_BYTES } from './selectors.js';
 
 const settle = () => new Promise((r) => setTimeout(r, 20));
 
-// The checkbox rows over settings-store values; Use Chat 2.0 is a checkbox too, but over the
-// opt-out flag in localStorage, and is tested on its own.
-const SETTING_CHECK = 'input.tdf-opt-check:not(.tdf-opt-chat2)';
+// The switch rows over settings-store values. Use Chat 2.0 (over the opt-out flag in
+// localStorage) and Auto-scroll (over the engine's checkbox) are switches too, tested on their own.
+const SETTING_CHECK = 'input.tdf-opt-switch:not(.tdf-opt-chat2):not(.tdf-opt-autoscroll)';
+const AUTOSCROLL = 'input.tdf-opt-autoscroll';
 
 /** A settings stand-in over a plain object; `fail` makes every read reject. */
 function stubSettings(values = {}, { fail = false } = {}) {
@@ -117,8 +118,9 @@ function setup({ settings = stubSettings(), limits = stubLimits(), engine = true
     limits: /** @type {any} */ (limits),
     ...(loadFailure ? { loadFailure } : {}),
   });
-  const [history, gallery] = /** @type {HTMLInputElement[]} */ ([...container.querySelectorAll('.tdf-opt-field input')]);
-  const hints = () => [...container.querySelectorAll('.tdf-opt-field + .tdf-opt-hint')].map((h) => h.textContent);
+  // The gallery limit precedes Chat history in the DOM (TDF-0039); hints() stays [history, gallery].
+  const [gallery, history] = /** @type {HTMLInputElement[]} */ ([...container.querySelectorAll('.tdf-opt-field input')]);
+  const hints = () => [history, gallery].map((input) => input.closest('.tdf-opt-field')?.nextElementSibling?.textContent);
   /** @param {HTMLInputElement} input @param {string} value @param {'input' | 'change'} type */
   const type = (input, value, typeName = 'input') => {
     input.value = value;
@@ -240,7 +242,7 @@ test('a commit that fails says so under its field', async () => {
 
 test('Auto-scroll mirrors the engine checkbox both ways, and stops following on close', async () => {
   const { win, doc, container, cleanup } = setup();
-  const mine = /** @type {HTMLInputElement} */ (container.querySelector('.tdf-opt-switch'));
+  const mine = /** @type {HTMLInputElement} */ (container.querySelector(AUTOSCROLL));
   const engine = /** @type {HTMLInputElement} */ (doc.getElementById('autoScrollID'));
   assert.equal(mine.checked, true);
   let engineChanges = 0;
@@ -263,7 +265,7 @@ test('Auto-scroll mirrors the engine checkbox both ways, and stops following on 
 
 test('without the engine checkbox the Auto-scroll switch is disabled', () => {
   const { container } = setup({ engine: false });
-  assert.equal(/** @type {HTMLInputElement} */ (container.querySelector('.tdf-opt-switch')).disabled, true);
+  assert.equal(/** @type {HTMLInputElement} */ (container.querySelector(AUTOSCROLL)).disabled, true);
 });
 
 test('Clear chat buffer calls the engine clrScreen and clears the view through core', (t) => {
@@ -314,20 +316,20 @@ test('a hint read that resolves after close is not written', async () => {
   assert.deepEqual(hints(), shown);
 });
 
-test('Include my images is a checkbox row after the gallery limit, showing the stored value', async () => {
+test('Include my images is a switch row opening Media and Gallery Settings, showing the stored value', async () => {
   for (const on of [false, true]) {
     const { container } = setup({ settings: stubSettings({ includeMyImages: on }) });
     await settle();
     const box = /** @type {HTMLInputElement} */ (container.querySelector(SETTING_CHECK));
     assert.equal(box.type, 'checkbox');
-    assert.equal(box.classList.contains('tdf-opt-switch'), false);
+    assert.equal(box.classList.contains('tdf-opt-switch'), true);
     assert.equal(box.checked, on);
     const row = /** @type {HTMLElement} */ (box.closest('label.tdf-opt-row'));
     assert.equal(row.textContent, 'Include my images');
-    // Directly after the Gallery size limit field and its hint.
+    // Directly after the section header.
     const before = row.previousElementSibling;
-    assert.ok(before?.classList.contains('tdf-opt-hint'));
-    assert.match(String(before?.previousElementSibling?.textContent), /Gallery size limit/);
+    assert.ok(before?.classList.contains('tdf-opt-section'));
+    assert.equal(before?.textContent, 'Media and Gallery Settings');
   }
 });
 
@@ -422,19 +424,18 @@ test('Compress stored images is a checkbox row after Store images offline, showi
   }
 });
 
-test('Use media quickview is a checkbox row under a Media section, after Store images offline, showing and writing it', async () => {
+test('Use media quickview is a switch row after Compress stored images, followed by the gallery limit, showing and writing it', async () => {
   for (const on of [true, false]) {
     const settings = stubSettings({ useMediaQuickview: on });
-    const { win, container } = setup({ settings });
+    const { win, container, gallery } = setup({ settings });
     await settle();
     const boxes = /** @type {HTMLInputElement[]} */ ([...container.querySelectorAll(SETTING_CHECK)]);
     assert.equal(boxes.length, 4);
     const box = boxes[3];
     const row = /** @type {HTMLElement} */ (box.closest('label.tdf-opt-row'));
     assert.equal(row.textContent, 'Use media quickview');
-    assert.equal(row.previousElementSibling?.textContent, 'Media');
-    assert.ok(row.previousElementSibling?.classList.contains('tdf-opt-section'));
-    assert.equal(row.previousElementSibling?.previousElementSibling?.previousElementSibling, boxes[2].closest('label'));
+    assert.equal(row.previousElementSibling?.previousElementSibling, boxes[2].closest('label'));
+    assert.equal(row.nextElementSibling?.nextElementSibling, gallery.closest('label'));
     assert.equal(box.checked, on);
     box.checked = !on;
     box.dispatchEvent(new win.Event('change'));
@@ -474,7 +475,8 @@ test('Clear history now and Delete messages by user sit after the Chat history f
   assert.match(String(historyHint.previousElementSibling?.textContent), /Chat history/);
   const { remove, hint } = senderControl(container);
   assert.match(String(remove.previousElementSibling?.textContent), /^Delete messages by user/);
-  assert.match(String(hint.nextElementSibling?.textContent), /Gallery size limit/);
+  // Delete messages by user closes the flyout (TDF-0039).
+  assert.equal(hint.nextElementSibling, null);
 });
 
 test('Clear history now asks with the count first; Cancel deletes nothing', async () => {
@@ -864,7 +866,7 @@ test('Use Chat 2.0 is the first checkbox row under Chat, above Auto-scroll, chec
   const { container } = setup();
   const { box, hint } = chat2Row(container);
   assert.equal(box.type, 'checkbox');
-  assert.ok(box.classList.contains('tdf-opt-check'));
+  assert.ok(box.classList.contains('tdf-opt-switch'));
   assert.equal(box.checked, true);
   const row = /** @type {HTMLElement} */ (box.closest('label.tdf-opt-row'));
   assert.equal(row.textContent, 'Use Chat 2.0');
@@ -872,7 +874,33 @@ test('Use Chat 2.0 is the first checkbox row under Chat, above Auto-scroll, chec
   assert.equal(row.previousElementSibling?.textContent, 'Chat');
   assert.ok(hint.classList.contains('tdf-opt-hint'));
   assert.equal(hint.textContent, '');
-  assert.equal(hint.nextElementSibling?.querySelector('.tdf-opt-switch') !== null, true, 'Auto-scroll follows');
+  assert.equal(hint.nextElementSibling?.querySelector(AUTOSCROLL) !== null, true, 'Auto-scroll follows');
+});
+
+test('Settings has exactly two sections, Chat and Media and Gallery Settings, the second in its fixed order', () => {
+  const { container } = setup();
+  const sections = [...container.querySelectorAll('.tdf-opt-section')];
+  assert.deepEqual(
+    sections.map((s) => s.textContent),
+    ['Chat', 'Media and Gallery Settings'],
+  );
+  // The labelled rows and buttons after the second header, in DOM order.
+  /** @type {string[]} */
+  const rows = [];
+  for (let node = sections[1].nextElementSibling; node; node = node.nextElementSibling) {
+    if (node.matches('label.tdf-opt-row, label.tdf-opt-field')) rows.push(String(node.querySelector('span')?.textContent));
+    else if (node.matches('button.tdf-opt-clear') && node.textContent !== 'Delete') rows.push(String(node.textContent));
+  }
+  assert.deepEqual(rows, [
+    'Include my images',
+    'Store images offline',
+    'Compress stored images',
+    'Use media quickview',
+    'Gallery size limit (MB)',
+    'Chat history (days)',
+    'Clear history now',
+    'Delete messages by user',
+  ]);
 });
 
 test('unchecking Use Chat 2.0 records 2.0 as off and reloads, asking nothing', () => {
