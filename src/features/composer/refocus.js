@@ -1,15 +1,23 @@
 // The message box is where focus belongs. It takes focus when the chat loads, when the last open
-// menu, picker or flyout closes, after a plain click outside every other field, when a printable
-// key is pressed with nothing editable focused (the key lands in the box), and when the window
-// regains focus. It never takes focus from another text field, from a text selection the user
-// has made, or while a menu is open. A press that closes a menu leaves the decision to its click,
-// so a drag that starts outside a menu still selects text. Clicks, load and window focus are
+// menu, picker, flyout or media popover closes, after a plain click outside every other field,
+// when a printable key is pressed with nothing editable focused (the key lands in the box), and
+// when the window regains focus. It never takes focus from another text field, from a text
+// selection the user has made, or while a menu or the media popover (TDF-0035) is open — the
+// popover's arrow keys reach it only while focus is off the box (TDF-0040). A press that closes
+// a menu leaves the decision to its click, so a drag that starts outside a menu still selects text. Clicks, load and window focus are
 // mouse-only: on a touch screen each would open the keyboard. A keyboard-activated click (Enter or
-// Space on a focused control) leaves focus on that control. The menus belong to other slices,
+// Space on a focused control) leaves focus on that control, and a popover closed from the keyboard
+// or on a touch screen leaves focus where the popover returned it (its opener). The menus belong to other slices,
 // so they are watched, not wired (TDF-0009 Shared Contract, Extension points).
 
-/** A menu, picker or flyout that is open, by the markup its owner gives it. */
-export const OPEN_MENU = '.tdf-rail-menu:not([hidden]), .tdf-sm-picker:not([hidden]), .tdf-rail-flyout.tdf-open';
+const POPOVER = '.tdf-lb';
+
+/**
+ * A menu, picker, flyout or media popover that is open, by the markup its owner gives it. The
+ * popover's layer (`.tdf-lb`, gallery/lightbox.js) exists only while it is open.
+ */
+export const OPEN_MENU =
+  `.tdf-rail-menu:not([hidden]), .tdf-sm-picker:not([hidden]), .tdf-rail-flyout.tdf-open, ${POPOVER}`;
 
 /**
  * Whether `el` takes typing of its own, so focus must stay with it.
@@ -45,12 +53,17 @@ export function installRefocus(bar, doc = bar.ownerDocument) {
     bar.focus({ preventScroll: true });
   };
 
+  const popoverOpen = () => doc.querySelector(POPOVER) !== null;
   let wasOpen = menuOpen();
+  let popoverWasOpen = popoverOpen();
   let pressing = false;
   let touch = false;
+  /** whether the last input was a key rather than a pointer press */
+  let keyed = false;
   /** @param {PointerEvent} event */
   const onPointerDown = (event) => {
     pressing = true;
+    keyed = false;
     touch = event.pointerType === 'touch';
   };
   const onPointerUp = () => {
@@ -58,9 +71,12 @@ export function installRefocus(bar, doc = bar.ownerDocument) {
   };
   const check = () => {
     const isOpen = menuOpen();
-    // A close during a press is settled by that press's click.
-    if (wasOpen && !isOpen && !pressing) take();
+    // A close during a press is settled by that press's click. The popover returns focus to its
+    // opener itself; a keyboard or touch close keeps it there.
+    const popoverKept = popoverWasOpen && (keyed || coarse());
+    if (wasOpen && !isOpen && !pressing && !popoverKept) take();
     wasOpen = isOpen;
+    popoverWasOpen = popoverOpen();
   };
   /** @param {MouseEvent} event */
   const onClick = (event) => {
@@ -74,6 +90,7 @@ export function installRefocus(bar, doc = bar.ownerDocument) {
   };
   /** @param {KeyboardEvent} event */
   const onKey = (event) => {
+    keyed = true;
     if (event.key.length !== 1 || event.ctrlKey || event.metaKey || event.altKey) return;
     const active = doc.activeElement;
     // Space presses a focused control; it is typing only with nothing focused.

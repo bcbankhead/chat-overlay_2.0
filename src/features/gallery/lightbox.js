@@ -18,6 +18,12 @@ export const FILMSTRIP_SLOTS = 41;
 
 const LAYER = 'tdf-lb';
 
+/**
+ * The message box's id — composer/index.js's BAR, copied rather than imported so the gallery does
+ * not pull in the composer; a drift test holds the two together.
+ */
+export const MESSAGE_BOX_ID = 'optionsBar';
+
 /** @type {Map<string, import('./roster.js').MediaKind>} what each share id loaded as */
 const knownKinds = new Map();
 
@@ -262,8 +268,13 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
   /** @param {KeyboardEvent} event */
   const onKey = (event) => {
     const target = /** @type {HTMLElement | null} */ (event.target);
-    // A text field behind the popover keeps its own caret keys and Escape.
-    if (target && (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable)) return;
+    // Escape in the message box closes the popover: the box has nothing open for Escape to close
+    // while the popover is up, and stopping it here keeps the box's own Escape handlers from firing
+    // (TDF-0040). The arrows stay with the box, which moves its caret.
+    const onBox = target?.tagName === 'TEXTAREA' && target.id === MESSAGE_BOX_ID;
+    // Any other text field behind the popover keeps its own caret keys and Escape.
+    const inField = target && (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable);
+    if (inField && !(onBox && event.key === 'Escape')) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();

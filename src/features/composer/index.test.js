@@ -7,6 +7,8 @@ import { Window } from 'happy-dom';
 import * as esbuild from 'esbuild';
 import { fileURLToPath } from 'node:url';
 import { adapt, THEME_BG } from '../../core/ink.js';
+import { MESSAGE_BOX_ID, openLightbox } from '../gallery/lightbox.js';
+import { OPEN_MENU } from './refocus.js';
 import { whisperTarget } from './whisper.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -28,9 +30,9 @@ before(async () => {
     stdin: {
       contents: [
         "import { mount } from '../../core/shell.js';",
-        "import './index.js';",
+        "import { BAR } from './index.js';",
         "import { openSmileyPicker } from './smilies.js';",
-        'window.__test = { mount, openSmileyPicker };',
+        'window.__test = { mount, openSmileyPicker, BAR };',
       ].join('\n'),
       resolveDir: here,
       sourcefile: 'harness.js',
@@ -1205,4 +1207,102 @@ test('the live Share Files form: scope is read from each radio\'s own cell, and 
   await settle();
   assert.equal(calls[1].body.get('shareID'), '2', 'private');
   assert.equal(calls[1].body.get('shareWithUser'), 'Bob');
+});
+
+test("the lightbox's copy of the message box id matches the composer's BAR", () => {
+  const { win } = page();
+  assert.equal(MESSAGE_BOX_ID, win.__test.BAR);
+});
+
+/** Open a real media popover over the composer page. */
+function openPopover(/** @type {any} */ window, /** @type {any} */ document) {
+  const opener = document.createElement('button');
+  document.body.appendChild(opener);
+  const item = { id: '1', src: 'https://chat.example.com/share/1', thumb: 't1', kind: /** @type {const} */ ('unknown') };
+  const two = { ...item, id: '2', src: 'https://chat.example.com/share/2', thumb: 't2' };
+  const opened = openLightbox({ doc: document, win: window, host: null, items: [item, two], index: 0, zoom: () => {}, report: () => {}, opener });
+  return { ...opened, opener };
+}
+
+test('an open media popover counts as an open menu', () => {
+  const { window, document } = page();
+  const { layer, close } = openPopover(window, document);
+  assert.ok(layer.matches(OPEN_MENU), 'the layer matches OPEN_MENU');
+  close();
+  assert.equal(document.querySelector(OPEN_MENU), null, 'nothing matches once closed');
+});
+
+test('while the popover is open a click inside it keeps focus off the box; Escape on the box closes it', async () => {
+  const { window, document, bar } = page();
+  await settle();
+  const { layer } = openPopover(window, document);
+  await settle();
+  assert.ok(document.activeElement !== bar, 'opening leaves focus in the popover');
+  await press(window, /** @type {any} */ (layer.querySelector('.tdf-lb-next')));
+  assert.ok(document.activeElement !== bar, 'a click on an arrow keeps focus off the box');
+  await press(window, /** @type {any} */ (layer.querySelector('.tdf-lb-thumb')));
+  assert.ok(document.activeElement !== bar, 'a filmstrip click keeps focus off the box');
+
+  bar.focus();
+  const arrow = new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true });
+  bar.dispatchEvent(arrow);
+  assert.equal(arrow.defaultPrevented, false, 'the arrow stays with the box');
+  const escape = new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  bar.dispatchEvent(escape);
+  assert.equal(escape.defaultPrevented, true);
+  assert.equal(document.querySelector('.tdf-lb'), null, 'Escape on the box closes the popover');
+});
+
+test('closing the popover returns focus to the box', async () => {
+  const { window, document, bar } = page();
+  await settle();
+  const { close } = openPopover(window, document);
+  await settle();
+  assert.ok(document.activeElement !== bar);
+  close();
+  await settle();
+  assert.ok(document.activeElement === bar, 'the last menu closing refocuses the box');
+});
+
+test('closing the popover with a mouse press on Close returns focus to the box', async () => {
+  const { window, document, bar } = page();
+  await settle();
+  const { layer } = openPopover(window, document);
+  await settle();
+  await press(window, /** @type {any} */ (layer.querySelector('.tdf-lb-close')));
+  assert.equal(document.querySelector('.tdf-lb'), null);
+  assert.ok(document.activeElement === bar);
+});
+
+test('closing the popover from the keyboard leaves focus on its opener', async () => {
+  const { window, document, bar } = page();
+  await settle();
+  const first = openPopover(window, document);
+  await settle();
+  const escape = new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  document.activeElement.dispatchEvent(escape);
+  await settle();
+  assert.equal(document.querySelector('.tdf-lb'), null, 'Escape closes the popover');
+  assert.ok(document.activeElement === first.opener, 'Escape leaves focus on the opener');
+  assert.ok(document.activeElement !== bar);
+
+  const second = openPopover(window, document);
+  await settle();
+  const close = /** @type {any} */ (second.layer.querySelector('.tdf-lb-close'));
+  close.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  close.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 0 }));
+  await settle();
+  assert.equal(document.querySelector('.tdf-lb'), null, 'Enter on Close closes the popover');
+  assert.ok(document.activeElement === second.opener, 'Enter on Close leaves focus on the opener');
+});
+
+test('closing the popover on a touch screen does not refocus the box', async () => {
+  const { window, document, bar } = page({ coarse: true });
+  await settle();
+  const { close, opener } = openPopover(window, document);
+  await settle();
+  close();
+  await settle();
+  assert.ok(document.activeElement !== bar, 'the box stays unfocused, so no keyboard opens');
+  assert.ok(document.activeElement === opener);
 });

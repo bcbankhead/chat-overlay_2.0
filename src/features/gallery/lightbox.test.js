@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
-import { FILMSTRIP_SLOTS, openLightbox } from './lightbox.js';
+import { FILMSTRIP_SLOTS, MESSAGE_BOX_ID, openLightbox } from './lightbox.js';
 
 /** @param {string} id @param {string | null} [thumb] */
 const item = (id, thumb = `thumb-${id}`) => ({
@@ -236,6 +236,24 @@ test('arrow keys and Escape in a text field behind the popover are left to the f
     assert.equal(s.$('.tdf-lb-count').textContent, '3 / 5', `${html}: no step`);
     assert.ok(s.doc.querySelector('.tdf-lb'), `${html}: Escape does not close`);
   }
+});
+
+test('Escape in the message box closes the popover; the arrows are left to the box', () => {
+  const s = setup();
+  const box = s.doc.createElement('textarea');
+  box.id = MESSAGE_BOX_ID;
+  s.doc.body.appendChild(box);
+  box.focus();
+  for (const k of ['ArrowRight', 'ArrowLeft']) {
+    const event = new s.win.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true });
+    box.dispatchEvent(event);
+    assert.equal(event.defaultPrevented, false, `${k} is not prevented`);
+  }
+  assert.equal(s.$('.tdf-lb-count').textContent, '3 / 5', 'no step');
+  const escape = new s.win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  box.dispatchEvent(escape);
+  assert.equal(escape.defaultPrevented, true, 'Escape is prevented');
+  assert.equal(s.doc.querySelector('.tdf-lb'), null, 'Escape closes');
 });
 
 test('a filmstrip thumbnail that fails falls back to the glyph for its kind', () => {
