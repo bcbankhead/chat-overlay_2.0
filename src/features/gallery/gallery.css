@@ -208,6 +208,15 @@
   gap: 4px;
 }
 
+/* A text action (Re-post, TDF-0043) reads as a short pill, on one line, inside the tile. */
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-action {
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 :root[data-tdf-theme] #tdf-rail .tdf-rail-flyout.tdf-settled .tdf-gallery-tile:is(:hover, :focus-within) :is(.tdf-gallery-btn, .tdf-gallery-action),
 :root[data-tdf-theme] #tdf-rail .tdf-rail-flyout.tdf-settled .tdf-gallery-tile.tdf-fav .tdf-gallery-star {
   opacity: 1;

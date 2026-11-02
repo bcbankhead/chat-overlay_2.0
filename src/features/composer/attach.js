@@ -11,9 +11,13 @@
 //
 // Until the root theme mounts, composer.css hides the thumbnail, so nothing attaches and Enter
 // and Send reach the engine as before. A file that cannot attach says why on the hint line.
+//
+// The same attach is installed as the composer's stager (api.js), so another feature can hand
+// the box a file — the gallery's Re-post (TDF-0043) — under the same rules as a drop.
 
 import { describeError } from '../../core/errors.js';
 import { MAIN_DIV } from '../../core/parse.js';
+import { COMPOSER_NOT_READY, installStager } from './api.js';
 import { uploadShare } from './share.js';
 import { whisperTarget } from './whisper.js';
 
@@ -111,11 +115,24 @@ export function installAttach(bar, host) {
     video.load();
   };
 
-  /** @param {File | null | undefined} file */
+  /** Say why on the hint line, and hand the reason back. @param {string} reason */
+  const refused = (reason) => {
+    refuse(reason);
+    return reason;
+  };
+
+  /**
+   * Make a file the waiting attachment, replacing any waiting one.
+   * @param {File | null | undefined} file
+   * @returns {string | null} why it did not attach, or null when it did
+   */
   const attach = (file) => {
-    if (!file || !themed()) return;
-    if (!ADMITTED.test(file.type)) return refuse(`Only images and videos can be attached: ${file.name}`);
-    if (pending?.busy) return refuse('A file is still uploading');
+    // Unthemed, the thumbnail and the hint are hidden (composer.css): nothing to draw on.
+    if (!themed()) return COMPOSER_NOT_READY;
+    // A file chooser closed without a choice: nothing was asked for, so the hint stays as it is.
+    if (!file) return 'No file to attach';
+    if (!ADMITTED.test(file.type)) return refused(`Only images and videos can be attached: ${file.name}`);
+    if (pending?.busy) return refused('A file is still uploading');
     if (pending) revoke(pending.url);
     const url = typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : '';
     pending = { file, url, busy: false };
@@ -136,7 +153,9 @@ export function installAttach(bar, host) {
     bar.classList.add('tdf-attach-has');
     place();
     bar.focus();
+    return null;
   };
+  installStager(attach);
 
   const clear = () => {
     if (pending) revoke(pending.url);

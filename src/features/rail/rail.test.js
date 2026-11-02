@@ -586,6 +586,36 @@ test('open(arg) shows the panel and passes arg to render; an icon click passes n
   late();
 });
 
+test("close() closes the flyout only while it is its own panel's, and moves no focus", async () => {
+  const t = setup();
+  let cleaned = 0;
+  const a = registerRailPanel({ id: 'ca', title: 'CA', icon: 'A', render: () => () => cleaned++ });
+  const b = registerRailPanel({ id: 'cb', title: 'CB', icon: 'B', render() {} });
+  const field = t.doc.createElement('textarea');
+  t.doc.body.appendChild(field);
+  field.focus();
+  a.open();
+  assert.equal(t.isOpen(), true);
+  b.close();
+  assert.equal(t.isOpen(), true, "another panel's close leaves this flyout open");
+  assert.equal(t.flyout().getAttribute('aria-label'), 'CA');
+  a.close();
+  assert.equal(t.isOpen(), false);
+  assert.equal(cleaned, 1, "the panel's cleanup ran");
+  assert.equal(t.icon('ca').getAttribute('aria-expanded'), 'false');
+  assert.equal(t.doc.activeElement, field, 'focus stays where it was');
+  a.close();
+  assert.equal(cleaned, 1, 'closing a closed flyout is a no-op');
+  assert.deepEqual(t.errors(), []);
+  a();
+  b();
+  await t.teardown();
+  // After teardown there is no rail to close: a no-op, not a throw.
+  const late = registerRailPanel({ id: 'late', title: 'L', icon: 'L', render() {} });
+  late.close();
+  late();
+});
+
 test('a panel whose render throws is reported, not fatal', async () => {
   const t = setup();
   const off = registerRailPanel({ id: 'bad', title: 'Bad', icon: 'B', render: () => { throw new Error('boom'); } });

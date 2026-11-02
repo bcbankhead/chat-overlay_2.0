@@ -289,7 +289,14 @@ export function mountRail({ doc, win, target, raise = 0, shell }) {
   doc.addEventListener('mouseup', onRelease, true);
   doc.addEventListener('keydown', onKey);
   const unsubscribe = onRegistryChange(renderIcons, report);
-  const uninstall = installRailHost({ open: show, report });
+  const uninstall = installRailHost({
+    open: show,
+    // A panel closing itself (the gallery after a Re-post) closes only its own flyout.
+    close: (panel) => {
+      if (open?.panel === panel) close();
+    },
+    report,
+  });
   renderIcons();
 
   return {

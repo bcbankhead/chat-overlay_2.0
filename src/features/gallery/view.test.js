@@ -405,10 +405,10 @@ test('a retry that loads makes an unavailable tile openable again, without openi
   assert.deepEqual(g.errors, []);
 });
 
-test('each tile shows its size on disk, orange from 1 MB, refreshed when a repair changes it', async () => {
+test('each tile shows its size on disk, orange from where it reads 1.0 MB, refreshed when a repair changes it', async () => {
   const g = await open();
-  await g.store.put(image({ id: 'a', receivedAt: 3, bytes: 1048575 }));
-  await g.store.put(image({ id: 'b', receivedAt: 2, bytes: 1048576 }));
+  await g.store.put(image({ id: 'a', receivedAt: 3, bytes: 1048063 }));
+  await g.store.put(image({ id: 'b', receivedAt: 2, bytes: 1048064 }));
   await g.store.put(image({ id: 'c', receivedAt: 1, bytes: 1536, broken: true }));
   await g.store.put(image({ id: 'd', receivedAt: 0, bytes: 512, broken: true, blob: new Blob(['x']) }));
   const cleanup = g.mount();
@@ -416,11 +416,11 @@ test('each tile shows its size on disk, orange from 1 MB, refreshed when a repai
   /** @param {string} id */
   const chip = (id) =>
     /** @type {HTMLElement} */ (g.tiles().find((t) => t.dataset.id === id)?.querySelector('.tdf-gallery-size'));
-  assert.equal(chip('a').textContent, '1024.0 KB');
+  assert.equal(chip('a').textContent, '1023 KB');
   assert.equal(chip('a').classList.contains('tdf-large'), false);
   assert.equal(chip('b').textContent, '1.0 MB');
   assert.ok(chip('b').classList.contains('tdf-large'));
-  assert.equal(chip('c').textContent, '1.5 KB', 'an unavailable tile keeps its chip');
+  assert.equal(chip('c').textContent, '2 KB', 'an unavailable tile keeps its chip');
   assert.equal(chip('d').textContent, '512 B', 'a broken tile keeps its chip');
 
   const before = chip('c');
@@ -431,10 +431,10 @@ test('each tile shows its size on disk, orange from 1 MB, refreshed when a repai
   assert.ok(chip('c').classList.contains('tdf-large'));
 
   const large = chip('b');
-  await g.store.repair('b', { bytes: 1048575 });
+  await g.store.repair('b', { bytes: 1048063 });
   await settle();
   assert.equal(chip('b'), large, 'the same chip, updated in place');
-  assert.equal(chip('b').textContent, '1024.0 KB');
+  assert.equal(chip('b').textContent, '1023 KB');
   assert.equal(chip('b').classList.contains('tdf-large'), false);
   cleanup();
   assert.deepEqual(g.errors, []);
@@ -605,10 +605,10 @@ function deferredAction(/** @type {Partial<import('./api.js').GalleryItemAction>
 /** @param {Element} tile */
 const postButton = (tile) => /** @type {HTMLButtonElement} */ (tile.querySelector('[data-action="post"]'));
 
-test('a Promise action is busy in flight, ignores repeat clicks, then cools down and works again', async () => {
+test('a Promise action is busy in flight, ignores repeat clicks, then works again', async () => {
   const g = await open(undefined, { quickview: { on: true } });
   await g.store.put(image({ id: 'a' }));
-  const { action, calls } = deferredAction({ cooldownMs: 80 });
+  const { action, calls } = deferredAction();
   const off = registerGalleryItemAction(action);
   const cleanup = g.mount();
   await settle();
@@ -633,12 +633,6 @@ test('a Promise action is busy in flight, ignores repeat clicks, then cools down
   calls[0].resolve();
   await settle();
   assert.equal(b.classList.contains('tdf-busy'), false);
-  assert.equal(b.getAttribute('aria-disabled'), 'true');
-  assert.equal(b.title, 'Post — done');
-  b.click();
-  assert.equal(calls.length, 1, 'a click while cooling does nothing');
-
-  await new Promise((r) => setTimeout(r, 120));
   assert.equal(b.getAttribute('aria-disabled'), 'false');
   assert.equal(b.title, 'Post');
   b.click();
@@ -652,7 +646,7 @@ test('a Promise action is busy in flight, ignores repeat clicks, then cools down
 test('a rejected action shows its reason on the button, reports it, and can be tried again', async () => {
   const g = await open();
   await g.store.put(image({ id: 'a' }));
-  const { action, calls } = deferredAction({ cooldownMs: 5000 });
+  const { action, calls } = deferredAction();
   const off = registerGalleryItemAction(action);
   const cleanup = g.mount();
   await settle();
@@ -670,7 +664,6 @@ test('a rejected action shows its reason on the button, reports it, and can be t
   assert.ok(b.classList.contains('tdf-busy'));
   calls[1].resolve();
   off();
-  // Closing mid-cooldown clears the timer.
   await settle();
   cleanup();
 });
@@ -700,12 +693,12 @@ test('a disabled action is titled with its reason and its click neither runs it 
   cleanup();
 });
 
-test('a synchronous action is not held busy and has no cooldown', async () => {
+test('a synchronous action is not held busy', async () => {
   const g = await open();
   await g.store.put(image({ id: 'a' }));
   /** @type {string[]} */
   const selected = [];
-  const off = registerGalleryItemAction({ id: 'like', label: 'Like', cooldownMs: 5000, onSelect: (item) => void selected.push(item.id) });
+  const off = registerGalleryItemAction({ id: 'like', label: 'Like', onSelect: (item) => void selected.push(item.id) });
   const cleanup = g.mount();
   await settle();
   const b = /** @type {HTMLButtonElement} */ (g.tiles()[0].querySelector('[data-action="like"]'));
@@ -720,7 +713,7 @@ test('a synchronous action is not held busy and has no cooldown', async () => {
   assert.deepEqual(g.errors, []);
 });
 
-test('a Promise action with no cooldown returns straight to idle once it resolves', async () => {
+test('a Promise action returns straight to idle once it resolves', async () => {
   const g = await open();
   await g.store.put(image({ id: 'a' }));
   const { action, calls } = deferredAction();
@@ -768,10 +761,10 @@ test('a disabled() that throws is reported and the button still renders, enabled
   cleanup();
 });
 
-test('an action in flight when the flyout closes is still busy on reopen, then cools down there', async () => {
+test('an action in flight when the flyout closes is still busy on reopen, then idle there', async () => {
   const g = await open();
   await g.store.put(image({ id: 'a' }));
-  const { action, calls } = deferredAction({ cooldownMs: 80 });
+  const { action, calls } = deferredAction();
   const off = registerGalleryItemAction(action);
   let cleanup = g.mount();
   await settle();
@@ -791,39 +784,6 @@ test('an action in flight when the flyout closes is still busy on reopen, then c
   calls[0].resolve();
   await settle();
   assert.equal(b.classList.contains('tdf-busy'), false);
-  assert.equal(b.getAttribute('aria-disabled'), 'true');
-  assert.equal(b.title, 'Post — done');
-  b.click();
-  assert.equal(calls.length, 1, 'a click while cooling does nothing');
-
-  await new Promise((r) => setTimeout(r, 120));
-  assert.equal(b.getAttribute('aria-disabled'), 'false');
-  assert.equal(b.title, 'Post');
-  off();
-  cleanup();
-  assert.deepEqual(g.errors, []);
-});
-
-test('a flyout reopened mid-cooldown draws it cooling and ends it on time', async () => {
-  const g = await open();
-  await g.store.put(image({ id: 'a' }));
-  const { action, calls } = deferredAction({ cooldownMs: 150 });
-  const off = registerGalleryItemAction(action);
-  let cleanup = g.mount();
-  await settle();
-  postButton(g.tiles()[0]).click();
-  calls[0].resolve();
-  await settle();
-  cleanup();
-
-  cleanup = g.mount();
-  await settle();
-  const b = postButton(g.tiles()[0]);
-  assert.equal(b.getAttribute('aria-disabled'), 'true');
-  assert.equal(b.title, 'Post — done');
-  b.click();
-  assert.equal(calls.length, 1, 'no duplicate post mid-cooldown');
-  await new Promise((r) => setTimeout(r, 150));
   assert.equal(b.getAttribute('aria-disabled'), 'false');
   assert.equal(b.title, 'Post');
   off();
@@ -834,7 +794,7 @@ test('a flyout reopened mid-cooldown draws it cooling and ends it on time', asyn
 test('a refusal after the flyout closes is still reported, and the reopened tile shows it failed', async () => {
   const g = await open();
   await g.store.put(image({ id: 'a' }));
-  const { action, calls } = deferredAction({ cooldownMs: 5000 });
+  const { action, calls } = deferredAction();
   const off = registerGalleryItemAction(action);
   let cleanup = g.mount();
   await settle();
@@ -852,4 +812,44 @@ test('a refusal after the flyout closes is still reported, and the reopened tile
   assert.equal(b.title, 'Post failed: Upload failed: signed out');
   off();
   cleanup();
+});
+
+test('an action that closes the flyout before it settles raises nothing, and the reopened tile is idle', async () => {
+  const g = await open();
+  await g.store.put(image({ id: 'a' }));
+  /** @type {() => void} */
+  let cleanup = () => {};
+  let runs = 0;
+  // As Re-post does: stage, close the gallery, then resolve onto a tile no longer drawn.
+  const off = registerGalleryItemAction({
+    id: 'post',
+    label: 'Re-post',
+    onSelect: async () => {
+      runs += 1;
+      cleanup();
+    },
+  });
+  cleanup = /** @type {() => void} */ (g.mount());
+  await settle();
+  const b = postButton(g.tiles()[0]);
+  assert.equal(b.textContent, 'Re-post', 'a label with no icon renders as text');
+  assert.equal(b.querySelector('svg'), null);
+  assert.equal(b.title, 'Re-post');
+  assert.equal(b.getAttribute('aria-label'), 'Re-post');
+  b.click();
+  await settle();
+  assert.equal(runs, 1);
+  assert.equal(g.container.querySelector('.tdf-gallery-tile'), null, 'the flyout closed');
+  assert.deepEqual(g.errors, []);
+
+  cleanup = /** @type {() => void} */ (g.mount());
+  await settle();
+  const again = postButton(g.tiles()[0]);
+  assert.equal(again.classList.contains('tdf-busy'), false);
+  assert.equal(again.classList.contains('tdf-failed'), false);
+  assert.equal(again.getAttribute('aria-disabled'), 'false');
+  assert.equal(again.title, 'Re-post');
+  off();
+  cleanup();
+  assert.deepEqual(g.errors, []);
 });
