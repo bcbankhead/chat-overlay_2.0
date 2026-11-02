@@ -5,7 +5,9 @@
 // `sendData` to confirm each own message by its sendData.php response. With Chat history
 // off nothing is written to history; messages are still shown and announced, except those the
 // server sent from before the page loaded, which skip the engine entirely (TDF-0054). With it
-// on, only the newest HISTORY_ON of those reach the engine (TDF-0055).
+// on, only the newest HISTORY_ON of those reach the engine (TDF-0055). Every poll's entry and
+// exit lines, drawn or not, feed the page's presence store, which the rail's recently online
+// section reads (TDF-0058).
 
 import { describeError } from './errors.js';
 import { emitConfirmChange, emitDeleted, emitInbound } from './events.js';
@@ -20,6 +22,7 @@ import {
   safeDecodeURI,
   whisperTarget,
 } from './parse.js';
+import { presence as pagePresence } from './presence.js';
 import { PENDING_TTL_MS, findPending, isExpired, provisionalId } from './reconcile.js';
 import { HISTORY_ON } from './retention.js';
 
@@ -97,6 +100,26 @@ const isModeration = (message) => {
   return MODERATION.has(decoded) || isDelete(decoded) !== null;
 };
 
+/**
+ * A poll's main-div entry and exit lines, for the presence store. The engine's local entry
+ * pseudo-message has no server record, so it never appears here.
+ * @param {readonly ServerMessage[]} records
+ * @param {{ publicEntry: string, publicExit: string }} lang
+ * @returns {import('./presence.js').PresenceLine[]}
+ */
+export function presenceLines(records, lang) {
+  /** @type {import('./presence.js').PresenceLine[]} */
+  const lines = [];
+  for (const server of records) {
+    if (server.targetDiv !== MAIN_DIV) continue;
+    const kind = classify({ targetDiv: server.targetDiv, toUser: server.toUser, body: parseBody(server.body) }, lang);
+    if (kind !== 'entry' && kind !== 'exit') continue;
+    const rawName = String(server.user ?? '');
+    lines.push({ uuID: server.uid, name: safeDecodeURI(rawName), rawName, kind, mTime: server.mTime });
+  }
+  return lines;
+}
+
 const UNPAIRED_NOTICE =
   'A message was shown but not saved: no server record in its poll matched its time and sender';
 
@@ -113,10 +136,11 @@ function newLoadBlock(win) {
 /**
  * Wrap the engine globals. Calls observed before `attach` are buffered, so messages the
  * engine renders during the overlay's async startup are not lost.
- * @param {{ win: any, roomID: string }} deps
+ * @param {{ win: any, roomID: string, presence?: import('./presence.js').Presence }} deps
+ *   `presence` defaults to the page's store, which the rail reads
  * @returns {EngineHook | null} null when the engine globals are missing
  */
-export function installEngineHook({ win, roomID }) {
+export function installEngineHook({ win, roomID, presence = pagePresence }) {
   if (!engineAvailable(win)) return null;
   const origHandle = win.handleMessages;
   const origCreate = win.createMessageDiv;
@@ -361,6 +385,9 @@ export function installEngineHook({ win, roomID }) {
       queue = Array.from(req.responseXML.getElementsByTagName('usermessage'), (node) =>
         parseUserMessage(/** @type {Element} */ (node).textContent ?? ''),
       );
+      // Every poll's entry and exit lines feed the rail's recently-online list, read here so
+      // they count whether or not the engine then draws them (TDF-0054, TDF-0055, TDF-0058).
+      guard('Recently online users not read', () => presence.ingest(roomID, presenceLines(queue, lang)));
       // Poll order is oldest first, so the newest pre-load records are the last ones. Counted
       // here, before the engine draws any of them, so a record the engine then skips still
       // takes one of the HISTORY_ON places. A throw allows the whole poll to draw.

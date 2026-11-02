@@ -5,7 +5,8 @@ import { Window } from 'happy-dom';
 import { listPanels, registerRailPanel, registerUserMenuAction } from './api.js';
 import { ICONS } from './icons.js';
 import { startRail } from './rail.js';
-import { createUserStore } from './userList.js';
+import { createPresence, presence as pagePresence } from '../../core/presence.js';
+import { LIST_CAP, createUserStore } from './userList.js';
 
 const row = (uuID, uUser, roomID, status = '') =>
   `<div id="userlist_${uuID}${roomID}" class="userlist"><div><span style='float:left;'><img id='avatar_${uuID}' src='avatars/a${uuID}.gif'>&nbsp;<span onclick='userPanel("me","${uUser}","${uuID}","${roomID}","9${uuID}","a${uuID}.gif","1","1.1.1.${uuID}")'>${uUser}</span><span id='ustatusID_${uuID}'>${status}</span></span></div></div>`;
@@ -42,7 +43,7 @@ function stubShell(initial = /** @type {'light' | 'dark' | null} */ ('light')) {
   return shell;
 }
 
-function setup({ host = true, extra = '', flags = {}, shell = stubShell(), prepare = (_doc) => {}, onReady } = {}) {
+function setup({ host = true, extra = '', flags = {}, shell = stubShell(), prepare = (_doc) => {}, onReady, presence } = {}) {
   const win = new Window();
   const doc = win.document;
   doc.body.innerHTML =
@@ -67,7 +68,7 @@ function setup({ host = true, extra = '', flags = {}, shell = stubShell(), prepa
     doc.getElementById('whisperID').value = '';
   };
   prepare(doc);
-  assert.equal(startRail({ doc, win, css: '/* rail */', shell, onReady }), true);
+  assert.equal(startRail({ doc, win, css: '/* rail */', shell, onReady, ...(presence ? { presence } : {}) }), true);
   // Removing #tdf-chat is the rail's teardown path (a failed start); tests use it to clean up.
   const teardown = async () => {
     doc.getElementById('tdf-chat')?.remove();
@@ -919,4 +920,218 @@ test("the popover class the rail exempts matches the lightbox's own layer class"
   const layer = /const LAYER = '([^']+)';/.exec(lightbox)?.[1];
   assert.ok(layer, 'lightbox.js declares its LAYER class');
   assert.ok(rail.includes(`closest('.${layer}')`), `rail.js exempts .${layer}`);
+});
+
+// Recently online (TDF-0058): ghosted below the current room's online users.
+
+const seenLine = (uuID, name, kind, mTime) => ({ uuID, name, kind, mTime: String(mTime) });
+const offlineNames = (doc, roomID = '1') =>
+  [...doc.querySelectorAll(`.tdf-rail-room[data-room="${roomID}"] .tdf-rail-offline .tdf-rail-user-name`)].map((s) => s.textContent);
+const onlineNames = (doc, roomID = '1') =>
+  [...doc.querySelectorAll(`.tdf-rail-room[data-room="${roomID}"] .tdf-rail-user:not(.tdf-rail-offline) .tdf-rail-user-name`)].map((s) => s.textContent);
+const menuShown = (doc) => !(doc.querySelector('.tdf-rail-menu')?.hidden ?? true);
+
+test('recently online users show ghosted under a rule and a header, newest first, online users excluded', async () => {
+  const presence = createPresence();
+  presence.ingest('1', [
+    seenLine('30', 'Old', 'exit', 100),
+    seenLine('12', 'Alice', 'entry', 400), // online now: not ghosted
+    seenLine('31', 'New', 'exit', 300),
+    seenLine('32', 'Gone quiet', 'entry', 200), // an entry with no exit, but not online: ghosted
+  ]);
+  const t = setup({ presence });
+  assert.deepEqual(onlineNames(t.doc), ['me', 'Alice']);
+  assert.deepEqual(offlineNames(t.doc), ['New', 'Gone quiet', 'Old']);
+  const list = t.roomEl('1').querySelector('ul');
+  const kinds = [...list.children].map((li) => li.className);
+  assert.deepEqual(kinds.slice(2, 4), ['tdf-rail-rule', 'tdf-rail-section-head']);
+  assert.equal(list.querySelector('.tdf-rail-section-head').textContent, 'Recently online');
+  assert.equal(list.querySelector('.tdf-rail-rule').getAttribute('role'), 'separator');
+  const ghost = list.querySelector('.tdf-rail-offline');
+  assert.equal(ghost.querySelector('.tdf-rail-user-status'), null, 'no status tag');
+  assert.equal(ghost.querySelector('.tdf-rail-avatar img'), null, 'no avatars/ file requested');
+  assert.ok(ghost.querySelector('.tdf-rail-avatar .tdf-tile').textContent.length > 0);
+  await t.teardown();
+});
+
+test('with nobody recently online there is no rule or header', async () => {
+  const t = setup({ presence: createPresence() });
+  const list = t.roomEl('1').querySelector('ul');
+  assert.equal(list.querySelector('.tdf-rail-rule'), null);
+  assert.equal(list.querySelector('.tdf-rail-section-head'), null);
+  await t.teardown();
+});
+
+test('only the current room gets a recently online section', async () => {
+  const presence = createPresence();
+  presence.ingest('2', [seenLine('40', 'Zed', 'exit', 100)]);
+  const t = setup({ presence });
+  t.roomEl('2').querySelector('.tdf-rail-room-chip').click();
+  assert.deepEqual(offlineNames(t.doc, '2'), []);
+  assert.equal(t.roomEl('2').querySelector('.tdf-rail-section-head'), null);
+  await t.teardown();
+});
+
+test(`the list holds at most ${LIST_CAP} rows: offline users fill what online users leave`, async () => {
+  const presence = createPresence();
+  presence.ingest('1', Array.from({ length: 30 }, (_, i) => seenLine(`${100 + i}`, `Gone${i}`, 'exit', 1000 + i)));
+  const t = setup({ presence });
+  assert.equal(offlineNames(t.doc).length, LIST_CAP - 2);
+  assert.equal(offlineNames(t.doc)[0], 'Gone29', 'newest first');
+  await t.teardown();
+});
+
+test('online users are never hidden by the cap, and leave no room for offline ones', async () => {
+  const presence = createPresence();
+  presence.ingest('1', [seenLine('99', 'Gone', 'exit', 100)]);
+  const extra = Array.from({ length: LIST_CAP }, (_, i) => row(`${200 + i}`, `On${i}`, '1')).join('');
+  const t = setup({ presence, prepare: (doc) => doc.getElementById('room_1').insertAdjacentHTML('beforeend', extra) });
+  assert.equal(onlineNames(t.doc).length, LIST_CAP + 2);
+  assert.deepEqual(offlineNames(t.doc), []);
+  assert.equal(t.roomEl('1').querySelector('.tdf-rail-section-head'), null);
+  await t.teardown();
+});
+
+test('live lines move users between the sections without a reload', async () => {
+  const presence = createPresence();
+  const t = setup({ presence });
+  // Alice leaves: her exit line arrives and the engine drops her row.
+  presence.ingest('1', [seenLine('12', 'Alice', 'exit', 500)]);
+  t.doc.getElementById('userlist_121').remove();
+  await nextFrame();
+  assert.deepEqual(onlineNames(t.doc), ['me']);
+  assert.deepEqual(offlineNames(t.doc), ['Alice']);
+  // She comes back: her entry line, then her row.
+  presence.ingest('1', [seenLine('12', 'Alice', 'entry', 600)]);
+  t.doc.getElementById('room_1').insertAdjacentHTML('beforeend', row('12', 'Alice', '1'));
+  await nextFrame();
+  assert.deepEqual(onlineNames(t.doc), ['me', 'Alice']);
+  assert.deepEqual(offlineNames(t.doc), []);
+  await t.teardown();
+});
+
+test('a ghosted row opens the profile only, with the forum id remembered from its online row', async () => {
+  const presence = createPresence();
+  const t = setup({ presence }); // profileRef 2
+  presence.ingest('1', [seenLine('12', 'Alice', 'exit', 500)]);
+  t.doc.getElementById('userlist_121').remove();
+  await nextFrame();
+  const ghost = t.doc.querySelector('.tdf-rail-offline[data-uuid="12"]');
+  assert.equal(ghost.title, '');
+  for (const type of ['click', 'contextmenu']) {
+    const event = new t.win.MouseEvent(type, { bubbles: true, cancelable: true });
+    ghost.querySelector('.tdf-rail-user-name').dispatchEvent(event);
+    assert.equal(event.defaultPrevented, true);
+  }
+  assert.deepEqual(t.calls, [['viewProfile', '912', 'Alice'], ['viewProfile', '912', 'Alice']]);
+  assert.equal(menuShown(t.doc), false, 'no name menu');
+  await t.teardown();
+});
+
+test('a ghosted row with no profile id is inert and says why', async () => {
+  const presence = createPresence();
+  presence.ingest('1', [seenLine('77', 'Stranger', 'exit', 100)]);
+  const t = setup({ presence }); // profileRef 2, and Stranger was never online this load
+  const ghost = t.doc.querySelector('.tdf-rail-offline[data-uuid="77"]');
+  assert.ok(ghost.classList.contains('tdf-rail-inert'));
+  assert.equal(ghost.title, 'Profile unavailable: this user has not been seen online since the page loaded');
+  ghost.click();
+  assert.deepEqual(t.calls, []);
+  assert.equal(menuShown(t.doc), false);
+  await t.teardown();
+});
+
+test('a user online in another listed room is not ghosted in this one', async () => {
+  const presence = createPresence();
+  presence.ingest('1', [seenLine('13', 'Bob', 'exit', 200), seenLine('77', 'Stranger', 'exit', 100)]);
+  const t = setup({ presence }); // Bob is online in room 2
+  assert.deepEqual(offlineNames(t.doc), ['Stranger']);
+  await t.teardown();
+});
+
+test('an inert ghosted row names the real reason: profiles off, or an unsupported profileRef', async () => {
+  for (const [flags, why] of [
+    [{ profileOn: 0 }, 'Profile unavailable: profiles are turned off in this chat'],
+    [{ profileRef: 9 }, "Profile unavailable: this chat's profile setting is not supported"],
+  ]) {
+    const presence = createPresence();
+    presence.ingest('1', [seenLine('12', 'Alice', 'exit', 500)]);
+    const t = setup({ presence, flags });
+    t.doc.getElementById('userlist_121').remove();
+    await nextFrame();
+    const ghost = t.doc.querySelector('.tdf-rail-offline[data-uuid="12"]');
+    assert.ok(ghost.classList.contains('tdf-rail-inert'));
+    assert.equal(ghost.title, why);
+    ghost.click();
+    assert.deepEqual(t.calls, []);
+    await t.teardown();
+  }
+});
+
+test("under profileRef 1 a never-online ghosted row passes the line's encoded name", async () => {
+  const presence = createPresence();
+  presence.ingest('1', [{ ...seenLine('77', 'Dan B', 'exit', 100), rawName: 'Dan%20B' }]);
+  const t = setup({ presence, flags: { profileRef: 1 } });
+  t.doc.querySelector('.tdf-rail-offline[data-uuid="77"]').click();
+  assert.deepEqual(t.calls, [['viewProfile', 'Dan%20B', 'Dan%20B']]);
+  await t.teardown();
+});
+
+test('under profileRef 0 a never-online ghosted row opens the profile by uuID', async () => {
+  const presence = createPresence();
+  presence.ingest('1', [seenLine('77', 'Stranger', 'exit', 100)]);
+  const t = setup({ presence, flags: { profileRef: 0 } });
+  t.doc.querySelector('.tdf-rail-offline[data-uuid="77"]').click();
+  assert.deepEqual(t.calls, [['viewProfile', '77', 'Stranger']]);
+  await t.teardown();
+});
+
+test('online rows keep the name menu beside a recently online section', async () => {
+  const presence = createPresence();
+  presence.ingest('1', [seenLine('77', 'Stranger', 'exit', 100)]);
+  const t = setup({ presence });
+  const menu = t.nameMenu('12');
+  assert.equal(menu.hidden, false);
+  assert.equal(menu.querySelector('.tdf-rail-menu-title').textContent, 'Alice');
+  await t.teardown();
+});
+
+test('the ghosted rows are styled faded, behind a thin rule and a muted header', () => {
+  const css = readFileSync(new URL('./rail.css', import.meta.url), 'utf8');
+  assert.match(css, /\.tdf-rail-offline \{\s*opacity: 0\.5;/);
+  assert.match(css, /\.tdf-rail-rule \{[^}]*border-top: 1px solid var\(--tdf-rail-chip-border\)/);
+  assert.match(css, /\.tdf-rail-section-head \{[^}]*color: var\(--tdf-muted\)/);
+});
+
+test('a ghosted row whose profile call fails is reported in the rail with its cause', async () => {
+  const presence = createPresence();
+  presence.ingest('1', [seenLine('77', 'Stranger', 'exit', 100)]);
+  const t = setup({ presence, flags: { profileRef: 0 } });
+  delete t.win.viewProfile;
+  t.doc.querySelector('.tdf-rail-offline[data-uuid="77"]').click();
+  assert.ok(t.errors().some((e) => e.includes('the chat engine has no viewProfile()')), t.errors().join(' | '));
+  await t.teardown();
+});
+
+test('a re-render on a presence change that throws is reported in the rail', async () => {
+  const presence = createPresence();
+  const t = setup({ presence });
+  Object.defineProperty(t.win, 'roomID', {
+    configurable: true,
+    get() {
+      throw new Error('room unreadable');
+    },
+  });
+  presence.ingest('1', [seenLine('77', 'Stranger', 'exit', 100)]);
+  assert.ok(t.errors().some((e) => e.includes('room unreadable')), t.errors().join(' | '));
+  Object.defineProperty(t.win, 'roomID', { configurable: true, value: 1, writable: true });
+  await t.teardown();
+});
+
+// Last in the file: it writes the page's own store, shared by every test above in this process.
+test('without an injected store the rail reads the page presence store the engine hook writes', async () => {
+  pagePresence.ingest('3', [seenLine('88', 'Paged', 'exit', 100)]);
+  const t = setup({ flags: { roomID: 3 } });
+  assert.deepEqual(offlineNames(t.doc, '3'), ['Paged']);
+  await t.teardown();
 });

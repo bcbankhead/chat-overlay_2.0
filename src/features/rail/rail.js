@@ -359,11 +359,18 @@ export function readRaise(doc, target) {
  * removed (the bootstrap undoing a failed start), the rail tears itself down. `onReady` is
  * called once: after the first mount attempt beside #tdf-chat, whether or not it succeeds, or
  * at once when the rail does not start (the page's load fade-in waits on it, TDF-0026).
- * @param {{ doc: Document, win: Window, css: string, shell: RailShell, onReady?: () => void }} deps
+ * @param {{
+ *   doc: Document,
+ *   win: Window,
+ *   css: string,
+ *   shell: RailShell,
+ *   onReady?: () => void,
+ *   presence?: import('../../core/presence.js').Presence,
+ * }} deps `presence`, the recently online store, defaults to the page's
  * @returns {boolean} false when this page has no user list, or another copy of the script
  *   already started the rail
  */
-export function startRail({ doc, win, css, shell, onReady }) {
+export function startRail({ doc, win, css, shell, onReady, presence }) {
   const w = /** @type {any} */ (win);
   let reported = false;
   const ready = () => {
@@ -426,6 +433,7 @@ export function startRail({ doc, win, css, shell, onReady }) {
         onUser: menu.open,
         onError: rail.report,
         avatars: () => w.__tdfChat2Avatars ?? null,
+        ...(presence ? { presence } : {}),
       });
       undo.push(rooms(rail.slots));
     } catch (err) {

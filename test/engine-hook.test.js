@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { onConfirmChange, onDeleted, onInbound } from '../src/core/events.js';
-import { engineAvailable, installEngineHook } from '../src/core/engine-hook.js';
+import { engineAvailable, installEngineHook, presenceLines } from '../src/core/engine-hook.js';
+import { parseUserMessage } from '../src/core/parse.js';
+import { createPresence, presence as pagePresence } from '../src/core/presence.js';
 import 'fake-indexeddb/auto';
 import { openDb } from '../src/core/db.js';
 import { createHistory } from '../src/core/history.js';
@@ -1287,4 +1289,82 @@ test('an engine without doSound draws a pre-load message and is given no doSound
   assert.equal(win.showMessages, 1);
   assert.ok(calls.some((c) => c[0] === 'view.place' && c[1].id === '7011'));
   assert.equal('doSound' in win, false);
+});
+
+// Recently online (TDF-0058): every poll's entry and exit lines reach the presence store.
+
+/** A main-div entry or exit line, as the server sends one (avatar flag `1`, lang.js.php:2-3). */
+const presenceLine = (id, uid, user, kind, mTime) =>
+  `${id}}{${uid}}{chatContainer}{${user}}{_}{${encodeURI(`1|#000|12px|verdana|** ${user} ${kind === 'exit' ? 'has left the room ...' : 'has joined the room ...'}|0|0`)}}{x}{}{${mTime}`;
+
+test('presenceLines keeps main-div entry and exit lines, with uid, decoded and encoded name, and mTime', () => {
+  const lang = { publicEntry: 'has joined the room ...', publicExit: 'has left the room ...' };
+  const records = [
+    presenceLine('1', '40', 'Dan%20B', 'entry', '100'),
+    presenceLine('2', '41', 'Eve', 'exit', '101'),
+    um('3', 'bob', 'hello', '102'),
+    presenceLine('4', '42', 'Fay', 'entry', '103').replace('chatContainer', 'pcontent_7'),
+  ].map((raw) => parseUserMessage(raw));
+  assert.deepEqual(presenceLines(records, lang), [
+    { uuID: '40', name: 'Dan B', rawName: 'Dan%20B', kind: 'entry', mTime: '100' },
+    { uuID: '41', name: 'Eve', rawName: 'Eve', kind: 'exit', mTime: '101' },
+  ]);
+});
+
+test('history off: pre-load entry and exit lines are read into presence though the engine never draws them', () => {
+  const win = datedEngine();
+  const presence = createPresence();
+  const history = new Proxy({}, { get: () => async () => {} });
+  const view = new Proxy({}, { get: () => () => {} });
+  const hook = installEngineHook({ win, roomID: '1', presence });
+  hook.attach({ history, view, storing: () => false });
+  win.receiveMesReq.responseXML = xml(
+    presenceLine('1', '40', 'Dan', 'entry', preLoad),
+    presenceLine('2', '40', 'Dan', 'exit', String(SERVER_NOW - 10)),
+    presenceLine('3', '41', 'Eve', 'entry', String(SERVER_NOW - 20)),
+  );
+  win.handleMessages();
+  assert.equal(win.engineCalls, 0, 'nothing reached the engine');
+  assert.deepEqual(
+    presence.seen('1').map((l) => [l.uuID, l.kind]),
+    [['40', 'exit'], ['41', 'entry']],
+  );
+});
+
+test('a live entry line after the load updates presence as it draws', () => {
+  const win = datedEngine();
+  const presence = createPresence();
+  const history = new Proxy({}, { get: () => async () => {} });
+  const view = new Proxy({}, { get: () => () => {} });
+  installEngineHook({ win, roomID: '1', presence }).attach({ history, view });
+  let told = 0;
+  presence.subscribe(() => told++);
+  win.receiveMesReq.responseXML = xml(presenceLine('9', '50', 'Gil', 'entry', postLoad));
+  win.handleMessages();
+  assert.equal(win.engineCalls, 1);
+  assert.deepEqual(presence.seen('1').map((l) => l.uuID), ['50']);
+  assert.equal(told, 1);
+});
+
+test('a presence store that throws is shown as a notice, and the poll still draws', () => {
+  const win = datedEngine();
+  const calls = [];
+  const history = new Proxy({}, { get: () => async () => {} });
+  const view = new Proxy({}, { get: (_, op) => (...args) => calls.push([`view.${op}`, ...args]) });
+  const presence = { ...createPresence(), ingest: () => { throw new Error('boom'); } };
+  installEngineHook({ win, roomID: '1', presence }).attach({ history, view });
+  win.receiveMesReq.responseXML = xml(um('7', 'bob', 'hi', postLoad));
+  win.handleMessages();
+  assert.equal(win.engineCalls, 1);
+  assert.ok(calls.some(([op, text]) => op === 'view.notice' && text === 'Recently online users not read: boom'));
+});
+
+test('without an injected store the hook writes the page presence store', () => {
+  const win = datedEngine();
+  const history = new Proxy({}, { get: () => async () => {} });
+  const view = new Proxy({}, { get: () => () => {} });
+  installEngineHook({ win, roomID: 'tdf-0058-page' }).attach({ history, view });
+  win.receiveMesReq.responseXML = xml(presenceLine('1', '60', 'Hal', 'exit', postLoad));
+  win.handleMessages();
+  assert.deepEqual(pagePresence.seen('tdf-0058-page').map((l) => l.uuID), ['60']);
 });
