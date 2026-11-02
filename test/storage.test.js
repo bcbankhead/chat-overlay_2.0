@@ -425,22 +425,26 @@ test('recent orders by message time; one mTime second keeps first-seen arrival o
   );
 });
 
-test('recent with a window start skips records received before it, keeping order and limit', async () => {
+test('recent bounds by count alone: receipt age skips nothing (TDF-0033.5)', async () => {
   const h = createHistory(await fresh());
-  // Message time and receipt time disagree on purpose: the window is by receipt.
+  // Message time and receipt time disagree on purpose: the order is by message time.
   await h.put(msg({ id: 'old-late', mTime: '400', receivedAt: 100 }));
   await h.put(msg({ id: 'a', mTime: '100', receivedAt: 600 }));
   await h.put(msg({ id: 'b', mTime: '200', receivedAt: 500 }));
-  await h.put(msg({ id: 'old', mTime: '250', receivedAt: 499 }));
   await h.put(msg({ id: 'c', mTime: '300', receivedAt: 700 }));
-  assert.deepEqual(
-    (await h.recent('1', Infinity, 500)).map((r) => r.id),
-    ['a', 'b', 'c'],
-    'an old record newer by message time is skipped, not a stop',
-  );
+  assert.deepEqual((await h.recent('1', Infinity)).map((r) => r.id), ['a', 'b', 'c', 'old-late']);
+  assert.deepEqual((await h.recent('1', 2)).map((r) => r.id), ['c', 'old-late']);
+});
+
+test('recent skips records received before since, still newest by message time', async () => {
+  const h = createHistory(await fresh());
+  await h.put(msg({ id: 'old-late', mTime: '400', receivedAt: 100 }));
+  await h.put(msg({ id: 'a', mTime: '100', receivedAt: 600 }));
+  await h.put(msg({ id: 'b', mTime: '200', receivedAt: 500 }));
+  await h.put(msg({ id: 'c', mTime: '300', receivedAt: 700 }));
+  assert.deepEqual((await h.recent('1', Infinity, 500)).map((r) => r.id), ['a', 'b', 'c']);
+  // The skipped record does not use up the limit.
   assert.deepEqual((await h.recent('1', 2, 500)).map((r) => r.id), ['b', 'c']);
-  assert.deepEqual((await h.recent('1', Infinity, null)).map((r) => r.id), ['a', 'b', 'old', 'c', 'old-late']);
-  assert.deepEqual(await h.recent('1', Infinity, Infinity), [], 'a cutoff of Infinity keeps nothing');
 });
 
 test('recent by default returns the newest 100 records', async () => {
@@ -599,7 +603,7 @@ test('deleteByMTime removes only the room\'s earliest-received record with that 
 
 test('settings return the contract defaults for absent keys', async () => {
   const s = createSettings(await fresh());
-  assert.equal(await s.get('retentionDays'), 30);
+  assert.equal(await s.get('historyCount'), 100);
   assert.equal(await s.get('galleryLimitMB'), null);
   assert.equal(await s.get('storeImagesOffline'), false);
   assert.equal(await s.get('includeMyImages'), false);
@@ -612,17 +616,76 @@ test('settings return the contract defaults for absent keys', async () => {
   await assert.rejects(s.set('nope', 1), /unknown setting/);
   assert.ok(Object.isFrozen(DEFAULTS));
   assert.ok(!Object.hasOwn(DEFAULTS, 'historyEnabled') && !Object.hasOwn(DEFAULTS, 'likeEmoji'));
+  assert.ok(!Object.hasOwn(DEFAULTS, 'retentionDays'), 'retired by TDF-0033.5');
+  await assert.rejects(s.set(/** @type {any} */ ('retentionDays'), 30), /unknown setting/);
+});
+
+// TDF-0033.5: Chat history (last 100) replaces Chat history (days).
+
+/** Write a raw settings row, as an older build stored it. @param {IDBDatabase} db */
+const putRaw = (db, key, value) =>
+  new Promise((resolve, reject) => {
+    const t = db.transaction('settings', 'readwrite');
+    t.objectStore('settings').put({ key, value });
+    t.oncomplete = resolve;
+    t.onerror = () => reject(t.error);
+  });
+/** @param {IDBDatabase} db */
+const rawRow = (db, key) =>
+  new Promise((resolve, reject) => {
+    const req = db.transaction('settings').objectStore('settings').get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+
+test('migrateHistory turns a stored retentionDays into historyCount once, and deletes it', async () => {
+  for (const [days, count] of [[0, 0], [30, 100], [1, 100], [null, 100]]) {
+    const db = await fresh();
+    await putRaw(db, 'retentionDays', days);
+    const s = createSettings(db);
+    await s.migrateHistory();
+    assert.equal(await s.get('historyCount'), count, `${days} days`);
+    assert.deepEqual(await rawRow(db, 'historyCount'), { key: 'historyCount', value: count });
+    assert.equal(await rawRow(db, 'retentionDays'), undefined, 'retentionDays deleted');
+    await s.migrateHistory();
+    assert.equal(await s.get('historyCount'), count, 'a second run changes nothing');
+  }
+});
+
+test('migrateHistory leaves a stored historyCount alone, still deleting retentionDays', async () => {
+  const db = await fresh();
+  await putRaw(db, 'historyCount', 0);
+  await putRaw(db, 'retentionDays', 30);
+  await createSettings(db).migrateHistory();
+  assert.equal(await createSettings(db).get('historyCount'), 0);
+  assert.equal(await rawRow(db, 'retentionDays'), undefined);
+});
+
+test('a member who never set Chat history gets 100 (on), and migrateHistory writes nothing', async () => {
+  const db = await fresh();
+  const s = createSettings(db);
+  await s.migrateHistory();
+  assert.equal(await s.get('historyCount'), 100);
+  assert.equal(await rawRow(db, 'historyCount'), undefined);
+});
+
+test('a stored historyCount other than 0 or 100 reads as 100', async () => {
+  for (const bad of [50, -1, '0', null, true, 1e9]) {
+    const db = await fresh();
+    await putRaw(db, 'historyCount', bad);
+    assert.equal(await createSettings(db).get('historyCount'), 100, String(bad));
+  }
 });
 
 test('a committed set is announced to setting-change listeners, through any Settings', async () => {
   const db = await fresh();
   const seen = [];
   const off = onSettingChange((key, value) => seen.push([key, value]));
-  await createSettings(db).set('retentionDays', 0);
+  await createSettings(db).set('historyCount', 0);
   await createSettings(db).set('theme', 'light');
   off();
   await createSettings(db).set('theme', 'dark');
-  assert.deepEqual(seen, [['retentionDays', 0], ['theme', 'light']]);
+  assert.deepEqual(seen, [['historyCount', 0], ['theme', 'light']]);
 });
 
 // TDF-0033.2: the backlog tag is first-seen, and block state lives in one settings row.

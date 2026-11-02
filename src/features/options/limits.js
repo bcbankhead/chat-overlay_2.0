@@ -1,15 +1,16 @@
-// The history and gallery limits of Media and Gallery Settings, applied: chat history pruned by age over the `messages` receivedAt index,
-// cleared outright, or deleted by sender over the user index; and the gallery kept under its
-// size by TDF-0009.5's store. Deleted lines are announced through core's onDeleted, so the open
-// view drops their rows and tagging, the tags store's only writer, re-derives without them. No
-// deletion here touches images or tags. Limits run on load and on commit; Clear history and
-// delete-by-sender run when the user confirms them.
+// The history and gallery limits of Settings, applied: chat history pruned by the fixed storage
+// age over the `messages` receivedAt index (all of it with Chat history off), cleared outright,
+// or deleted by sender over the user index; and the gallery kept under its size by TDF-0009.5's
+// store. Deleted lines are announced through core's onDeleted, so the open view drops their rows
+// and tagging, the tags store's only writer, re-derives without them. No deletion here touches
+// images or tags. Limits run on load and on commit; Clear history and delete-by-sender run when
+// the user confirms them.
 
 import { createBlockState } from '../../core/blockState.js';
 import { STORES, done, request } from '../../core/db.js';
 import { describeError } from '../../core/errors.js';
 import { emitDeleted } from '../../core/events.js';
-import { historyCutoff, megabytesToBytes } from './selectors.js';
+import { megabytesToBytes, storageCutoff } from './selectors.js';
 
 /**
  * The gallery store's size-limit surface (TDF-0009.5, `src/features/gallery/store.js`). It
@@ -94,26 +95,14 @@ export function createLimits({ db, gallery, now = Date.now }) {
 
   return {
     /**
-     * How many stored lines `days` would delete.
-     * @param {number | null} days
-     */
-    async previewHistory(days) {
-      const cutoff = historyCutoff(days, now());
-      if (cutoff === null) return 0;
-      const t = db.transaction(STORES.messages, 'readonly');
-      const index = t.objectStore(STORES.messages).index('receivedAt');
-      return request(index.count(IDBKeyRange.upperBound(cutoff, true)));
-    },
-
-    /**
-     * Delete stored lines older than `days` in one transaction; then announce them, so they
-     * leave the open view and their tags.
-     * @param {number | null} days
+     * Delete the stored lines the Chat history setting `count` does not keep, in one
+     * transaction: those older than STORAGE_AGE_DAYS, or every line when it is off (0). Then
+     * announce them, so they leave the open view and their tags.
+     * @param {import('../../core/retention.js').HistoryCount} count
      * @returns {Promise<string[]>} the ids deleted
      */
-    async pruneHistory(days) {
-      const cutoff = historyCutoff(days, now());
-      if (cutoff === null) return [];
+    async pruneHistory(count) {
+      const cutoff = storageCutoff(count, now());
       return deleteWhere('receivedAt', IDBKeyRange.upperBound(cutoff, true));
     },
 

@@ -4,8 +4,8 @@
 
 import { safeDecodeURIComponent } from '../../core/parse.js';
 
-// The cutoff rule lives in core, which replay and the view's trim read too; one copy.
-export { DAY_MS, historyCutoff } from '../../core/retention.js';
+// The Chat history rules live in core, which replay reads too; one copy.
+export { DAY_MS, HISTORY_ON, storageCutoff } from '../../core/retention.js';
 
 export const MB_BYTES = 1_048_576;
 
@@ -14,17 +14,6 @@ export const MB_BYTES = 1_048_576;
  * @template T
  * @typedef {{ ok: true, value: T } | { ok: false }} Parsed
  */
-
-/**
- * Chat history (days): a whole number, 0 or more.
- * @param {string} input
- * @returns {Parsed<number>}
- */
-export function parseDays(input) {
-  const text = input.trim();
-  if (!/^\d+$/.test(text)) return { ok: false };
-  return { ok: true, value: Number(text) };
-}
 
 /**
  * Gallery size limit (MB): empty is no limit, otherwise a whole number, 1 or more.

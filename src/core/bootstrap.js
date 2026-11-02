@@ -16,9 +16,9 @@ import { openDb } from './db.js';
 import { installEngineHook } from './engine-hook.js';
 import { describeError } from './errors.js';
 import { emitConfirmChange, onClearView, onDeleted } from './events.js';
-import { REPLAY_CEILING, createHistory } from './history.js';
+import { createHistory } from './history.js';
 import { MAIN_DIV } from './parse.js';
-import { historyCutoff } from './retention.js';
+import { parseHistoryCount, storageCutoff } from './retention.js';
 import { chat2Off, installSwitchLink } from './optOut.js';
 import { createSettings, onSettingChange } from './settings.js';
 import { mount, unmount } from './shell.js';
@@ -137,33 +137,30 @@ async function start(lift, coreReady) {
     theme = createTheme({ win, settings, root: html });
     await theme.load();
     mount(theme);
-    // Chat history at 0 days keeps nothing: the hook stores nothing, and the replay shows
-    // nothing left from before the limit was set. Followed live, as Settings writes it.
-    let retentionDays = await settings.get('retentionDays');
+    // Chat history (last 100, TDF-0033.5): a stored Chat history (days) value is retired first,
+    // so this read sees its migrated count. Off keeps nothing: the hook stores nothing, and the
+    // replay shows nothing left from before it was turned off. Followed live, as Settings
+    // writes it.
+    await settings.migrateHistory();
+    let historyCount = await settings.get('historyCount');
     unsubscribe.push(
       onSettingChange((key, value) => {
-        if (key === 'retentionDays') retentionDays = /** @type {number | null} */ (value);
+        if (key === 'historyCount') historyCount = parseHistoryCount(value);
       }),
     );
     const { expired, pending } = await history.expirePending(roomID);
-    // Where the window starts now, read from the live setting so a change in Settings moves it.
-    // At 0 days, for a legacy null and for a stored value no cutoff can be made from (which
-    // the Options feature reports) there is no window, and only the ceiling bounds the view.
-    const windowStart = () =>
-      typeof retentionDays === 'number' && Number.isFinite(retentionDays) && retentionDays > 0
-        ? historyCutoff(retentionDays, Date.now())
-        : null;
-    // Replay shows the newest REPLAY_CEILING lines inside the Chat history window (TDF-0033.1),
-    // filtered here rather than left to the Options feature's load-time prune, which may finish
-    // after this read.
-    const records = retentionDays === 0 ? [] : await history.recent(roomID, REPLAY_CEILING, windowStart());
+    // Replay shows the newest historyCount lines; the view keeps at most HISTORY_ON either way.
+    // Lines past the storage age are skipped here rather than left to the Options feature's
+    // load-time prune, which may finish after this read.
+    const records =
+      historyCount === 0 ? [] : await history.recent(roomID, historyCount, storageCutoff(historyCount, Date.now()));
 
     // Published for the rail and the profile flyout, which show the same avatars.
     const avatars = createAvatarResolver({ win, db });
     win.__tdfChat2Avatars = avatars;
     // Each server-history block's collapsed state (TDF-0033.2), read once; a block's first state
-    // and each toggle update the loaded copy and store it, except at 0 days, when the block's
-    // records are not stored.
+    // and each toggle update the loaded copy and store it, except with Chat history off, when
+    // the block's records are not stored.
     const blockState = createBlockState(db);
     // A failed read is not worth failing the start over: blocks arrive in the setting's state,
     // and say why.
@@ -179,7 +176,7 @@ async function start(lift, coreReady) {
     /** @param {string} id @param {boolean} collapsed */
     const storeBlock = (id, collapsed) => {
       blockStates[id] = collapsed;
-      if (retentionDays === 0) return;
+      if (historyCount === 0) return;
       blockState
         .set(id, collapsed)
         .catch((err) => blockView?.notice(`Server history block state not saved: ${describeError(err)}`));
@@ -220,7 +217,6 @@ async function start(lift, coreReady) {
       container,
       css,
       avatars,
-      windowStart,
       blocks,
       autoCollapse: () => autoCollapse,
     });
@@ -239,7 +235,7 @@ async function start(lift, coreReady) {
     replay(view, records);
     shown = view;
     coreReady();
-    hook.attach({ history, view, pending, replayed: records, storing: () => retentionDays !== 0 });
+    hook.attach({ history, view, pending, replayed: records, storing: () => historyCount !== 0 });
     // Expired with no inbound event; a feature that read the room before the expiry follows it.
     if (expired.length) {
       try {

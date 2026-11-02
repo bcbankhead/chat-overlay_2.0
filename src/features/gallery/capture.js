@@ -1,6 +1,6 @@
 // Live capture (TDF-0015): an image you like (core's onLiked) is saved with the record of the
 // message that shared it, read from history, or with the liked row's own sender and time when
-// history has none (retention off, or pruned); your own shares are saved as they arrive (core's
+// history has none (Chat history off, or pruned); your own shares are saved as they arrive (core's
 // onInbound, live records only) while `includeMyImages` is on. Other members' shares are not
 // saved until you like them. Each share id is fetched once, on a serial queue, and stored with
 // its thumbnail. The full image is kept only with `storeImagesOffline` on. A failed fetch
@@ -274,7 +274,7 @@ export function startCapture({ ready, onInbound, onLiked, getMessage, roomID, fe
 
   onLiked(({ shareId, messageId, user, mTime }) => {
     enqueue(shareId, async () => {
-      // History keeps nothing with retention off, and prunes old rows: the row stands in.
+      // History keeps nothing with Chat history off, and prunes old rows: the row stands in.
       const message =
         (await getMessage(messageId)) ??
         (user !== '' ? { id: messageId, user, mTime, roomID: roomID(), receivedAt: Date.now() } : undefined);

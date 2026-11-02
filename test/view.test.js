@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
 import { timeLabel } from '../src/core/group.js';
+import { HISTORY_ON } from '../src/core/retention.js';
 import { createView } from '../src/core/view.js';
 
 /**
@@ -66,11 +67,12 @@ function stubResize(win) {
 // The local day the pinned record times fall on (2 Jan 2026), so those times read HH:MM.
 const NOW = new Date(2026, 0, 2, 12, 0).getTime() / 1000;
 
-// The view's row ceiling in these tests, set apart from REPLAY_CEILING so the trim tests do not
-// move when that value is tuned; the trim's behaviour does not depend on its size.
+// The view's row ceiling in these tests, set apart from HISTORY_ON so the trim tests do not
+// move when that value is tuned; the trim's behaviour does not depend on its size. A null
+// ceiling leaves createView's own default.
 const CEILING = 200;
 
-async function setup({ autoScroll = true, reducedMotion = false, globals = {}, now = () => NOW, windowStart, ceiling = CEILING, blocks, autoCollapse } = {}) {
+async function setup({ autoScroll = true, reducedMotion = false, globals = {}, now = () => NOW, ceiling = CEILING, blocks, autoCollapse } = {}) {
   const win = new Window({ url: 'https://example.test/chat/' });
   const frames = stubFrames(win);
   const resizes = stubResize(win);
@@ -82,7 +84,7 @@ async function setup({ autoScroll = true, reducedMotion = false, globals = {}, n
   const whispered = [];
   win.whisperUser = (name) => whispered.push(name);
   const container = doc.getElementById('chatContainer');
-  const view = createView({ doc, win, container, css: '#tdf-chat{}', now, windowStart, ceiling, blocks, autoCollapse });
+  const view = createView({ doc, win, container, css: '#tdf-chat{}', now, ...(ceiling === null ? {} : { ceiling }), blocks, autoCollapse });
   const root = doc.getElementById('tdf-chat');
   return { win, doc, view, root, container, whispered, frames, resizes };
 }
@@ -1262,29 +1264,33 @@ test('a server message lands below an own message its confirm re-ordered later',
   assert.deepEqual(ids(root), ['1', '2', '3']);
 });
 
-// The Chat history window (TDF-0033.1): the trim ages rows out by receipt time, and the count
-// ceiling binds only past the window or where there is none.
+// The count bound (TDF-0033.5): the view keeps at most its ceiling, the newest by order, and no
+// day window ages anything out.
 
-test('the age trim removes only ordered rows received before the window', async () => {
-  let start = 500;
-  const { view, root } = await setup({ windowStart: () => start });
-  view.replay([
-    rec({ id: 'old', mTime: '1000', receivedAt: 100 }),
-    rec({ id: 'edge', mTime: '1001', receivedAt: 500 }),
-    rec({ id: 'new', mTime: '1002', receivedAt: 900 }),
-  ]);
-  view.notice('trouble');
-  view.append(rec({ id: 'local-1', mTime: '', confirm: 'pending', receivedAt: 50 }));
-  assert.deepEqual(ids(root), ['edge', 'new', '-', 'local-1']);
-  assert.equal(root.querySelector('[data-id="edge"]').dataset.received, '500');
-  start = 900 + 60_000;
-  view.place(rec({ id: 'later', mTime: '1003', receivedAt: 100_000 }));
-  assert.deepEqual(ids(root), ['-', 'local-1', 'later'], 'notices and appended rows are not aged');
+test('by default the view keeps the newest HISTORY_ON rows, however old they were received', async () => {
+  const { view, root } = await setup({ ceiling: null });
+  view.replay(Array.from({ length: HISTORY_ON + 5 }, (_, i) => rec({ id: `r${i}`, mTime: `${1000 + i}`, receivedAt: i })));
+  const shown = ids(root);
+  assert.equal(shown.length, HISTORY_ON);
+  assert.equal(shown[0], 'r5', 'the oldest went first');
+  view.place(rec({ id: 'live', mTime: '5000', receivedAt: 10 ** 12 }));
+  assert.equal(ids(root).length, HISTORY_ON, 'a live message keeps the view at the bound');
+  assert.equal(ids(root)[0], 'r6');
 });
 
-test('live appends do not trim replayed rows still inside the window', async () => {
+test('rows received long ago stay while under the ceiling: there is no age trim', async () => {
+  const { view, root } = await setup();
+  view.replay([
+    rec({ id: 'old', mTime: '1000', receivedAt: 1 }),
+    rec({ id: 'new', mTime: '1001', receivedAt: 10 ** 12 }),
+  ]);
+  view.place(rec({ id: 'later', mTime: '1003', receivedAt: 10 ** 13 }));
+  assert.deepEqual(ids(root), ['old', 'new', 'later']);
+});
+
+test('live appends do not trim replayed rows under the ceiling', async () => {
   // Past the old 200-row cap, which trimmed replayed rows as live ones arrived.
-  const { view, root } = await setup({ windowStart: () => 0, ceiling: 300 });
+  const { view, root } = await setup({ ceiling: 300 });
   const replayed = Array.from({ length: 250 }, (_, i) => rec({ id: `r${i}`, mTime: `${1000 + i}`, receivedAt: 10 + i }));
   view.replay(replayed);
   for (let i = 0; i < 20; i++) view.append(rec({ id: `local-${i}`, mTime: '', confirm: 'pending', receivedAt: 5000 + i }));
@@ -1292,55 +1298,14 @@ test('live appends do not trim replayed rows still inside the window', async () 
   assert.ok(root.querySelector('[data-id="r0"]'), 'the oldest replayed row is still shown');
 });
 
-test('with no window (0 days or a legacy null) only the ceiling binds', async () => {
-  const { view, root } = await setup({ windowStart: () => null, ceiling: 250 });
+test('the ceiling binds: the oldest rows go first', async () => {
+  const { view, root } = await setup({ ceiling: 250 });
   view.replay(Array.from({ length: 260 }, (_, i) => rec({ id: `r${i}`, mTime: `${1000 + i}`, receivedAt: i })));
   const shown = ids(root);
   assert.equal(shown.length, 250, 'the ceiling, not the old 200');
   assert.equal(shown[0], 'r10', 'the oldest went first');
 });
 
-test('the window binds before the ceiling does', async () => {
-  const { view, root } = await setup({ windowStart: () => 100 });
-  view.replay(Array.from({ length: CEILING + 10 }, (_, i) => rec({ id: `r${i}`, mTime: `${1000 + i}`, receivedAt: i })));
-  const shown = ids(root);
-  assert.equal(shown.length, CEILING + 10 - 100);
-  assert.equal(shown[0], 'r100');
-});
-
-test('the age pass waits until the window start has advanced a minute', async () => {
-  let start = 1_000_000;
-  const { view, root } = await setup({ windowStart: () => start });
-  view.replay([
-    rec({ id: 'a', mTime: '1000', receivedAt: 1_000_000 + 30_000 }),
-    rec({ id: 'b', mTime: '1001', receivedAt: 1_000_000 + 120_000 }),
-  ]);
-  assert.deepEqual(ids(root), ['a', 'b']);
-  start = 1_000_000 + 59_000; // 'a' is now outside, but the pass is not due
-  view.place(rec({ id: 'c', mTime: '1002', receivedAt: 2_000_000 }));
-  assert.deepEqual(ids(root), ['a', 'b', 'c']);
-  start = 1_000_000 + 60_000;
-  view.place(rec({ id: 'd', mTime: '1003', receivedAt: 2_000_000 }));
-  assert.deepEqual(ids(root), ['b', 'c', 'd']);
-});
-test('a widened window moves the age gate back with it', async () => {
-  let start = 1_000_000;
-  const { view, root } = await setup({ windowStart: () => start });
-  view.replay([rec({ id: 'a', mTime: '1000', receivedAt: 2_000_000 })]);
-  start = 900_000; // Chat history raised: nothing to remove, the gate follows
-  view.place(rec({ id: 'b', mTime: '1001', receivedAt: 940_000 }));
-  assert.deepEqual(ids(root), ['a', 'b']);
-  start = 960_000; // a minute past the widened start, not past the first one
-  view.place(rec({ id: 'c', mTime: '1002', receivedAt: 2_000_000 }));
-  assert.deepEqual(ids(root), ['a', 'c']);
-});
-
-test('a row with no receipt time carries none and is never aged out', async () => {
-  const { view, root } = await setup({ windowStart: () => 1_000_000 });
-  view.replay([rec({ id: 'a', mTime: '1000', receivedAt: undefined })]);
-  assert.equal(root.querySelector('[data-id="a"]').dataset.received, undefined);
-  assert.deepEqual(ids(root), ['a']);
-});
 // TDF-0033.2: server-history blocks.
 
 const blockRec = (over) => rec({ backlogBlock: 'load-1', source: 'backlog', ...over });

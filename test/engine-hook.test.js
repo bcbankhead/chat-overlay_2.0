@@ -595,7 +595,7 @@ test('an admin delete announces the stored record it deleted, once committed', a
   assert.deepEqual(deleted, [['904-target']]);
 });
 
-test('with Chat history at 0 days nothing is written, but messages are still shown and announced', () => {
+test('with Chat history off nothing is written, but messages are still shown and announced', () => {
   let storing = false;
   const { win, calls, poll } = setup({ storing: () => storing });
   const seen = [];

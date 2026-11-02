@@ -33,7 +33,8 @@ const msg = (id, ageDays) => ({ id, roomID: '1', mTime: id, user: 'a', receivedA
 /** @param {import('node:test').TestContext} t */
 async function setup(t, { gallery = fakeGallery([]) } = {}) {
   const db = await openDb({ name: `limits-${++n}` });
-  await seed(db, 'messages', [msg('old', 3), msg('day', 1.5), msg('new', 0.5)]);
+  // Past, just past and inside the fixed 30-day storage age.
+  await seed(db, 'messages', [msg('old', 40), msg('day', 30.5), msg('new', 0.5)]);
   await seed(db, 'tags', [{ sourceMessageId: 'old', imageId: 'i-old' }, { imageId: 'i-new' }]);
   const limits = createLimits({ db, gallery, now: () => NOW });
   /** @type {string[][]} */
@@ -59,29 +60,17 @@ function fakeGallery(removes) {
   };
 }
 
-test('previewHistory counts without deleting', async (t) => {
-  const { db, limits } = await setup(t);
-  assert.equal(await limits.previewHistory(1), 2);
-  assert.equal(await limits.previewHistory(2), 1);
-  assert.equal(await limits.previewHistory(0), 3);
-  assert.equal(await limits.previewHistory(null), 0);
-  assert.equal((await all(db, 'messages')).length, 3);
-});
-
-test('pruneHistory deletes older lines and announces them; newer records and every tag row stay', async (t) => {
+test('pruneHistory(100) deletes lines past the 30-day storage age and announces them; newer records and every tag row stay', async (t) => {
   const { db, limits, deleted } = await setup(t);
-  assert.deepEqual(await limits.pruneHistory(1), ['old', 'day']);
+  assert.deepEqual(await limits.pruneHistory(100), ['old', 'day']);
   assert.deepEqual((await all(db, 'messages')).map((m) => m.id), ['new']);
   // Tagging owns the tags store and re-derives on the announcement.
   assert.equal((await all(db, 'tags')).length, 2);
   assert.deepEqual(deleted, [['old', 'day']]);
 });
 
-test('pruneHistory(0) deletes every line; null deletes none and announces nothing', async (t) => {
+test('pruneHistory(0), Chat history off, deletes every line in one announcement', async (t) => {
   const { db, limits, deleted } = await setup(t);
-  assert.deepEqual(await limits.pruneHistory(null), []);
-  assert.equal((await all(db, 'messages')).length, 3);
-  assert.deepEqual(deleted, []);
   assert.equal((await limits.pruneHistory(0)).length, 3);
   assert.deepEqual(await all(db, 'messages'), []);
   assert.equal(deleted.length, 1);
@@ -103,7 +92,7 @@ test('pruned lines leave the open view through its own removal: the next row reg
     })),
   );
   assert.ok(doc.querySelector('[data-id="new"]').classList.contains('tdf-cont'));
-  await limits.pruneHistory(1);
+  await limits.pruneHistory(100);
   const rows = [...doc.querySelectorAll('#tdf-chat .tdf-msg')];
   assert.deepEqual(rows.map((el) => el.dataset.id), ['new']);
   assert.ok(rows[0].classList.contains('tdf-head'));
@@ -222,15 +211,15 @@ test("retention deleting a block's last line drops its state; a block with lines
   const { createBlockState } = await import('../../core/blockState.js');
   const { db, limits } = await setup(t);
   await seed(db, 'messages', [
-    { ...msg('b-old', 3), backlogBlock: 'gone' },
-    { ...msg('k-old', 3), backlogBlock: 'kept' },
+    { ...msg('b-old', 40), backlogBlock: 'gone' },
+    { ...msg('k-old', 40), backlogBlock: 'kept' },
     { ...msg('k-new', 0.5), backlogBlock: 'kept' },
   ]);
   const state = createBlockState(db);
   await state.set('gone', true);
   await state.set('kept', true);
   await state.set('other', false);
-  await limits.pruneHistory(1);
+  await limits.pruneHistory(100);
   assert.deepEqual(await state.load(), { kept: true, other: false });
 });
 
@@ -239,7 +228,7 @@ test('a deletion touching no block line leaves block state alone', async (t) => 
   const { db, limits } = await setup(t);
   const state = createBlockState(db);
   await state.set('gone', true);
-  await limits.pruneHistory(1);
+  await limits.pruneHistory(100);
   assert.deepEqual(await state.load(), { gone: true });
 });
 

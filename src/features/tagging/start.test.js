@@ -362,15 +362,15 @@ test('a Storage limit prune is not undone by the next reaction change', async ()
   const now = Date.now();
   const day = 86_400_000;
   // Two posts of the image: the first, and bob's like of it, are past the limit.
-  await history.put(record('1', 'alice', `[[img src="plugins/share/view.php?id=${A}"]]`, 1, { receivedAt: now - 4 * day }));
-  await history.put(record('2', 'bob', ':h', 2, { receivedAt: now - 3 * day }));
+  await history.put(record('1', 'alice', `[[img src="plugins/share/view.php?id=${A}"]]`, 1, { receivedAt: now - 40 * day }));
+  await history.put(record('2', 'bob', ':h', 2, { receivedAt: now - 31 * day }));
   await history.put(record('3', 'dave', `[[img src="plugins/share/view.php?id=${A}"]]`, 3, { receivedAt: now - 1000 }));
   await startTagging({ win, doc, css: '', indexedDB });
   await settle();
   assert.deepEqual(hearts(), ['♥1']);
 
   const gallery = { usage: async () => ({ used: 0, preview: null }), enforceLimit: async () => [] };
-  assert.deepEqual(await createLimits({ db, gallery }).pruneHistory(2), ['1', '2']);
+  assert.deepEqual(await createLimits({ db, gallery }).pruneHistory(100), ['1', '2']);
   await settle();
   assert.deepEqual(hearts(), []);
   // A later reaction re-derives and persists the room: bob's pruned :h stays gone.

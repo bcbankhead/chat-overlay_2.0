@@ -23,12 +23,13 @@ function mediaSwitches(/** @type {HTMLElement} */ container) {
   return boxes;
 }
 const AUTOSCROLL = 'input.tdf-opt-autoscroll';
+const HISTORY = 'Chat history (last 100)';
 
-/** A settings stand-in over a plain object; `fail` makes every read reject. */
-function stubSettings(values = {}, { fail = false } = {}) {
+/** A settings stand-in over a plain object; `fail` makes every read reject, `failWrite` every write. */
+function stubSettings(values = {}, { fail = false, failWrite = false } = {}) {
   /** @type {Record<string, unknown>} */
   const store = {
-    retentionDays: 30,
+    historyCount: 100,
     galleryLimitMB: null,
     includeMyImages: false,
     storeImagesOffline: false,
@@ -47,6 +48,7 @@ function stubSettings(values = {}, { fail = false } = {}) {
       return store[key];
     },
     async set(/** @type {string} */ key, /** @type {unknown} */ value) {
+      if (failWrite) throw new Error('write failed');
       writes.push([key, value]);
       store[key] = value;
     },
@@ -64,10 +66,10 @@ function boxFor(container, label) {
 }
 
 /**
- * A limits stand-in: previews report `lines` / `images`, prunes and deletions are recorded.
+ * A limits stand-in: gallery previews report `images`, prunes and deletions are recorded.
  * `stored` is the saved history's line count by sender, which Clear and delete-by-user empty.
  */
-function stubLimits({ lines = 0, images = 0, failPrune = false, stored = {}, failDelete = false } = {}) {
+function stubLimits({ images = 0, failPrune = false, stored = {}, failDelete = false } = {}) {
   /** @type {unknown[][]} */
   const calls = [];
   /** @type {Record<string, number>} */
@@ -102,10 +104,6 @@ function stubLimits({ lines = 0, images = 0, failPrune = false, stored = {}, fai
       delete history[user];
       return ids(n);
     },
-    async previewHistory(/** @type {number | null} */ days) {
-      calls.push(['previewHistory', days]);
-      return lines;
-    },
     async pruneHistory(/** @type {number | null} */ days) {
       calls.push(['pruneHistory', days]);
       if (failPrune) throw new Error('prune failed');
@@ -138,129 +136,176 @@ function setup({ settings = stubSettings(), limits = stubLimits(), engine = true
     limits: /** @type {any} */ (limits),
     ...(loadFailure ? { loadFailure } : {}),
   });
-  // Chat history (Chat) precedes the gallery limit (Media and Gallery Settings) in the DOM (TDF-0044).
-  const [history, gallery] = /** @type {HTMLInputElement[]} */ ([...container.querySelectorAll('.tdf-opt-field input')]);
-  const hints = () => [history, gallery].map((input) => input.closest('.tdf-opt-field')?.nextElementSibling?.textContent);
+  // The Chat history switch (Chat, TDF-0033.5) precedes the gallery limit (Media and Gallery
+  // Settings) in the DOM (TDF-0044); the gallery limit is the one number field left.
+  const history = boxFor(container, HISTORY);
+  const gallery = /** @type {HTMLInputElement} */ (container.querySelector('.tdf-opt-field input'));
+  const hints = () => [history, gallery].map((input) => input.closest('label')?.nextElementSibling?.textContent);
+  /** Tick or untick Chat history, as the member does. @param {boolean} on */
+  const toggle = (on) => {
+    history.checked = on;
+    history.dispatchEvent(new win.Event('change'));
+  };
   /** @param {HTMLInputElement} input @param {string} value @param {'input' | 'change'} type */
   const type = (input, value, typeName = 'input') => {
     input.value = value;
     input.dispatchEvent(new win.Event(typeName));
   };
-  return { win, doc, container, cleanup, history, gallery, hints, type, settings, limits };
+  return { win, doc, container, cleanup, history, gallery, hints, type, toggle, settings, limits };
 }
 
-test('fields show the stored values and their hints on open', async () => {
-  const { history, gallery, hints } = setup({ settings: stubSettings({ retentionDays: 7, galleryLimitMB: 50 }) });
+// TDF-0033.5: Chat history (last 100), a switch over historyCount.
+
+const ON_HINT = 'Replays the newest 100 lines on reload.';
+const OFF_HINT = 'No chat history is kept or replayed.';
+
+test('Chat history is a switch, on, saying how many saved lines turning it off deletes', async () => {
+  const { history, gallery, hints } = setup({
+    settings: stubSettings({ historyCount: 100, galleryLimitMB: 50 }),
+    limits: stubLimits({ stored: { a: 2, b: 1 } }),
+  });
   await settle();
-  assert.equal(history.value, '7');
+  assert.equal(history.type, 'checkbox');
+  assert.ok(history.classList.contains('tdf-opt-switch'));
+  assert.equal(history.checked, true);
   assert.equal(gallery.value, '50');
   assert.deepEqual(hints(), [
-    'Lines older than 7 days are deleted, oldest first.',
+    `${ON_HINT} Turning it off deletes 3 saved lines.`,
     '3.0 MB used. Oldest images go first; favorites are kept.',
   ]);
 });
 
-test('a stored null shows empty fields: all history kept, no gallery limit', async () => {
-  const { history, gallery, hints } = setup({ settings: stubSettings({ retentionDays: null, galleryLimitMB: null }) });
+test('Chat history on over no saved lines names no deletion', async () => {
+  const { hints } = setup();
   await settle();
-  assert.equal(history.value, '');
-  assert.equal(gallery.value, '');
-  assert.deepEqual(hints(), [
-    'Keeping all history. Enter 0 or more days to set a limit.',
-    'No limit. 3.0 MB used.',
-  ]);
+  assert.equal(hints()[0], ON_HINT);
 });
 
-test('a settings read that fails is shown under both the history and gallery fields', async () => {
+test('Chat history stored off shows the switch unticked: nothing is kept', async () => {
+  const { history, hints } = setup({ settings: stubSettings({ historyCount: 0 }), limits: stubLimits({ stored: { a: 2 } }) });
+  await settle();
+  assert.equal(history.checked, false);
+  assert.equal(hints()[0], OFF_HINT);
+});
+
+test('a settings read that fails is shown under both the Chat history switch and the gallery field', async () => {
   const { history, gallery, hints } = setup({ settings: stubSettings({}, { fail: true }) });
   await settle();
-  // The fields sit in different sections (TDF-0044), so each must say why it is empty.
+  // The rows sit in different sections (TDF-0044), so each must say why it is empty.
   assert.deepEqual(hints(), ['Could not read settings: read failed', 'Could not read settings: read failed']);
   for (const input of [history, gallery]) {
-    assert.ok(input.closest('.tdf-opt-field')?.nextElementSibling?.classList.contains('tdf-warn'));
+    assert.ok(input.closest('label')?.nextElementSibling?.classList.contains('tdf-warn'));
   }
 });
 
-test('typing previews what would be deleted and writes nothing', async () => {
-  const { history, gallery, hints, type, settings, limits } = setup({ limits: stubLimits({ lines: 4, images: 2 }) });
+test('unticking Chat history writes 0, then deletes every saved line, and says nothing is kept', async () => {
+  const limits = stubLimits({ stored: { a: 2 } });
+  const { hints, toggle, settings } = setup({ limits });
   await settle();
-  type(history, '1');
+  limits.calls.length = 0;
+  toggle(false);
+  await settle();
+  assert.deepEqual(settings.writes, [['historyCount', 0]]);
+  assert.deepEqual(deletions(limits), [['clearHistory']]);
+  assert.ok(!limits.calls.some(([name]) => name === 'pruneHistory'));
+  assert.equal(hints()[0], OFF_HINT);
+});
+
+test('ticking Chat history writes 100 and deletes nothing', async () => {
+  const limits = stubLimits({ stored: { a: 2 } });
+  const { hints, toggle, settings } = setup({ settings: stubSettings({ historyCount: 0 }), limits });
+  await settle();
+  toggle(true);
+  await settle();
+  assert.deepEqual(settings.writes, [['historyCount', 100]]);
+  assert.deepEqual(deletions(limits), []);
+  assert.equal(hints()[0], `${ON_HINT} Turning it off deletes 2 saved lines.`);
+});
+
+test('a refused Chat history write puts the switch back, deletes nothing and says so', async () => {
+  const limits = stubLimits({ stored: { a: 2 } });
+  const { history, hints, toggle } = setup({ settings: stubSettings({}, { failWrite: true }), limits });
+  await settle();
+  toggle(false);
+  await settle();
+  assert.equal(history.checked, true);
+  assert.deepEqual(deletions(limits), []);
+  assert.equal(hints()[0], 'Could not apply: write failed');
+});
+
+test('a quick off-then-on writes both, and the stale untick deletes nothing', async () => {
+  const limits = stubLimits({ stored: { a: 2 } });
+  const { history, toggle, settings } = setup({ limits });
+  await settle();
+  toggle(false);
+  toggle(true);
+  await settle();
+  assert.deepEqual(settings.writes, [['historyCount', 0], ['historyCount', 100]]);
+  assert.deepEqual(deletions(limits), []);
+  assert.equal(history.checked, true);
+});
+
+test('refused writes on a quick off-then-on leave the switch showing the stored value', async () => {
+  const limits = stubLimits({ stored: { a: 2 } });
+  const { history, toggle } = setup({ settings: stubSettings({}, { failWrite: true }), limits });
+  await settle();
+  toggle(false);
+  toggle(true);
+  await settle();
+  assert.equal(history.checked, true, 'stored 100: on');
+  assert.deepEqual(deletions(limits), []);
+});
+
+test('a deletion that fails on unticking says so under the switch', async () => {
+  const { hints, toggle } = setup({ limits: stubLimits({ stored: { a: 2 }, failDelete: true }) });
+  await settle();
+  toggle(false);
+  await settle();
+  assert.equal(hints()[0], 'Could not apply: delete failed');
+});
+
+test('typing a gallery limit previews what would be deleted and writes nothing', async () => {
+  const { gallery, hints, type, settings, limits } = setup({ limits: stubLimits({ images: 2 }) });
+  await settle();
   type(gallery, '10');
   await settle();
-  assert.deepEqual(hints(), [
-    'Lines older than 1 day are deleted, oldest first. This removes 4 lines now.',
-    '3.0 MB used. Oldest images go first; favorites are kept. This removes 2 images (2.0 MB) now.',
-  ]);
-  type(history, '0');
-  await settle();
-  assert.equal(hints()[0], 'No chat history is kept. This removes 4 lines now.');
+  assert.equal(hints()[1], '3.0 MB used. Oldest images go first; favorites are kept. This removes 2 images (2.0 MB) now.');
   assert.deepEqual(settings.writes, []);
   assert.ok(!limits.calls.some(([name]) => String(name).startsWith('prune')));
 });
 
-test('an invalid typed value is refused in the hint, and committing it does nothing', async () => {
-  const { history, gallery, hints, type, settings, limits } = setup();
+test('an invalid gallery limit is refused in the hint, and committing it does nothing', async () => {
+  const { gallery, hints, type, settings, limits } = setup();
   await settle();
-  type(history, '-2');
   type(gallery, '0');
   await settle();
-  assert.deepEqual(hints(), ['Enter 0 or more whole days.', 'Enter 1 MB or more, or leave empty for no limit.']);
-  type(history, '-2', 'change');
+  assert.equal(hints()[1], 'Enter 1 MB or more, or leave empty for no limit.');
   type(gallery, '0', 'change');
   await settle();
   assert.deepEqual(settings.writes, []);
   assert.ok(!limits.calls.some(([name]) => String(name).startsWith('prune')));
 });
 
-test('emptying the history field over a stored limit warns that the limit stays, and commits nothing', async () => {
-  const { history, hints, type, settings, limits } = setup();
-  await settle();
-  type(history, '');
-  await settle();
-  assert.equal(hints()[0], 'Enter 0 or more whole days. The current 30 days limit stays.');
-  type(history, '', 'change');
-  await settle();
-  assert.deepEqual(settings.writes, []);
-  assert.ok(!limits.calls.some(([name]) => String(name).startsWith('prune')));
-});
-
 test('a number the browser cannot parse is refused, not read as empty', async () => {
-  const { history, gallery, hints, type, settings, limits } = setup({
-    settings: stubSettings({ retentionDays: null, galleryLimitMB: 50 }),
-  });
+  const { gallery, hints, type, settings, limits } = setup({ settings: stubSettings({ galleryLimitMB: 50 }) });
   await settle();
-  for (const input of [history, gallery]) Object.defineProperty(input, 'validity', { value: { badInput: true } });
-  type(history, '');
+  Object.defineProperty(gallery, 'validity', { value: { badInput: true } });
   type(gallery, '');
   await settle();
-  assert.deepEqual(hints(), ['Enter 0 or more whole days.', 'Enter 1 MB or more, or leave empty for no limit.']);
-  type(history, '', 'change');
+  assert.equal(hints()[1], 'Enter 1 MB or more, or leave empty for no limit.');
   type(gallery, '', 'change');
   await settle();
   assert.deepEqual(settings.writes, []);
   assert.ok(!limits.calls.some(([name]) => String(name).startsWith('prune')));
 });
 
-test('committing writes the setting, then applies the limit', async () => {
-  const { history, gallery, type, settings, limits } = setup();
+test('committing the gallery limit writes the setting, then applies the limit', async () => {
+  const { gallery, type, settings, limits } = setup();
   await settle();
-  type(history, '1', 'change');
   type(gallery, '', 'change');
   await settle();
-  assert.deepEqual(settings.writes, [
-    ['retentionDays', 1],
-    ['galleryLimitMB', null],
-  ]);
-  assert.ok(limits.calls.some(([n, v]) => n === 'pruneHistory' && v === 1));
+  assert.deepEqual(settings.writes, [['galleryLimitMB', null]]);
   assert.ok(limits.calls.some(([n, v]) => n === 'pruneGallery' && v === null));
-});
-
-test('a commit that fails says so under its field', async () => {
-  const { history, hints, type } = setup({ limits: stubLimits({ failPrune: true }) });
-  await settle();
-  type(history, '2', 'change');
-  await settle();
-  assert.equal(hints()[0], 'Could not apply: prune failed');
 });
 
 test('Auto-scroll mirrors the engine checkbox both ways, and stops following on close', async () => {
@@ -330,10 +375,10 @@ test('a load-time limit failure is shown at the top of the flyout; none shows no
 });
 
 test('a hint read that resolves after close is not written', async () => {
-  const { cleanup, hints, history, type } = setup();
+  const { cleanup, hints, gallery, type } = setup();
   await settle();
   const shown = hints();
-  type(history, '3');
+  type(gallery, '3');
   cleanup();
   await settle();
   assert.deepEqual(hints(), shown);
@@ -492,7 +537,7 @@ const senderControl = (/** @type {HTMLElement} */ container) => {
 const deletions = (/** @type {{ calls: unknown[][] }} */ limits) =>
   limits.calls.filter(([name]) => name === 'clearHistory' || name === 'deleteByUser');
 
-test('Clear history now and Hide messages by user sit after the Chat history field', () => {
+test('Clear history now and Hide messages by user sit after the Chat history switch', () => {
   const { container } = setup();
   const { clear } = clearControl(container);
   const historyHint = /** @type {HTMLElement} */ (clear.previousElementSibling);
@@ -759,7 +804,7 @@ test('only the latest sender read fills the list', async () => {
 
 test('Hide messages by user hides the sender it asked about, with the picker locked meanwhile', async () => {
   const limits = stubLimits({ stored: { 'Big%20Bob': 2, carol: 1 } });
-  const { container, history, type } = setup({ limits });
+  const { container, toggle } = setup({ limits });
   await settle();
   const { select, remove, ask, yes, no } = senderControl(container);
   select.value = 'Big%20Bob';
@@ -773,7 +818,8 @@ test('Hide messages by user hides the sender it asked about, with the picker loc
   await settle();
   // A refresh while the question is open does not unlock the picker.
   const reads = limits.calls.filter(([name]) => name === 'senders').length;
-  type(history, '2', 'change');
+  limits.clearHistory = async () => [];
+  toggle(false);
   await settle();
   assert.equal(limits.calls.filter(([name]) => name === 'senders').length, reads + 1);
   assert.equal(select.disabled, true);
@@ -810,13 +856,14 @@ test('a sender list that fails to read disables the picker and Hide; a later rea
   limits.senders = async () => {
     throw new Error('read failed');
   };
-  const { container, history, type } = setup({ limits });
+  const { container, toggle } = setup({ limits });
   await settle();
   const { select, remove, hint } = senderControl(container);
   assert.equal(select.disabled, true);
   assert.equal(remove.disabled, true);
   limits.senders = read;
-  type(history, '5', 'change');
+  limits.clearHistory = async () => [];
+  toggle(false);
   await settle();
   assert.equal(hint.textContent, '');
   assert.equal(hint.classList.contains('tdf-warn'), false);
@@ -832,7 +879,7 @@ test('a later sender read keeps a deletion report shown since the warning', asyn
     if (fail) throw new Error('read failed');
     return read();
   };
-  const { container, history, type } = setup({ limits });
+  const { container, toggle } = setup({ limits });
   await settle();
   const { hint } = senderControl(container);
   assert.equal(hint.textContent, 'Could not read saved senders: read failed');
@@ -840,22 +887,23 @@ test('a later sender read keeps a deletion report shown since the warning', asyn
   hint.textContent = 'Deleted 1 message.';
   hint.classList.remove('tdf-warn');
   fail = false;
-  type(history, '2', 'change');
+  limits.clearHistory = async () => [];
+  toggle(false);
   await settle();
   assert.equal(hint.textContent, 'Deleted 1 message.');
 });
 
-test('committing Chat history refreshes the sender list after the prune', async () => {
+test('unticking Chat history refreshes the sender list after the deletion', async () => {
   const limits = stubLimits({ stored: { carol: 1 } });
-  const { container, history, type } = setup({ limits });
+  const { container, toggle } = setup({ limits });
   await settle();
   limits.calls.length = 0;
-  type(history, '2', 'change');
+  toggle(false);
   await settle();
   const names = limits.calls.map(([name]) => name);
-  assert.ok(names.indexOf('senders') > names.indexOf('pruneHistory'));
-  assert.ok(names.includes('pruneHistory'));
-  assert.deepEqual([...senderControl(container).select.options].map((o) => o.value), ['carol']);
+  assert.ok(names.includes('clearHistory'));
+  assert.ok(names.indexOf('senders') > names.indexOf('clearHistory'));
+  assert.deepEqual([...senderControl(container).select.options].map((o) => o.textContent), ['No saved history']);
 });
 
 test('a count, deletion or sender read that fails after close writes nothing', async () => {
@@ -912,7 +960,7 @@ test('Collapse server history automatically sits in the Chat section, with its h
   const failure = /** @type {HTMLElement} */ (about.nextElementSibling);
   assert.ok(failure.classList.contains('tdf-warn'));
   assert.equal(failure.textContent, '');
-  assert.equal(failure.nextElementSibling?.querySelector('span')?.textContent, 'Chat history (days)');
+  assert.equal(failure.nextElementSibling?.querySelector('span')?.textContent, HISTORY);
 });
 
 test('Collapse server history automatically shows the stored value and writes on change', async () => {
@@ -1001,7 +1049,7 @@ test('the Chat section holds its rows in fixed order, history rows last', () => 
     'Auto-scroll',
     'Clear chat buffer',
     'Collapse server history automatically',
-    'Chat history (days)',
+    HISTORY,
     'Clear history now',
     'Hide messages by user',
   ]);

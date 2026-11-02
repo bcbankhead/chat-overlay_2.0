@@ -13,7 +13,7 @@
 /**
  * You liked another member's posted image: the share id, the id of the message that shared
  * it, and that row's own sender and mTime (`''` when it has none). A listener reads the stored
- * record first; the row's fields stand in when history has none (retention off, or pruned).
+ * record first; the row's fields stand in when history has none (Chat history off, or pruned).
  * @typedef {{ shareId: string, messageId: string, user: string, mTime: string }} Liked
  */
 

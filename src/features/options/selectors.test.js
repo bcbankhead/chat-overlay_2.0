@@ -1,19 +1,35 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { DAY_MS, MB_BYTES, historyCutoff, megabytesToBytes, parseDays, parseMegabytes, senderLabel } from './selectors.js';
+import { STORAGE_AGE_DAYS, countFromDays, parseHistoryCount } from '../../core/retention.js';
+import {
+  DAY_MS,
+  HISTORY_ON,
+  MB_BYTES,
+  megabytesToBytes,
+  parseMegabytes,
+  senderLabel,
+  storageCutoff,
+} from './selectors.js';
 
-test('historyCutoff: N days back from now, 0 every line, legacy null no limit', () => {
-  const now = 10 * DAY_MS;
-  assert.equal(historyCutoff(1, now), 9 * DAY_MS);
-  assert.equal(historyCutoff(30, now), now - 30 * DAY_MS);
-  assert.equal(historyCutoff(0, now), Infinity);
-  assert.equal(historyCutoff(null, now), null);
+test('parseHistoryCount keeps 0 and 100 and reads anything else as 100', () => {
+  assert.equal(HISTORY_ON, 100);
+  assert.equal(parseHistoryCount(0), 0);
+  assert.equal(parseHistoryCount(100), 100);
+  for (const other of [50, 30, -0.5, '0', '100', null, undefined, NaN, true, {}]) {
+    assert.equal(parseHistoryCount(other), 100, String(other));
+  }
 });
 
-test('parseDays takes whole numbers from 0 and refuses the rest', () => {
-  assert.deepEqual(parseDays('0'), { ok: true, value: 0 });
-  assert.deepEqual(parseDays(' 30 '), { ok: true, value: 30 });
-  for (const bad of ['', '-1', '1.5', 'abc', '1e3']) assert.deepEqual(parseDays(bad), { ok: false }, bad);
+test('countFromDays: 0 days becomes 0, any other value, null included, 100', () => {
+  assert.equal(countFromDays(0), 0);
+  for (const days of [30, 1, 365, null, undefined, NaN]) assert.equal(countFromDays(days), 100, String(days));
+});
+
+test('storageCutoff: off deletes every line, on the fixed 30-day storage age', () => {
+  const now = 100 * DAY_MS;
+  assert.equal(STORAGE_AGE_DAYS, 30);
+  assert.equal(storageCutoff(0, now), Infinity);
+  assert.equal(storageCutoff(100, now), now - 30 * DAY_MS);
 });
 
 test('parseMegabytes: empty is no limit, whole numbers from 1, the rest refused', () => {

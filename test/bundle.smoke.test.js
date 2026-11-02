@@ -243,11 +243,11 @@ test('a message the engine renders during startup is shown after the replay and 
   assert.deepEqual(shownIds(third.document), ['1', '2']);
 });
 
-test('with Chat history at 0 days messages are shown but never stored, and nothing replays', async () => {
+test('with Chat history off messages are shown but never stored, and nothing replays', async () => {
   const bundle = await bundled();
   const indexedDB = new IDBFactory();
   const db = await openDb({ indexedDB });
-  await createSettings(db).set('retentionDays', 0);
+  await createSettings(db).set('historyCount', 0);
   const count = () =>
     new Promise((resolve) => {
       const req = db.transaction('messages').objectStore('messages').count();
@@ -260,7 +260,7 @@ test('with Chat history at 0 days messages are shown but never stored, and nothi
   assert.deepEqual(shownIds(first.document), ['1']);
   assert.equal(await count(), 0);
 
-  // A line stored before the 0 was set is not replayed.
+  // A line stored before Chat history was turned off is not replayed.
   const t = db.transaction('messages', 'readwrite');
   t.objectStore('messages').put({
     id: 'legacy', roomID: '1', mTime: '99', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '',
@@ -272,18 +272,18 @@ test('with Chat history at 0 days messages are shown but never stored, and nothi
   assert.deepEqual(shownIds(second.document), []);
 });
 
-test('replay shows the newest 100 lines of the Chat history window, and the view ages rows out as it moves (TDF-0033.1)', async () => {
+test('with Chat history on, replay shows the newest 100 lines and a live message keeps the view at 100, with no day window (TDF-0033.5)', async () => {
   const DAY = 86_400_000;
   let clock = Date.now();
   const indexedDB = new IDBFactory();
   const db = await openDb({ indexedDB });
-  await createSettings(db).set('retentionDays', 1);
+  await createSettings(db).set('historyCount', 100);
   const base = { roomID: '1', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '', size: '', family: '', text: 'hi', ircFlag: '0', lineBreakFlag: '0' };
   const t = db.transaction('messages', 'readwrite');
-  // More than the 100-line ceiling, all inside the 1-day window; the oldest only just inside.
+  // More than 100 lines, received over the last 24 days: inside the 30-day storage age.
   for (let i = 0; i < 120; i++) {
     const mTime = String(1000 + i);
-    t.objectStore('messages').put({ ...base, id: `m${i}`, mTime, receivedAt: clock - DAY + 30_000 + i * 1000, orderKey: Number(mTime) * 1000 });
+    t.objectStore('messages').put({ ...base, id: `m${i}`, mTime, receivedAt: clock - 24 * DAY + i * 4 * 3_600_000, orderKey: Number(mTime) * 1000 });
   }
   await new Promise((resolve) => (t.oncomplete = resolve));
   db.close();
@@ -298,50 +298,85 @@ test('replay shows the newest 100 lines of the Chat history window, and the view
   const replayed = shownIds(document);
   assert.equal(replayed.length, 100, 'the newest 100 lines replay');
   assert.equal(replayed[0], 'm20');
-  // Two minutes on, the first 90 stored rows have left the window; a live message trims the
-  // shown ones among them (m20 to m89).
-  clock += 120_000;
+  // Two days on, a day window would have aged rows out; only the count trims, one for one.
+  clock += 2 * DAY;
   poll(um('9999', 'carol', 'live', '2000'));
   await settle();
   const shown = shownIds(document);
-  assert.equal(shown[0], 'm90');
+  assert.equal(shown.length, 100);
+  assert.equal(shown[0], 'm21');
   assert.equal(shown.at(-1), '9999');
-  assert.equal(shown.length, 120 - 90 + 1);
 });
 
-for (const [label, value] of /** @type {const} */ ([
-  ['a legacy no-limit setting', null],
-  ['a stored value no cutoff can be made from', 'x'],
+test('replay skips lines past the 30-day storage age, before the load-time prune runs (TDF-0033.5)', async () => {
+  const DAY = 86_400_000;
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('historyCount', 100);
+  const base = { roomID: '1', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '', size: '', family: '', text: 'hi', ircFlag: '0', lineBreakFlag: '0' };
+  const t = db.transaction('messages', 'readwrite');
+  for (let i = 0; i < 6; i++) {
+    const mTime = String(1000 + i);
+    // The newest three by message time were received 40 days ago: past the storage age.
+    const receivedAt = Date.now() - (i < 3 ? 1 : 40) * DAY + i * 1000;
+    t.objectStore('messages').put({ ...base, id: `m${i}`, mTime, receivedAt, orderKey: Number(mTime) * 1000 });
+  }
+  await new Promise((resolve) => (t.oncomplete = resolve));
+  db.close();
+
+  // Every row the view ever adds, since the load-time prune would remove an old one moments later.
+  /** @type {Set<string>} */
+  const everShown = new Set();
+  const { document } = await page(await bundled(), indexedDB, {
+    beforeEval: (window) => {
+      new window.MutationObserver(() => {
+        for (const id of shownIds(window.document)) everShown.add(id);
+      }).observe(window.document.body, { childList: true, subtree: true });
+    },
+  });
+  for (let i = 0; i < 20 && shownIds(document).length === 0; i++) await settle();
+  await settle();
+  assert.deepEqual(shownIds(document), ['m0', 'm1', 'm2']);
+  assert.deepEqual([...everShown].sort(), ['m0', 'm1', 'm2'], 'no old line was ever shown');
+});
+
+for (const [label, days, replays] of /** @type {const} */ ([
+  ['a stored 0 days', 0, false],
+  ['a stored 1 day', 1, true],
+  ['a legacy no-limit days value', null, true],
+  ['a stored days value no cutoff can be made from', 'x', true],
 ])) {
-  test(`with ${label}, old lines replay and nothing ages out (TDF-0033.1)`, async () => {
+  test(`${label} migrates to Chat history ${replays ? 'on' : 'off'} and is retired (TDF-0033.5)`, async () => {
     const DAY = 86_400_000;
-    let clock = Date.now();
     const indexedDB = new IDBFactory();
     const db = await openDb({ indexedDB });
     const s = db.transaction('settings', 'readwrite');
-    s.objectStore('settings').put({ key: 'retentionDays', value });
+    s.objectStore('settings').put({ key: 'retentionDays', value: days });
     await new Promise((resolve) => (s.oncomplete = resolve));
     const base = { roomID: '1', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '', size: '', family: '', text: 'hi', ircFlag: '0', lineBreakFlag: '0' };
     const t = db.transaction('messages', 'readwrite');
-    // Ten days old: outside any window a days value would set.
+    // Ten days old: outside the window a 1-day setting set, inside the 30-day storage age.
     for (let i = 0; i < 5; i++) {
       const mTime = String(1000 + i);
-      t.objectStore('messages').put({ ...base, id: `m${i}`, mTime, receivedAt: clock - 10 * DAY + i * 1000, orderKey: Number(mTime) * 1000 });
+      t.objectStore('messages').put({ ...base, id: `m${i}`, mTime, receivedAt: Date.now() - 10 * DAY + i * 1000, orderKey: Number(mTime) * 1000 });
     }
     await new Promise((resolve) => (t.oncomplete = resolve));
     db.close();
 
-    const { document, poll } = await page(await bundled(), indexedDB, {
-      beforeEval: (window) => {
-        window.Date.now = () => clock;
-      },
-    });
-    for (let i = 0; i < 20 && shownIds(document).length === 0; i++) await settle();
-    assert.deepEqual(shownIds(document), ['m0', 'm1', 'm2', 'm3', 'm4']);
-    clock += 120_000;
-    poll(um('9999', 'carol', 'live', '2000'));
+    const { document, window } = await page(await bundled(), indexedDB);
+    for (let i = 0; i < 20 && shownIds(document).length === 0 && replays; i++) await settle();
     await settle();
-    assert.deepEqual(shownIds(document), ['m0', 'm1', 'm2', 'm3', 'm4', '9999']);
+    assert.deepEqual(shownIds(document), replays ? ['m0', 'm1', 'm2', 'm3', 'm4'] : []);
+    const after = await openDb({ indexedDB });
+    const rows = await new Promise((resolve) => {
+      const req = after.transaction('settings').objectStore('settings').getAll();
+      req.onsuccess = () => resolve(req.result);
+    });
+    after.close();
+    const keys = rows.map((r) => r.key);
+    assert.ok(!keys.includes('retentionDays'), 'retentionDays deleted');
+    assert.deepEqual(rows.find((r) => r.key === 'historyCount'), { key: 'historyCount', value: replays ? 100 : 0 });
+    await window.happyDOM.close();
   });
 }
 
@@ -349,7 +384,7 @@ test('a stored record that will not render is skipped with a notice; the rest re
   const indexedDB = new IDBFactory();
   const db = await openDb({ indexedDB });
   const base = { roomID: '1', mTime: '', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '', size: '', family: '', ircFlag: '0', lineBreakFlag: '0' };
-  // Recent, so the default 30-day Chat history limit (features/options) keeps them. Seeded
+  // Recent, so the fixed 30-day storage age (features/options) keeps them. Seeded
   // raw, so each carries the orderKey history would compute (TDF-0031).
   const now = Date.now();
   const t = db.transaction('messages', 'readwrite');
@@ -779,11 +814,11 @@ test('the history poll shows as one block whose collapsed state survives a reloa
   for (const { window } of [first, second]) await window.happyDOM.close();
 });
 
-test('with Chat history at 0 days a block still toggles, but its state is not stored', async () => {
+test('with Chat history off a block still toggles, but its state is not stored', async () => {
   const bundle = await bundled();
   const indexedDB = new IDBFactory();
   const db = await openDb({ indexedDB });
-  await createSettings(db).set('retentionDays', 0);
+  await createSettings(db).set('historyCount', 0);
   db.close();
   const shell = await page(bundle, indexedDB);
   historyPoll(shell, um('1', 'bob', 'old', '100'));
@@ -1084,4 +1119,51 @@ test('localStorage that throws reads as on: the overlay starts as before', async
   });
   assert.ok(document.getElementById('tdf-chat'), 'overlay mounted');
   assert.equal(document.getElementById('tdf-chat2-switch'), null);
+});
+
+// TDF-0033.5: Chat history (last 100), turned off and on through the built bundle's Settings.
+
+test('unticking Chat history deletes saved lines from storage and the view, stores nothing new, and a reload replays nothing; ticking it stores again', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const stored = async () => {
+    const db = await openDb({ indexedDB });
+    const n = await new Promise((resolve) => {
+      const req = db.transaction('messages').objectStore('messages').count();
+      req.onsuccess = () => resolve(req.result);
+    });
+    db.close();
+    return n;
+  };
+  const shell = await page(bundle, indexedDB, withRail);
+  shell.poll(um('1', 'bob', 'kept', '100'), um('2', 'carol', 'kept too', '101'));
+  await settle();
+  assert.equal(await stored(), 2);
+  const box = await settingsBox(shell, 'Chat history (last 100)');
+  assert.equal(box.checked, true, 'on for a member who never set it');
+
+  box.checked = false;
+  box.dispatchEvent(new shell.window.Event('change'));
+  for (let i = 0; i < 20 && (await stored()) > 0; i++) await settle();
+  assert.equal(await stored(), 0, 'saved lines deleted');
+  assert.deepEqual(shownIds(shell.document), [], 'and gone from the view');
+
+  shell.poll(um('3', 'dave', 'live', '102'));
+  await settle();
+  assert.deepEqual(shownIds(shell.document), ['3'], 'live chat still shows');
+  assert.equal(await stored(), 0, 'but is not stored');
+  await shell.window.happyDOM.close();
+
+  const again = await page(bundle, indexedDB, withRail);
+  await settle();
+  assert.deepEqual(shownIds(again.document), [], 'a reload replays nothing');
+  const on = await settingsBox(again, 'Chat history (last 100)');
+  assert.equal(on.checked, false);
+  on.checked = true;
+  on.dispatchEvent(new again.window.Event('change'));
+  await settle();
+  again.poll(um('4', 'erin', 'stored again', '103'));
+  await settle();
+  assert.equal(await stored(), 1, 'ticking it on stores live lines again, without a reload');
+  await again.window.happyDOM.close();
 });

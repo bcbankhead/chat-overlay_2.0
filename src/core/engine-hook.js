@@ -74,7 +74,7 @@ export function engineAvailable(win) {
  *   storing?: () => boolean,
  * }) => void} attach start storing and showing: adopt the room's stored pending own
  *   messages, then flush, in order, what the engine rendered since install. `storing`, read
- *   per message, is false while Chat history keeps 0 days
+ *   per message, is false while Chat history is off
  * @property {() => void} abandon stop observing; the wrappers pass straight through
  */
 

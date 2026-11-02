@@ -3,6 +3,7 @@
 import { STORES, done, request } from './db.js';
 import { orderKey } from './group.js';
 import { isExpired } from './reconcile.js';
+import { HISTORY_ON } from './retention.js';
 
 /**
  * A stored message (TDF-0009 Shared Contract, `messages`).
@@ -31,13 +32,6 @@ import { isExpired } from './reconcile.js';
  * @property {string} [backlogBlock] the page-load id of that history poll, grouping its
  *   records into one block in the view
  */
-
-/**
- * The most rows replay shows and the view keeps: the newest 100, kept low so a reload stays
- * fast (user's choice, 2026-11-01). The Chat history window bounds them too (TDF-0033.1), so a
- * quiet room shows fewer, and storage still keeps the whole window.
- */
-export const REPLAY_CEILING = 100;
 
 let lastReceivedAt = 0;
 
@@ -215,13 +209,13 @@ export function createHistory(db) {
      * The room's most recent records by message time, oldest first; messages sharing one
      * mTime second keep their first-seen arrival order.
      * @param {string} roomID
-     * @param {number} [limit]
-     * @param {number | null} [since] records received before this time are skipped: the Chat
-     *   history window, applied here because the load-time prune may not have run yet. Order
-     *   is by message time, not receipt, so the walk skips rather than stops at an old record.
+     * @param {number} [limit] at most this many, the newest; HISTORY_ON by default
+     * @param {number} [since] records received before this time are skipped: the fixed storage
+     *   age, applied here because the load-time prune may not have run yet. Order is by message
+     *   time, not receipt, so the walk skips rather than stops at an old record.
      * @returns {Promise<MessageRecord[]>}
      */
-    async recent(roomID, limit = REPLAY_CEILING, since = null) {
+    async recent(roomID, limit = HISTORY_ON, since = -Infinity) {
       const t = tx('readonly');
       const index = t.objectStore(STORES.messages).index('roomID_orderKey');
       const range = IDBKeyRange.bound([roomID, -Infinity, -Infinity], [roomID, Infinity, Infinity]);
@@ -235,7 +229,7 @@ export function createHistory(db) {
           if (!cursor || out.length >= limit) return resolve(undefined);
           /** @type {MessageRecord} */
           const record = cursor.value;
-          if (since === null || record.receivedAt >= since) out.push(record);
+          if (record.receivedAt >= since) out.push(record);
           cursor.continue();
         };
       });
