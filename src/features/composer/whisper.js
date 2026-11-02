@@ -9,6 +9,15 @@
 // synchronous addMessage call, so the value is back before anything could re-read it.
 
 /**
+ * The user being whispered to, from #whisperID; '' for the room, or when the field is absent.
+ * @param {Document} doc
+ * @returns {string}
+ */
+export function whisperTarget(doc) {
+  return /** @type {HTMLInputElement | null} */ (doc.getElementById('whisperID'))?.value ?? '';
+}
+
+/**
  * @param {HTMLTextAreaElement} bar
  * @param {HTMLElement} host positioned ancestor the chip is placed in
  */

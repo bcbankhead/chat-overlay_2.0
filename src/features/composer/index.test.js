@@ -7,6 +7,7 @@ import { Window } from 'happy-dom';
 import * as esbuild from 'esbuild';
 import { fileURLToPath } from 'node:url';
 import { adapt, THEME_BG } from '../../core/ink.js';
+import { whisperTarget } from './whisper.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const settle = () => new Promise((r) => setTimeout(r, 20));
@@ -826,6 +827,16 @@ test('without #whisperID no chip is added and the engine functions stay unwrappe
   assert.equal(document.querySelector('.tdf-whisper-chip'), null);
   assert.equal(win.whisperUser, original);
   assert.ok(document.querySelector('.tdf-attach-icon'), 'the other pieces still install');
+});
+
+test('whisperTarget reads #whisperID, and is empty for the room or without the field', () => {
+  const { document } = new Window({ url: 'https://chat.example.com/forum/chat/' });
+  const doc = /** @type {any} */ (document);
+  assert.equal(whisperTarget(doc), '');
+  doc.body.innerHTML = '<input id="whisperID" value="">';
+  assert.equal(whisperTarget(doc), '');
+  doc.getElementById('whisperID').value = 'bob b';
+  assert.equal(whisperTarget(doc), 'bob b');
 });
 
 test('before the theme mounts the box keeps the engine colour', () => {

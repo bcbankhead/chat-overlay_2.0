@@ -217,6 +217,34 @@
   color: var(--tdf-gallery-star);
 }
 
+/* An action's state (TDF-0038): a failure stays visible without hover, so its reason is found. */
+:root[data-tdf-theme] #tdf-rail .tdf-rail-flyout.tdf-settled .tdf-gallery-action:is(.tdf-busy, .tdf-failed) {
+  opacity: 1;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-action.tdf-busy {
+  cursor: progress;
+  animation: tdf-gallery-busy 0.9s ease-in-out infinite alternate;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-action.tdf-failed {
+  background: #cf222e;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-rail-flyout.tdf-settled .tdf-gallery-tile:is(:hover, :focus-within) .tdf-gallery-action[aria-disabled='true']:not(.tdf-busy) {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+@keyframes tdf-gallery-busy {
+  from {
+    background: rgba(0, 0, 0, 0.55);
+  }
+  to {
+    background: rgba(0, 0, 0, 0.85);
+  }
+}
+
 :root[data-tdf-theme] #tdf-rail :is(.tdf-gallery-star, .tdf-gallery-action):hover {
   background: rgba(0, 0, 0, 0.75);
 }
@@ -321,6 +349,10 @@
   :root[data-tdf-theme] #tdf-rail .tdf-rail-flyout.tdf-settled .tdf-gallery-thumb.tdf-ready,
   :root[data-tdf-theme] #tdf-rail :is(.tdf-gallery-btn, .tdf-gallery-action) {
     transition: none !important;
+  }
+
+  :root[data-tdf-theme] #tdf-rail .tdf-gallery-action.tdf-busy {
+    animation: none;
   }
 }
 
