@@ -1,8 +1,9 @@
 // The Settings wiring, apart from index.js's double-load guard so a test can drive it. The gear
 // at the right end of the sidebar's icon row opens the Settings flyout (panel.js). Its own
-// connection to the one database, as bootstrap hands features no handle. Both Storage limits
-// also run once on load, after the message view has replayed, so lines they delete leave the
-// view too; a failure there is kept and shown at the top of the flyout when it next opens.
+// connection to the one database, as bootstrap hands features no handle. The gallery limit also
+// runs once on load, after the message view has replayed; a failure there is kept and shown at
+// the top of the flyout when it next opens. The history bound runs on load in bootstrap, before
+// replay reads.
 
 import { openDb } from '../../core/db.js';
 import { describeError } from '../../core/errors.js';
@@ -24,7 +25,7 @@ export function startSettings({ win, doc, css, indexedDB = win.indexedDB }) {
     doc.head.appendChild(style);
   }
 
-  /** @type {string | null} why the load-time limits did not run */
+  /** @type {string | null} why the load-time gallery limit did not run */
   let loadFailure = null;
 
   const ready = openDb({ indexedDB }).then((db) => {
@@ -61,13 +62,11 @@ export function startSettings({ win, doc, css, indexedDB = win.indexedDB }) {
   ready
     .then(async ({ settings, limits }) => {
       await whenChatShown(doc, win);
-      // Bootstrap retired any stored Chat history (days) value before the chat showed.
-      await limits.pruneHistory(await settings.get('historyCount'));
       await limits.pruneGallery(await settings.get('galleryLimitMB'));
     })
     .catch((err) => {
       loadFailure = describeError(err);
-      console.error('TDF Chat 2.0 settings: the storage limits did not run:', err);
+      console.error('TDF Chat 2.0 settings: the gallery limit did not run:', err);
     });
 }
 

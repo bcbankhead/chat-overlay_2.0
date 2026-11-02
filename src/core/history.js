@@ -210,12 +210,9 @@ export function createHistory(db) {
      * mTime second keep their first-seen arrival order.
      * @param {string} roomID
      * @param {number} [limit] at most this many, the newest; HISTORY_ON by default
-     * @param {number} [since] records received before this time are skipped: the fixed storage
-     *   age, applied here because the load-time prune may not have run yet. Order is by message
-     *   time, not receipt, so the walk skips rather than stops at an old record.
      * @returns {Promise<MessageRecord[]>}
      */
-    async recent(roomID, limit = HISTORY_ON, since = -Infinity) {
+    async recent(roomID, limit = HISTORY_ON) {
       const t = tx('readonly');
       const index = t.objectStore(STORES.messages).index('roomID_orderKey');
       const range = IDBKeyRange.bound([roomID, -Infinity, -Infinity], [roomID, Infinity, Infinity]);
@@ -227,9 +224,7 @@ export function createHistory(db) {
         req.onsuccess = () => {
           const cursor = req.result;
           if (!cursor || out.length >= limit) return resolve(undefined);
-          /** @type {MessageRecord} */
-          const record = cursor.value;
-          if (record.receivedAt >= since) out.push(record);
+          out.push(/** @type {MessageRecord} */ (cursor.value));
           cursor.continue();
         };
       });

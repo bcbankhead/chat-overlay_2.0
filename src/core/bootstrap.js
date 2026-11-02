@@ -17,9 +17,10 @@ import { installEngineHook, presenceLineKind } from './engine-hook.js';
 import { describeError } from './errors.js';
 import { emitConfirmChange, onClearView, onDeleted } from './events.js';
 import { createHistory } from './history.js';
+import { createHistoryDelete } from './historyDelete.js';
 import { setHistoryOff } from './historyMirror.js';
 import { MAIN_DIV } from './parse.js';
-import { parseHistoryCount, storageCutoff } from './retention.js';
+import { parseHistoryCount } from './retention.js';
 import { chat2Off, installSwitchLink } from './optOut.js';
 import { createSeenUsers } from './seenUsers.js';
 import { parseHidden } from './hiddenSenders.js';
@@ -159,16 +160,26 @@ async function start(lift, coreReady) {
         if (failed !== null) shown?.notice(mirrorFailedNotice(historyCount, failed));
       }),
     );
+    // Storage keeps each room's newest STORAGE_LINES lines, none with Chat history off (TDF-0057),
+    // bounded here before replay reads, so replay and storage agree when it does: nothing it shows
+    // is deleted by the bound. Nothing has mounted yet, so a failure is said once the view is up
+    // rather than failing the start.
+    /** @type {string | null} */
+    let pruneFailed = null;
+    await createHistoryDelete(db)
+      .pruneHistory(historyCount)
+      .catch((err) => {
+        pruneFailed = describeError(err);
+      });
     const { expired, pending } = await history.expirePending(roomID);
     // Replay shows the newest historyCount lines; the view keeps at most LIVE_CEILING either way.
-    // Lines past the storage age are skipped here rather than left to the Options feature's
-    // load-time prune, which may finish after this read.
     // Entry and exit lines stored by earlier loads are never replayed: the chat shows only this
-    // session's (TDF-0066). Until they age out, a replay may show fewer than historyCount lines.
+    // session's (TDF-0066). They count toward the room's stored lines until newer ones push them
+    // past the cap, so a replay may show fewer than historyCount lines.
     const presenceLang = { publicEntry: String(win.publicEntry ?? ''), publicExit: String(win.publicExit ?? '') };
-    const records = (
-      historyCount === 0 ? [] : await history.recent(roomID, historyCount, storageCutoff(historyCount, Date.now()))
-    ).filter((r) => presenceLineKind(r.kind, r.text, presenceLang) === null);
+    const records = (historyCount === 0 ? [] : await history.recent(roomID, historyCount)).filter(
+      (r) => presenceLineKind(r.kind, r.text, presenceLang) === null,
+    );
 
     // Published for the rail and the profile flyout, which show the same avatars.
     const avatars = createAvatarResolver({ win, db });
@@ -278,6 +289,7 @@ async function start(lift, coreReady) {
     }
     if (hiddenFailed !== null) view.notice(`Hidden senders not read; every sender is shown (${hiddenFailed})`);
     if (mirrorFailed !== null) view.notice(mirrorFailed);
+    if (pruneFailed !== null) view.notice(`Stored chat history not trimmed on load (${pruneFailed})`);
     if (blockStatesFailed !== null) {
       const shownAs = autoCollapse ? 'collapsed' : 'expanded';
       view.notice(`Server history blocks shown ${shownAs}: their state was not read (${blockStatesFailed})`);

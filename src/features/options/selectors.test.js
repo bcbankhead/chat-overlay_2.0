@@ -1,14 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { STORAGE_AGE_DAYS, countFromDays, parseHistoryCount } from '../../core/retention.js';
+import { STORAGE_LINES, countFromDays, parseHistoryCount } from '../../core/retention.js';
 import {
-  DAY_MS,
   HISTORY_ON,
   MB_BYTES,
   megabytesToBytes,
   parseMegabytes,
   senderLabel,
-  storageCutoff,
+  storageLines,
 } from './selectors.js';
 
 test('parseHistoryCount keeps 0 and 25 and reads anything else, the old 100 included, as 25', () => {
@@ -25,11 +24,10 @@ test('countFromDays: 0 days becomes 0, any other value, null included, 25', () =
   for (const days of [30, 1, 365, null, undefined, NaN]) assert.equal(countFromDays(days), 25, String(days));
 });
 
-test('storageCutoff: off deletes every line, on the fixed 30-day storage age', () => {
-  const now = 100 * DAY_MS;
-  assert.equal(STORAGE_AGE_DAYS, 30);
-  assert.equal(storageCutoff(0, now), Infinity);
-  assert.equal(storageCutoff(25, now), now - 30 * DAY_MS);
+test('storageLines: off keeps no line, on keeps each room’s newest HISTORY_ON (TDF-0057)', () => {
+  assert.equal(STORAGE_LINES, HISTORY_ON);
+  assert.equal(storageLines(0), 0);
+  assert.equal(storageLines(25), 25);
 });
 
 test('parseMegabytes: empty is no limit, whole numbers from 1, the rest refused', () => {
