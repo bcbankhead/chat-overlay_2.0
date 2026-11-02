@@ -894,14 +894,25 @@ const SERVER_NOW = Date.parse(SERVER_DATE) / 1000;
 const preLoad = String(SERVER_NOW - 600);
 const postLoad = String(SERVER_NOW + 5);
 
-/** A fake engine whose poll replies carry `date` as their Date header, counting createMessageDiv runs. */
+/**
+ * A fake engine whose poll replies carry `date` as their Date header, counting createMessageDiv
+ * runs. As the engine does (message.js.php:1144-1157), a drawn message calls the page global
+ * doSound by name with its sfx; `sounds` records each sound actually played.
+ */
 function datedEngine(date = SERVER_DATE) {
   const win = fakeEngine();
   win.engineCalls = 0;
+  win.sounds = [];
+  win.doSound = (sfx) => win.sounds.push(sfx);
+  win.throwOnCreate = false;
   const create = win.createMessageDiv;
   win.createMessageDiv = function (...args) {
     win.engineCalls += 1;
-    return create.apply(this, args);
+    const before = win.showMessages;
+    const result = create.apply(this, args);
+    if (win.showMessages > before && typeof win.doSound === 'function') win.doSound(args[5]);
+    if (win.throwOnCreate) throw new Error('engine failed');
+    return result;
   };
   win.receiveMesReq.getResponseHeader = (name) => (name.toLowerCase() === 'date' ? date : null);
   return win;
@@ -918,7 +929,7 @@ function datedSetup({ storing = () => true, date = SERVER_DATE } = {}) {
     win.receiveMesReq.responseXML = xml(...messages);
     win.handleMessages();
   };
-  return { win, calls, poll };
+  return { win, calls, poll, hook };
 }
 
 test('history off: a message from before the page load skips the engine and is not stored, shown or announced', () => {
@@ -1202,4 +1213,78 @@ test('history on: a backlog count that throws is shown as a notice, and the whol
   assert.ok(thrown);
   assert.ok(calls.some((c) => c[0] === 'view.notice' && c[1] === 'History backlog not capped, drawing every message: count failed'));
   assert.equal(win.engineCalls, 120);
+});
+
+// TDF-0051: a pre-load message that still reaches the engine (history on) is drawn without its
+// sound, in whichever poll carries it; live messages, own echoes and engine notices keep theirs.
+
+test('history on: a pre-load message is drawn, stored and shown, but not sounded', () => {
+  const { win, calls, poll } = datedSetup();
+  poll(um('7000', 'bob', 'old', preLoad));
+  assert.equal(win.engineCalls, 1);
+  assert.equal(win.showMessages, 1);
+  assert.ok(calls.some((c) => c[0] === 'put' && c[1].id === '7000'));
+  assert.ok(calls.some((c) => c[0] === 'view.place' && c[1].id === '7000'));
+  assert.deepEqual(win.sounds, []);
+});
+
+test('a message sent after the page load is sounded, beside a muted backlog', () => {
+  const { win, poll } = datedSetup();
+  poll(um('7001', 'bob', 'old', preLoad), um('7002', 'carol', 'new', postLoad));
+  assert.equal(win.engineCalls, 2);
+  assert.deepEqual(win.sounds, ['beep_high.mp3']);
+});
+
+test('a pre-load message in a later poll is muted too', () => {
+  const { win, poll } = datedSetup();
+  poll(um('7003', 'bob', 'live', postLoad));
+  poll(um('7004', 'carol', 'late backlog', preLoad));
+  assert.equal(win.engineCalls, 2);
+  assert.deepEqual(win.sounds, ['beep_high.mp3']);
+});
+
+test('without a usable Date header a pre-load message is sounded', () => {
+  for (const date of [null, 'not a date']) {
+    const { win, poll } = datedSetup({ date });
+    poll(um('7005', 'bob', 'old', preLoad));
+    assert.deepEqual(win.sounds, ['beep_high.mp3'], String(date));
+  }
+});
+
+test('an own echo and an engine-local notice are sounded, even after a backlog poll', () => {
+  const { win, poll } = datedSetup();
+  poll(um('7006', 'bob', 'old', preLoad));
+  win.sendData('chatContainer');
+  win.createMessageDiv('0', '9', 'chatContainer', -1, encodeURI('av.gif|#000|12px|verdana|mine|0|0'), 'beep_high.mp3', 'alice', '', preLoad);
+  win.createMessageDiv('0', '-1', 'chatContainer', -2, '1|#000|12px|verdana|** carol has joined', 'doorbell.mp3', '', '', '');
+  assert.deepEqual(win.sounds, ['beep_high.mp3', 'doorbell.mp3']);
+});
+
+test('after abandon, a pre-load message is sounded', () => {
+  const { win, poll, hook } = datedSetup();
+  hook.abandon();
+  poll(um('7007', 'bob', 'old', preLoad));
+  assert.deepEqual(win.sounds, ['beep_high.mp3']);
+});
+
+test('doSound is the original function again after a muted call, even when the engine throws', () => {
+  const { win, poll } = datedSetup();
+  const original = win.doSound;
+  poll(um('7008', 'bob', 'old', preLoad));
+  assert.equal(win.doSound, original);
+  win.throwOnCreate = true;
+  assert.throws(() => poll(um('7009', 'carol', 'old too', preLoad)), /engine failed/);
+  assert.equal(win.doSound, original);
+  win.throwOnCreate = false;
+  poll(um('7010', 'bob', 'live', postLoad));
+  assert.deepEqual(win.sounds, ['beep_high.mp3']);
+});
+
+test('an engine without doSound draws a pre-load message and is given no doSound', () => {
+  const { win, calls, poll } = datedSetup();
+  delete win.doSound;
+  poll(um('7011', 'bob', 'old', preLoad));
+  assert.equal(win.showMessages, 1);
+  assert.ok(calls.some((c) => c[0] === 'view.place' && c[1].id === '7011'));
+  assert.equal('doSound' in win, false);
 });
