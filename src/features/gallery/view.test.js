@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { beforeEach, test } from 'node:test';
 import 'fake-indexeddb/auto';
 import { Window } from 'happy-dom';
@@ -32,11 +33,15 @@ const image = (over = {}) => ({
 
 /**
  * @param {unknown} [arg]
- * @param {{ storeFails?: boolean, blocked?: boolean, openThrows?: boolean, retryFails?: string, quickview?: { on: boolean } }} [opts]
+ * @param {{ storeFails?: boolean, blocked?: boolean, openThrows?: boolean, retryFails?: string, quickview?: { on: boolean }, includeMine?: { on: boolean }, userName?: string }} [opts]
  *   retryFails: the reason a retry's probe fails with; without it, a retry loads and repairs
  */
-async function open(arg, { storeFails = false, blocked = false, openThrows = false, retryFails, quickview } = {}) {
+async function open(
+  arg,
+  { storeFails = false, blocked = false, openThrows = false, retryFails, quickview, includeMine, userName } = {},
+) {
   const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
+  if (userName !== undefined) win.userName = userName;
   const doc = win.document;
   const store = createImageStore(await openDb({ name: `gallery-view-${++n}` }));
   const container = doc.createElement('div');
@@ -65,6 +70,8 @@ async function open(arg, { storeFails = false, blocked = false, openThrows = fal
       },
       report: (err) => errors.push(err),
       ...(quickview ? { quickview: () => quickview.on } : {}),
+      ...(includeMine ? { includeMine: () => includeMine.on } : {}),
+      self: () => String(win.userName ?? ''),
     });
   const tiles = () => [...container.querySelectorAll('.tdf-gallery-tile')];
   return { win, store, container, mount, tiles, errors, opened, retried };
@@ -290,6 +297,129 @@ test('empty states name the filter in force', async () => {
   /** @type {HTMLElement} */ (g.container.querySelector('.tdf-gallery-favfilter')).click();
   await settle();
   assert.equal(empty.textContent, 'No favourites yet. Star an image to keep it here.');
+  cleanup();
+});
+
+/** @param {Element} c */
+const mineOf = (c) => /** @type {HTMLButtonElement} */ (c.querySelector('.tdf-gallery-minefilter'));
+
+test('My Images is hidden with no user name, shown with one, beside the favourites filter (TDF-0046)', async () => {
+  const out = await open();
+  const cleanupOut = out.mount();
+  await settle();
+  assert.equal(mineOf(out.container).hidden, true, 'logged out: hidden');
+  cleanupOut();
+
+  const g = await open(undefined, { userName: 'me' });
+  const cleanup = g.mount();
+  await settle();
+  const mine = mineOf(g.container);
+  assert.equal(mine.hidden, false);
+  assert.equal(mine.getAttribute('aria-pressed'), 'false');
+  assert.equal(mine.getAttribute('aria-label'), 'Show my images only');
+  assert.equal(mine.nextElementSibling?.className, 'tdf-gallery-favfilter');
+  cleanup();
+  assert.deepEqual(g.errors, []);
+});
+
+test('My Images CSS: the favfilter box, pressed in the link accent not the star, and hidden despite display: grid (TDF-0046)', () => {
+  const css = readFileSync(new URL('./gallery.css', import.meta.url), 'utf8');
+  assert.match(css, /\.tdf-gallery-minefilter \{[^}]*width: 28px/);
+  assert.match(css, /\.tdf-gallery-minefilter\[aria-pressed="true"\] \{[^}]*color: var\(--tdf-link\)/);
+  assert.match(css, /\.tdf-gallery-minefilter\[hidden\] \{\s*display: none;/);
+});
+
+test("My Images pressed shows only the current user's images, newest first, and combines with favourites (TDF-0046)", async () => {
+  const g = await open(undefined, { userName: 'me' });
+  await g.store.put(image({ id: 'a', user: 'alice', receivedAt: 1, favorite: true }));
+  await g.store.put(image({ id: 'b', user: 'me', receivedAt: 2 }));
+  await g.store.put(image({ id: 'c', user: 'me', receivedAt: 3, favorite: true }));
+  const cleanup = g.mount();
+  await settle();
+  assert.deepEqual(g.tiles().map((t) => t.dataset.id), ['c', 'b', 'a']);
+
+  const mine = mineOf(g.container);
+  mine.click();
+  await settle();
+  assert.equal(mine.getAttribute('aria-pressed'), 'true');
+  assert.deepEqual(g.tiles().map((t) => t.dataset.id), ['c', 'b']);
+
+  /** @type {HTMLElement} */ (g.container.querySelector('.tdf-gallery-favfilter')).click();
+  await settle();
+  assert.deepEqual(g.tiles().map((t) => t.dataset.id), ['c'], 'my favourites');
+
+  mine.click();
+  await settle();
+  assert.equal(mine.getAttribute('aria-pressed'), 'false');
+  assert.deepEqual(g.tiles().map((t) => t.dataset.id), ['c', 'a'], 'favourites from everyone');
+  cleanup();
+  assert.deepEqual(g.errors, []);
+});
+
+test('pressing My Images clears an active user-filter chip (TDF-0046)', async () => {
+  const g = await open({ user: 'bob' }, { userName: 'me' });
+  await g.store.put(image({ id: 'a', user: 'bob', receivedAt: 1 }));
+  await g.store.put(image({ id: 'b', user: 'me', receivedAt: 2 }));
+  const cleanup = g.mount();
+  await settle();
+  const chip = /** @type {HTMLElement} */ (g.container.querySelector('.tdf-gallery-chip'));
+  assert.equal(chip.hidden, false);
+  assert.deepEqual(g.tiles().map((t) => t.dataset.id), ['a']);
+
+  mineOf(g.container).click();
+  await settle();
+  assert.equal(chip.hidden, true);
+  assert.deepEqual(g.tiles().map((t) => t.dataset.id), ['b']);
+
+  mineOf(g.container).click();
+  await settle();
+  assert.deepEqual(g.tiles().map((t) => t.dataset.id), ['b', 'a'], 'the chip does not come back');
+  cleanup();
+});
+
+test('My Images empty states: with favourites, and the Include my images hint only while it is off (TDF-0046)', async () => {
+  const setting = { on: false };
+  const g = await open(undefined, { userName: 'me', includeMine: setting });
+  await g.store.put(image({ id: 'a', user: 'alice' }));
+  const cleanup = g.mount();
+  await settle();
+  const empty = /** @type {HTMLElement} */ (g.container.querySelector('.tdf-gallery-empty'));
+  mineOf(g.container).click();
+  await settle();
+  assert.equal(empty.hidden, false);
+  assert.equal(
+    empty.textContent,
+    'No images from you yet. Include my images is off, so only images saved before it was turned off are kept.',
+  );
+
+  setting.on = true;
+  await g.store.put(image({ id: 'b', user: 'alice' }));
+  await settle();
+  assert.equal(empty.textContent, 'No images from you yet.');
+
+  /** @type {HTMLElement} */ (g.container.querySelector('.tdf-gallery-favfilter')).click();
+  await settle();
+  assert.equal(empty.textContent, 'None of your images are favourites yet.');
+  cleanup();
+});
+
+test('My Images with no includeMine dep shows no hint; losing the user name drops the filter (TDF-0046)', async () => {
+  const g = await open(undefined, { userName: 'me' });
+  await g.store.put(image({ id: 'a', user: 'alice' }));
+  const cleanup = g.mount();
+  await settle();
+  const empty = /** @type {HTMLElement} */ (g.container.querySelector('.tdf-gallery-empty'));
+  const mine = mineOf(g.container);
+  mine.click();
+  await settle();
+  assert.equal(empty.textContent, 'No images from you yet.');
+
+  g.win.userName = '';
+  await g.store.put(image({ id: 'b', user: 'alice', receivedAt: 2 }));
+  await settle();
+  assert.equal(mine.hidden, true);
+  assert.equal(mine.getAttribute('aria-pressed'), 'false');
+  assert.deepEqual(g.tiles().map((t) => t.dataset.id), ['b', 'a']);
   cleanup();
 });
 

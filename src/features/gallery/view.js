@@ -1,6 +1,6 @@
 // The Gallery flyout (UI design 2026-10-27, Flyouts → Gallery), rendered into the rail's
 // flyout body, which already scrolls through shell.attachScrollbar. A sticky header (title,
-// `N images · size on disk`, the favourites filter, the user-filter chip), then a 3-column
+// `N images · size on disk`, the My Images and favourites filters, the user-filter chip), then a 3-column
 // grid of stored 128×128 thumbnails. Opening never fetches a full image. Each tile: trash
 // top left, star top right, shown on hover; a favourite keeps its star and its trash is
 // disabled. A chip in the lower left shows the record's size on disk, orange once large
@@ -19,6 +19,9 @@
 // onSelect returns a Promise holds its button busy until it settles, then returns it to idle
 // or shows the failure's reason (TDF-0038); its state is kept by item id at module scope, so
 // a redraw or a reopened flyout keeps it, and a promise settling after close still records it.
+// My Images (TDF-0046) shows only records the current user (the `self` dep) sent. It combines
+// with favourites, clears the user-filter chip when pressed, is hidden while no user name is
+// known, and resets each open, like favourites.
 
 import { renderIcon } from '../rail/icons.js';
 import { listGalleryItemActions, listGalleryItemDecorations, onGalleryRegistryChange } from './api.js';
@@ -32,6 +35,8 @@ const REMOVE_MS = 180;
 const UNAVAILABLE = 'Image unavailable from server';
 
 const ICONS = {
+  person:
+    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 20.5c0-4.1 3.6-7 8-7s8 2.9 8 7z"/></svg>',
   star: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3.2l2.7 5.5 6 .9-4.4 4.2 1 6-5.3-2.8-5.3 2.8 1-6L3.3 9.6l6-.9z"/></svg>',
   trash:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
@@ -53,6 +58,9 @@ const ICONS = {
  * @property {(item: import('./store.js').ImageRecord) => Promise<void>} retry  re-probes an unavailable image; rejects while it stays unavailable
  * @property {(err: unknown) => void} report
  * @property {() => boolean} [quickview]  read at each tile click: whether it opens the media popover
+ * @property {() => boolean} [includeMine]  the Include my images setting, read for My Images' empty state
+ * @property {() => string} [self]  the current user's name in the form images.user stores, empty while
+ *   logged out — the one capture reads (start.js); without it, My Images stays hidden
  */
 
 /**
@@ -133,12 +141,13 @@ export function resetGalleryActionStates() {
 export function renderGallery(
   container,
   arg,
-  { doc, win, store: storeReady, open, retry, report, quickview = () => false },
+  { doc, win, store: storeReady, open, retry, report, quickview = () => false, includeMine = () => true, self = () => '' },
 ) {
   const given = /** @type {GalleryArg} */ (arg && typeof arg === 'object' ? arg : undefined);
   /** @type {{ user: string, label: string } | null} */
   let userFilter = given?.user ? { user: given.user, label: given.label || given.user } : null;
   let favOnly = false;
+  let mineOnly = false;
   let closed = false;
   let token = 0;
   /** @type {Map<string, Tile>} */
@@ -166,7 +175,14 @@ export function renderGallery(
   favFilter.setAttribute('aria-label', 'Show favourites only');
   favFilter.setAttribute('aria-pressed', 'false');
   favFilter.innerHTML = ICONS.star;
-  head.append(title, stats, chip, favFilter);
+  const mineFilter = doc.createElement('button');
+  mineFilter.type = 'button';
+  mineFilter.className = 'tdf-gallery-minefilter';
+  mineFilter.title = 'Show my images only';
+  mineFilter.setAttribute('aria-label', 'Show my images only');
+  mineFilter.setAttribute('aria-pressed', 'false');
+  mineFilter.innerHTML = ICONS.person;
+  head.append(title, stats, chip, mineFilter, favFilter);
   const errors = doc.createElement('div');
   errors.className = 'tdf-gallery-error';
   errors.setAttribute('role', 'status');
@@ -185,6 +201,25 @@ export function renderGallery(
     errors.hidden = list.length === 0;
     errors.replaceChildren(...list.map((m) => Object.assign(doc.createElement('div'), { textContent: m })));
   }
+
+  /** Hide My Images while no user name is known, and drop its filter with it. */
+  function syncMine() {
+    mineFilter.hidden = !self();
+    if (mineFilter.hidden && mineOnly) {
+      mineOnly = false;
+      mineFilter.setAttribute('aria-pressed', 'false');
+    }
+  }
+
+  mineFilter.addEventListener('click', () => {
+    mineOnly = !mineOnly;
+    mineFilter.setAttribute('aria-pressed', String(mineOnly));
+    if (mineOnly && userFilter) {
+      userFilter = null;
+      renderChip();
+    }
+    void refresh();
+  });
 
   favFilter.addEventListener('click', () => {
     favOnly = !favOnly;
@@ -519,6 +554,7 @@ export function renderGallery(
 
   /** @param {import('./store.js').ImageStore} s */
   async function load(s) {
+    if (mineOnly) return (await s.listByUser(self())).sort((a, b) => b.receivedAt - a.receivedAt);
     if (!userFilter) return s.list();
     const names = [...new Set([userFilter.user, userFilter.label])];
     const lists = await Promise.all(names.map((n) => s.listByUser(n)));
@@ -528,6 +564,7 @@ export function renderGallery(
 
   async function refresh() {
     const mine = ++token;
+    syncMine();
     try {
       const s = store ?? (store = await storeReady);
       const [items, totals] = await Promise.all([load(s), s.stats()]);
@@ -554,7 +591,11 @@ export function renderGallery(
       reconcile(grid, [...next.values()].map((t) => t.el));
 
       empty.hidden = shown.length > 0;
-      empty.textContent = favOnly
+      empty.textContent = mineOnly
+        ? favOnly
+          ? 'None of your images are favourites yet.'
+          : `No images from you yet.${includeMine() ? '' : ' Include my images is off, so only images saved before it was turned off are kept.'}`
+        : favOnly
         ? 'No favourites yet. Star an image to keep it here.'
         : userFilter
           ? `No images from ${userFilter.label} yet`
