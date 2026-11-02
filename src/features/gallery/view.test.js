@@ -140,6 +140,111 @@ test('header counts every image; the star filter keeps favourites; a favourite c
   assert.deepEqual(g.errors, []);
 });
 
+test('a refresh reconciles tiles by key: a star detaches none, a capture adds one at the front, a delete removes one (TDF-0047)', async () => {
+  const g = await open();
+  await g.store.put(image({ id: 'a', receivedAt: 1 }));
+  await g.store.put(image({ id: 'b', receivedAt: 2 }));
+  await g.store.put(image({ id: 'c', receivedAt: 3 }));
+  const cleanup = g.mount();
+  await settle();
+  const grid = /** @type {HTMLElement} */ (g.container.querySelector('.tdf-gallery-grid'));
+  /** @type {{ added: Node[], removed: Node[] }} */
+  const seen = { added: [], removed: [] };
+  const observer = new g.win.MutationObserver((/** @type {MutationRecord[]} */ records) => {
+    for (const r of records) {
+      seen.added.push(...r.addedNodes);
+      seen.removed.push(...r.removedNodes);
+    }
+  });
+  observer.observe(grid, { childList: true });
+  const reset = () => {
+    seen.added = [];
+    seen.removed = [];
+  };
+  const before = g.tiles();
+  assert.deepEqual(before.map((t) => t.dataset.id), ['c', 'b', 'a']);
+
+  const star = /** @type {HTMLButtonElement} */ (before[1].querySelector('.tdf-gallery-star'));
+  star.focus();
+  star.click();
+  await settle();
+  assert.equal(((await g.store.list()).find((r) => r.id === 'b'))?.favorite, true);
+  assert.ok(before[1].classList.contains('tdf-fav'), 'the starred tile redrew in place');
+  // Identities and counts, not deepEqual on nodes: a failing diff of DOM nodes exhausts memory.
+  const sameTiles = (/** @type {Element[]} */ now, /** @type {Element[]} */ was) =>
+    now.length === was.length && now.every((t, i) => t === was[i]);
+  assert.equal(seen.removed.length, 0, 'a star detaches no tile');
+  assert.equal(seen.added.length, 0, 'a star re-adds no tile');
+  assert.ok(sameTiles(g.tiles(), before), 'every tile keeps its element');
+  assert.ok(g.win.document.activeElement === star, 'the clicked star keeps focus');
+
+  await g.store.put(image({ id: 'd', receivedAt: 4 }));
+  await settle();
+  assert.deepEqual(g.tiles().map((t) => t.dataset.id), ['d', 'c', 'b', 'a']);
+  assert.equal(seen.added.length, 1, 'a new capture inserts exactly one tile');
+  assert.equal(/** @type {HTMLElement} */ (seen.added[0]).dataset.id, 'd');
+  assert.equal(seen.removed.length, 0);
+  assert.ok(sameTiles(g.tiles().slice(1), before), 'the existing tiles keep their elements');
+  reset();
+
+  await g.store.remove('c');
+  await settle();
+  assert.deepEqual(g.tiles().map((t) => t.dataset.id), ['d', 'b', 'a']);
+  assert.equal(seen.added.length, 0, 'a delete inserts nothing');
+  assert.equal(seen.removed.length, 1, 'a delete removes exactly one tile');
+  assert.ok(seen.removed[0] === before[0], 'the removed tile is the deleted one');
+  observer.disconnect();
+  cleanup();
+  assert.deepEqual(g.errors, []);
+});
+
+test('the star filter keeps favourite tiles in place: on drops the rest, off re-inserts them between the kept ones (TDF-0047)', async () => {
+  const g = await open();
+  await g.store.put(image({ id: 'a', receivedAt: 1, favorite: true }));
+  await g.store.put(image({ id: 'b', receivedAt: 2 }));
+  await g.store.put(image({ id: 'c', receivedAt: 3, favorite: true }));
+  await g.store.put(image({ id: 'd', receivedAt: 4 }));
+  const cleanup = g.mount();
+  await settle();
+  const grid = /** @type {HTMLElement} */ (g.container.querySelector('.tdf-gallery-grid'));
+  /** @type {{ added: Node[], removed: Node[] }} */
+  const seen = { added: [], removed: [] };
+  const observer = new g.win.MutationObserver((/** @type {MutationRecord[]} */ records) => {
+    for (const r of records) {
+      seen.added.push(...r.addedNodes);
+      seen.removed.push(...r.removedNodes);
+    }
+  });
+  observer.observe(grid, { childList: true });
+  const before = g.tiles();
+  assert.deepEqual(before.map((t) => t.dataset.id), ['d', 'c', 'b', 'a']);
+  const [d, c, b, a] = before;
+  const filter = /** @type {HTMLElement} */ (g.container.querySelector('.tdf-gallery-favfilter'));
+
+  filter.click();
+  await settle();
+  assert.deepEqual(g.tiles().map((t) => t.dataset.id), ['c', 'a']);
+  const kept = g.tiles();
+  assert.ok(kept[0] === c && kept[1] === a, 'the favourites keep their elements');
+  assert.equal(seen.added.length, 0, 'filtering on inserts nothing');
+  assert.equal(seen.removed.length, 2, 'filtering on removes the two non-favourites');
+  assert.ok(seen.removed.includes(d) && seen.removed.includes(b));
+  seen.added = [];
+  seen.removed = [];
+
+  filter.click();
+  await settle();
+  const after = g.tiles();
+  assert.deepEqual(after.map((t) => t.dataset.id), ['d', 'c', 'b', 'a']);
+  assert.ok(after[1] === c && after[3] === a, 'the favourites still keep their elements');
+  assert.equal(seen.removed.length, 0, 'filtering off detaches no tile');
+  assert.equal(seen.added.length, 2, 'filtering off inserts only the two non-favourites');
+  assert.ok(seen.added[0] === after[0] && seen.added[1] === after[2]);
+  observer.disconnect();
+  cleanup();
+  assert.deepEqual(g.errors, []);
+});
+
 test('opened for a user, only that sender shows, until the chip is cleared', async () => {
   const g = await open({ user: 'bob%20b', label: 'bob b' });
   await g.store.put(image({ id: 'a', user: 'alice', receivedAt: 1 }));
