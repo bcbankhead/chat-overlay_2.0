@@ -436,17 +436,6 @@ test('recent bounds by count alone: receipt age skips nothing (TDF-0033.5)', asy
   assert.deepEqual((await h.recent('1', 2)).map((r) => r.id), ['c', 'old-late']);
 });
 
-test('recent skips records received before since, still newest by message time', async () => {
-  const h = createHistory(await fresh());
-  await h.put(msg({ id: 'old-late', mTime: '400', receivedAt: 100 }));
-  await h.put(msg({ id: 'a', mTime: '100', receivedAt: 600 }));
-  await h.put(msg({ id: 'b', mTime: '200', receivedAt: 500 }));
-  await h.put(msg({ id: 'c', mTime: '300', receivedAt: 700 }));
-  assert.deepEqual((await h.recent('1', Infinity, 500)).map((r) => r.id), ['a', 'b', 'c']);
-  // The skipped record does not use up the limit.
-  assert.deepEqual((await h.recent('1', 2, 500)).map((r) => r.id), ['b', 'c']);
-});
-
 test('recent by default returns the newest 25 records', async () => {
   const h = createHistory(await fresh());
   for (let i = 0; i < 120; i++) await h.put(msg({ id: `m${i}`, mTime: String(1000 + i), receivedAt: i + 1 }));
