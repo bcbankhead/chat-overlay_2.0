@@ -28,7 +28,7 @@
   box-sizing: border-box;
   bottom: 10px !important;
   height: 75px !important;
-  padding: 6px 52px 20px 8px !important;
+  padding: 6px 52px 28px 8px !important;
   background: var(--tdf-bg) !important;
   border: 1px solid var(--tdf-border) !important;
   border-radius: 6px !important;
@@ -233,7 +233,8 @@
   z-index: 6;
   display: block;
   color: #8b949e;
-  font: 11px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--tdf-bg);
+  font: 9px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   white-space: nowrap;
   pointer-events: none;
 }
