@@ -147,7 +147,7 @@
   border-color: var(--tdf-link);
 }
 
-/* Delete messages by user: the stored senders. */
+/* Hide messages by user: the stored senders. */
 #tdf-rail .tdf-opt-sender select {
   min-width: 0;
   max-width: 60%;
