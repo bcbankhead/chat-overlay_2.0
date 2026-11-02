@@ -5,7 +5,7 @@
   "description": "TDF Chat 2.0 — modern overlay userscript for the TDF chat",
   "type": "module",
   "engines": {
-    "node": ">=20.10.0"
+    "node": ">=21.0.0"
   },
   "scripts": {
     "build": "node build.mjs",
