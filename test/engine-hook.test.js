@@ -1092,3 +1092,100 @@ test('a Date header read that throws before attach shows its notice once attache
   assert.ok(calls.some((c) => c[0] === 'view.notice' && c[1] === 'Page load time not read: header denied'));
   assert.equal(win.engineCalls, 1);
 });
+
+// TDF-0055: with Chat history on, only the newest HISTORY_ON of the server's pre-load messages
+// reach the engine; the rest skip it as they do with history off.
+
+/** `n` pre-load records, oldest first, with ids from `first` and distinct texts and mTimes. */
+const preLoadBacklog = (n, first = 3000) =>
+  Array.from({ length: n }, (_, i) => um(String(first + i), i % 2 ? 'bob' : 'carol', `line ${i}`, String(SERVER_NOW - 10000 + i)));
+
+test('history on: of 150 pre-load messages only the newest 100 reach the engine; the older 50 are not stored, shown or announced', () => {
+  const { win, calls, poll } = datedSetup();
+  const seen = [];
+  const off = onInbound((r) => seen.push(r.id));
+  poll(...preLoadBacklog(150));
+  off();
+  const newest = Array.from({ length: 100 }, (_, i) => String(3050 + i));
+  assert.equal(win.engineCalls, 100);
+  assert.equal(win.showMessages, 100);
+  assert.deepEqual(calls.filter((c) => c[0] === 'put').map((c) => c[1].id), newest);
+  assert.deepEqual(calls.filter((c) => c[0] === 'view.place').map((c) => c[1].id), newest);
+  assert.deepEqual(seen, newest);
+});
+
+test('history on: under 100 pre-load messages all draw', () => {
+  const { win, poll } = datedSetup();
+  poll(...preLoadBacklog(40));
+  assert.equal(win.engineCalls, 40);
+});
+
+test('history on: pre-load moderation commands and deletes reach the engine and do not use the budget', () => {
+  const { win, poll } = datedSetup();
+  const moderation = [
+    ...['SILENCE', 'KICK', 'BAN'].map((body, i) =>
+      rawRecord(String(4000 + i), { user: 'mod', toUser: 'alice', body, mTime: String(SERVER_NOW - 1) }),
+    ),
+    rawRecord('4003', { user: 'mod', body: encodeURI(`DELETEMESSAGE_av.gif|#000|12px|verdana|${preLoad}`), mTime: String(SERVER_NOW - 1) }),
+  ];
+  // The oldest moderation record precedes the backlog; the rest follow it, among the newest.
+  poll(moderation[0], ...preLoadBacklog(110), ...moderation.slice(1));
+  assert.equal(win.engineCalls, 104);
+});
+
+test('history on: pre-load private-window messages are neither counted nor suppressed', () => {
+  const { win, poll } = datedSetup();
+  const privates = Array.from({ length: 20 }, (_, i) =>
+    rawRecord(String(5000 + i), {
+      div: 'pcontent_9_1',
+      toUser: 'alice',
+      body: encodeURI(`av.gif|#000|12px|verdana|private ${i}|0|0`),
+      mTime: String(SERVER_NOW - 5),
+    }),
+  );
+  poll(...preLoadBacklog(120), ...privates);
+  assert.equal(win.engineCalls, 120);
+});
+
+test('history on: live messages after the load still draw beside a capped backlog', () => {
+  const { win, calls, poll } = datedSetup();
+  poll(...preLoadBacklog(105), um('6000', 'bob', 'now', postLoad));
+  assert.equal(win.engineCalls, 101);
+  assert.ok(calls.some((c) => c[0] === 'view.place' && c[1].id === '6000'));
+  poll(um('6001', 'carol', 'later', String(SERVER_NOW + 30)));
+  assert.equal(win.engineCalls, 102);
+});
+
+test('history on: without a usable Date header nothing is suppressed', () => {
+  for (const date of [null, 'not a date']) {
+    const { win, poll } = datedSetup({ date });
+    poll(...preLoadBacklog(130));
+    assert.equal(win.engineCalls, 130, String(date));
+  }
+});
+
+test('history on: a backlog count that throws is shown as a notice, and the whole poll draws', () => {
+  const { win, calls } = datedSetup();
+  const backlog = preLoadBacklog(120);
+  win.receiveMesReq.responseXML = xml(...backlog);
+  const nodes = win.receiveMesReq.responseXML.getElementsByTagName('usermessage');
+  const filter = Array.prototype.filter;
+  let thrown = false;
+  // Throw from the count's own filter only, picked out by its predicate's name.
+  Array.prototype.filter = function (...args) {
+    if (!thrown && args[0]?.name === 'heldBackable') {
+      thrown = true;
+      throw new Error('count failed');
+    }
+    return filter.apply(this, args);
+  };
+  try {
+    win.receiveMesReq.responseXML = { getElementsByTagName: () => nodes };
+    win.handleMessages();
+  } finally {
+    Array.prototype.filter = filter;
+  }
+  assert.ok(thrown);
+  assert.ok(calls.some((c) => c[0] === 'view.notice' && c[1] === 'History backlog not capped, drawing every message: count failed'));
+  assert.equal(win.engineCalls, 120);
+});
