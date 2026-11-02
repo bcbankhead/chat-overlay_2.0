@@ -33,11 +33,11 @@ import { isExpired } from './reconcile.js';
  */
 
 /**
- * A safety ceiling on how many rows replay shows and the view keeps. The Chat history window
- * is the real bound (TDF-0033.1); this binds only past it, or where no window applies (a
- * legacy null keeps everything).
+ * The most rows replay shows and the view keeps: the newest 100, kept low so a reload stays
+ * fast (user's choice, 2026-11-01). The Chat history window bounds them too (TDF-0033.1), so a
+ * quiet room shows fewer, and storage still keeps the whole window.
  */
-export const REPLAY_CEILING = 5000;
+export const REPLAY_CEILING = 100;
 
 let lastReceivedAt = 0;
 

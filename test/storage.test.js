@@ -443,10 +443,13 @@ test('recent with a window start skips records received before it, keeping order
   assert.deepEqual(await h.recent('1', Infinity, Infinity), [], 'a cutoff of Infinity keeps nothing');
 });
 
-test('recent by default reaches past the old 200-record cap', async () => {
+test('recent by default returns the newest 100 records', async () => {
   const h = createHistory(await fresh());
-  for (let i = 0; i < 250; i++) await h.put(msg({ id: `m${i}`, mTime: String(1000 + i), receivedAt: i + 1 }));
-  assert.equal((await h.recent('1')).length, 250);
+  for (let i = 0; i < 120; i++) await h.put(msg({ id: `m${i}`, mTime: String(1000 + i), receivedAt: i + 1 }));
+  const recent = await h.recent('1');
+  assert.equal(recent.length, 100);
+  assert.equal(recent[0].id, 'm20');
+  assert.equal(recent.at(-1).id, 'm119');
 });
 
 test('a pending echo orders by receipt time, then takes its server time once confirmed', async () => {

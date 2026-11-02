@@ -144,8 +144,9 @@ async function start(lift, coreReady) {
       typeof retentionDays === 'number' && Number.isFinite(retentionDays) && retentionDays > 0
         ? historyCutoff(retentionDays, Date.now())
         : null;
-    // Replay reaches the whole Chat history window (TDF-0033.1), filtered here rather than
-    // left to the Options feature's load-time prune, which may finish after this read.
+    // Replay shows the newest REPLAY_CEILING lines inside the Chat history window (TDF-0033.1),
+    // filtered here rather than left to the Options feature's load-time prune, which may finish
+    // after this read.
     const records = retentionDays === 0 ? [] : await history.recent(roomID, REPLAY_CEILING, windowStart());
 
     // Published for the rail and the profile flyout, which show the same avatars.

@@ -66,8 +66,8 @@ function stubResize(win) {
 // The local day the pinned record times fall on (2 Jan 2026), so those times read HH:MM.
 const NOW = new Date(2026, 0, 2, 12, 0).getTime() / 1000;
 
-// The view's row ceiling in these tests: REPLAY_CEILING itself makes a full list too slow to
-// build under happy-dom, and the trim's behaviour does not depend on its size.
+// The view's row ceiling in these tests, set apart from REPLAY_CEILING so the trim tests do not
+// move when that value is tuned; the trim's behaviour does not depend on its size.
 const CEILING = 200;
 
 async function setup({ autoScroll = true, reducedMotion = false, globals = {}, now = () => NOW, windowStart, ceiling = CEILING, blocks, autoCollapse } = {}) {
