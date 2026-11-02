@@ -50,3 +50,6 @@ Key features,
 8. Forward compatibility
     - it might be useful if they want to install this script on the page as a JS include this removes all difficulty in installation.
     - it would function the same as the tamper monkey script, and the chat thread would only be locally reproducible, so no need to store chat data long term on the server, it lives in each users chat history until they purge it.
+9. Opting out (TDF-0037)
+    - `Use Chat 2.0` (on by default) is the first row under Chat in Settings; unchecking it reloads into the site's original chat, untouched
+    - while it is off, the only addition is a small `Switch to Chat 2.0` link in the corner, which turns 2.0 back on and reloads, settings and history intact

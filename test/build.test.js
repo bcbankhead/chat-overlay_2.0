@@ -4,10 +4,14 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { build, checkGrantNone, checkSecondCopyInert, main, readMatch, verify } from '../build.mjs';
+import { build, checkEntriesGated, checkGrantNone, checkSecondCopyInert, main, readMatch, verify } from '../build.mjs';
 
 const repo = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const MATCH = 'https://chat.example.com/forum/chat/*';
+
+/** A stub feature entry behind its own flag and the opt-out gate, as every real entry is. */
+const gated = (body) =>
+  `import { chat2Off } from '../../core/optOut.js';\nif (!window.__tdfChat2Stub && !chat2Off(window)) {\n${body}\n}\n`;
 
 test('build emits the userscript banner and discovers feature modules', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'tdf-build-'));
@@ -18,7 +22,7 @@ test('build emits the userscript banner and discovers feature modules', async ()
     mkdirSync(path.join(root, 'src', 'features', 'stub'), { recursive: true });
     writeFileSync(
       path.join(root, 'src', 'features', 'stub', 'index.js'),
-      "import { onInbound } from '../../core/events.js';\nonInbound((r) => console.log('STUB_FEATURE_MARKER', r.id));\n",
+      "import { onInbound } from '../../core/events.js';\n" + gated("onInbound((r) => console.log('STUB_FEATURE_MARKER', r.id));"),
     );
     const outfile = path.join(root, 'dist', 'tdf-chat.user.js');
     const { features } = await build({ match: MATCH, root, outfile });
@@ -50,7 +54,7 @@ function rootWith(source) {
 }
 
 test('one build emits the site include beside the userscript, from the same bundle', async () => {
-  const root = rootWith("import { onInbound } from '../../core/events.js';\nonInbound(() => {});\n");
+  const root = rootWith("import { onInbound } from '../../core/events.js';\n" + gated('onInbound(() => {});'));
   try {
     const { outputs } = await build({ match: MATCH, root, outfile: path.join(root, 'dist', 'tdf-chat.user.js') });
     assert.equal(outputs.include, path.join(root, 'dist', 'tdf-chat.js'));
@@ -70,7 +74,7 @@ test('one build emits the site include beside the userscript, from the same bund
 });
 
 test('the build defines __TDF_CHAT_VERSION__ as the package.json version', async () => {
-  const root = rootWith("console.log('VERSION=' + __TDF_CHAT_VERSION__);\n");
+  const root = rootWith(gated("console.log('VERSION=' + __TDF_CHAT_VERSION__);"));
   try {
     const { outputs } = await build({ match: MATCH, root, outfile: path.join(root, 'dist', 'tdf-chat.user.js') });
     const { version } = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
@@ -138,14 +142,28 @@ test('the build fails when a second copy would not be inert', async () => {
 });
 
 test('a feature with its own load flag passes the second-copy check', async () => {
-  const root = rootWith(
-    "if (!window.__tdfChat2Stub) { window.__tdfChat2Stub = true; window.addEventListener('load', () => {}); }\n",
-  );
+  const root = rootWith(gated("window.__tdfChat2Stub = true; window.addEventListener('load', () => {});"));
   try {
     await build({ match: MATCH, root });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('the build fails when a feature entry does not call chat2Off, and writes nothing', async () => {
+  // A mention in a comment is not a call.
+  const root = rootWith('if (!window.__tdfChat2Stub) { window.__tdfChat2Stub = true; }\n// chat2Off(window)\n/* chat2Off(window) */\n');
+  try {
+    await assert.rejects(build({ match: MATCH, root }), /src\/features\/stub\/index\.js does not call chat2Off/);
+    assert.ok(!existsSync(path.join(root, 'dist')), 'dist/ left behind');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('every real feature entry calls chat2Off', () => {
+  const features = ['composer', 'gallery', 'options', 'profile', 'rail', 'tagging'];
+  assert.deepEqual(checkEntriesGated(repo, features), []);
 });
 
 test('the header check accepts only a single @grant none', () => {
