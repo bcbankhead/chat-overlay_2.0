@@ -13,6 +13,31 @@
   font-size: 11px;
   opacity: 0.6;
   font-variant-numeric: tabular-nums;
+  color: inherit;
+  text-decoration: none;
+}
+
+#tdf-rail .tdf-opt-version:hover,
+#tdf-rail .tdf-opt-version:focus-visible {
+  opacity: 1;
+}
+
+#tdf-rail a.tdf-opt-version:hover {
+  text-decoration: underline;
+}
+
+#tdf-rail .tdf-opt-version:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 2px;
+}
+
+#tdf-rail .tdf-opt-version-by {
+  display: none;
+}
+
+#tdf-rail .tdf-opt-version:hover .tdf-opt-version-by,
+#tdf-rail .tdf-opt-version:focus-visible .tdf-opt-version-by {
+  display: inline;
 }
 
 #tdf-rail .tdf-opt-section {
