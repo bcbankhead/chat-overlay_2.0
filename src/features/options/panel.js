@@ -193,6 +193,8 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   historyHint.setAttribute('aria-live', 'polite');
   root.append(historyRow, historyHint);
   const history = { box: historyBox, hint: historyHint };
+  /** Whether Chat history is off, once the setting is read or chosen; false until then. */
+  let historyOff = false;
 
   /**
    * A button that asks before it deletes: the first click counts what would go and shows that
@@ -296,7 +298,11 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   // Clear history now: every stored line, in every room. The gallery is not touched.
   const clearHistory = confirmStep('Clear history now', {
     count: () => limits.countAll(),
-    none: () => 'No saved history.',
+    // Off, the lines on screen were never saved, so this cannot remove them (TDF-0054).
+    none: () =>
+      historyOff
+        ? 'Chat history is off, so nothing is saved. Clear chat buffer empties the lines on screen.'
+        : 'No saved history.',
     question: (n) => `Delete ${plural(n, 'message')}?`,
     run: () => limits.clearHistory(),
     after: () => refreshSenders(),
@@ -483,6 +489,7 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   history.box.addEventListener('change', () => {
     const on = history.box.checked;
     const mine = ++historySeq;
+    historyOff = !on;
     commit(
       showHistory,
       async () => {
@@ -494,7 +501,10 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
               (value) => parseHistoryCount(value) !== 0,
               () => !on,
             );
-            if (!closed && mine === historySeq) history.box.checked = stored;
+            if (!closed && mine === historySeq) {
+              history.box.checked = stored;
+              historyOff = !stored;
+            }
           }
           throw err;
         }
@@ -526,6 +536,7 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     ([count, mb]) => {
       if (closed) return;
       history.box.checked = count !== 0;
+      historyOff = count === 0;
       gallery.input.value = mb === null ? '' : String(mb);
       showHistory(() => historyText(count !== 0));
       galleryHint(gallery.input.value);
