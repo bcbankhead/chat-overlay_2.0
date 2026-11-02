@@ -5,6 +5,7 @@
 // addMessage — so whisper, silence, the length limit and the repeat filter keep applying.
 
 import { MAIN_DIV } from '../../core/parse.js';
+import { chat2Off } from '../../core/optOut.js';
 import { whenDomReady } from '../../core/ready.js';
 import { expectReady } from '../../core/reveal.js';
 import { installAttach } from './attach.js';
@@ -18,7 +19,7 @@ import { installWhisper } from './whisper.js';
 const BAR = 'optionsBar';
 
 const win = /** @type {any} */ (window);
-if (!win.__tdfChat2Composer) {
+if (!win.__tdfChat2Composer && !chat2Off(window)) {
   win.__tdfChat2Composer = true;
   // Window capture phase runs before the textarea's inline onkeypress, and needs no wait for
   // the element to exist.

@@ -10,6 +10,10 @@ import { MB_BYTES } from './selectors.js';
 
 const settle = () => new Promise((r) => setTimeout(r, 20));
 
+// The checkbox rows over settings-store values; Use Chat 2.0 is a checkbox too, but over the
+// opt-out flag in localStorage, and is tested on its own.
+const SETTING_CHECK = 'input.tdf-opt-check:not(.tdf-opt-chat2)';
+
 /** A settings stand-in over a plain object; `fail` makes every read reject. */
 function stubSettings(values = {}, { fail = false } = {}) {
   /** @type {Record<string, unknown>} */
@@ -97,8 +101,9 @@ function stubLimits({ lines = 0, images = 0, failPrune = false, stored = {}, fai
   };
 }
 
-function setup({ settings = stubSettings(), limits = stubLimits(), engine = true, loadFailure = undefined } = {}) {
+function setup({ settings = stubSettings(), limits = stubLimits(), engine = true, loadFailure = undefined, prepare = (/** @type {any} */ _win) => {} } = {}) {
   const win = /** @type {any} */ (new Window());
+  prepare(win);
   const doc = win.document;
   doc.body.innerHTML =
     (engine ? '<input type="checkbox" id="autoScrollID" checked>' : '') +
@@ -313,7 +318,7 @@ test('Include my images is a checkbox row after the gallery limit, showing the s
   for (const on of [false, true]) {
     const { container } = setup({ settings: stubSettings({ includeMyImages: on }) });
     await settle();
-    const box = /** @type {HTMLInputElement} */ (container.querySelector('input.tdf-opt-check'));
+    const box = /** @type {HTMLInputElement} */ (container.querySelector(SETTING_CHECK));
     assert.equal(box.type, 'checkbox');
     assert.equal(box.classList.contains('tdf-opt-switch'), false);
     assert.equal(box.checked, on);
@@ -330,7 +335,7 @@ test('toggling Include my images writes the setting; a failed write says so', as
   const settings = stubSettings();
   const { win, container } = setup({ settings });
   await settle();
-  const box = /** @type {HTMLInputElement} */ (container.querySelector('input.tdf-opt-check'));
+  const box = /** @type {HTMLInputElement} */ (container.querySelector(SETTING_CHECK));
   box.checked = true;
   box.dispatchEvent(new win.Event('change'));
   await settle();
@@ -349,7 +354,7 @@ test('toggling Include my images writes the setting; a failed write says so', as
 test('an Include my images read that fails says so under the checkbox row', async () => {
   const { container } = setup({ settings: stubSettings({}, { fail: true }) });
   await settle();
-  const box = /** @type {HTMLInputElement} */ (container.querySelector('input.tdf-opt-check'));
+  const box = /** @type {HTMLInputElement} */ (container.querySelector(SETTING_CHECK));
   const hint = /** @type {HTMLElement} */ (box.closest('label')?.nextElementSibling);
   assert.equal(hint.textContent, 'Could not read settings: read failed');
 });
@@ -365,7 +370,7 @@ test('an Include my images read or failed write that settles after close is not 
   settings.set = () => new Promise((_, reject) => (rejectWrite = reject));
   const { win, container, cleanup } = setup({ settings });
   await settle();
-  const box = /** @type {HTMLInputElement} */ (container.querySelector('input.tdf-opt-check'));
+  const box = /** @type {HTMLInputElement} */ (container.querySelector(SETTING_CHECK));
   const hint = /** @type {HTMLElement} */ (box.closest('label')?.nextElementSibling);
   box.dispatchEvent(new win.Event('change'));
   cleanup();
@@ -380,7 +385,7 @@ test('Store images offline is a checkbox row after Include my images, showing an
   const settings = stubSettings({ storeImagesOffline: true });
   const { win, container } = setup({ settings });
   await settle();
-  const [mine, offline] = /** @type {HTMLInputElement[]} */ ([...container.querySelectorAll('input.tdf-opt-check')]);
+  const [mine, offline] = /** @type {HTMLInputElement[]} */ ([...container.querySelectorAll(SETTING_CHECK)]);
   const row = /** @type {HTMLElement} */ (offline.closest('label.tdf-opt-row'));
   assert.equal(row.textContent, 'Store images offline');
   assert.equal(row.previousElementSibling?.previousElementSibling, mine.closest('label'));
@@ -404,7 +409,7 @@ test('Compress stored images is a checkbox row after Store images offline, showi
     const settings = stubSettings({ compressStoredImages: on });
     const { win, container } = setup({ settings });
     await settle();
-    const boxes = /** @type {HTMLInputElement[]} */ ([...container.querySelectorAll('input.tdf-opt-check')]);
+    const boxes = /** @type {HTMLInputElement[]} */ ([...container.querySelectorAll(SETTING_CHECK)]);
     const box = boxes[2];
     const row = /** @type {HTMLElement} */ (box.closest('label.tdf-opt-row'));
     assert.equal(row.textContent, 'Compress stored images');
@@ -422,7 +427,7 @@ test('Use media quickview is a checkbox row under a Media section, after Store i
     const settings = stubSettings({ useMediaQuickview: on });
     const { win, container } = setup({ settings });
     await settle();
-    const boxes = /** @type {HTMLInputElement[]} */ ([...container.querySelectorAll('input.tdf-opt-check')]);
+    const boxes = /** @type {HTMLInputElement[]} */ ([...container.querySelectorAll(SETTING_CHECK)]);
     assert.equal(boxes.length, 4);
     const box = boxes[3];
     const row = /** @type {HTMLElement} */ (box.closest('label.tdf-opt-row'));
@@ -846,4 +851,80 @@ test('a count, deletion or sender read that fails after close writes nothing', a
   failSenders(new Error('read failed'));
   await settle();
   assert.equal(senderControl(third.container).hint.textContent, '');
+});
+
+/** The Use Chat 2.0 row's checkbox, and the hint under it. */
+function chat2Row(/** @type {HTMLElement} */ container) {
+  const box = /** @type {HTMLInputElement} */ (container.querySelector('input.tdf-opt-chat2'));
+  const hint = /** @type {HTMLElement} */ (box.closest('label')?.nextElementSibling);
+  return { box, hint };
+}
+
+test('Use Chat 2.0 is the first checkbox row under Chat, above Auto-scroll, checked while 2.0 is on', () => {
+  const { container } = setup();
+  const { box, hint } = chat2Row(container);
+  assert.equal(box.type, 'checkbox');
+  assert.ok(box.classList.contains('tdf-opt-check'));
+  assert.equal(box.checked, true);
+  const row = /** @type {HTMLElement} */ (box.closest('label.tdf-opt-row'));
+  assert.equal(row.textContent, 'Use Chat 2.0');
+  assert.ok(row.previousElementSibling?.classList.contains('tdf-opt-section'));
+  assert.equal(row.previousElementSibling?.textContent, 'Chat');
+  assert.ok(hint.classList.contains('tdf-opt-hint'));
+  assert.equal(hint.textContent, '');
+  assert.equal(hint.nextElementSibling?.querySelector('.tdf-opt-switch') !== null, true, 'Auto-scroll follows');
+});
+
+test('unchecking Use Chat 2.0 records 2.0 as off and reloads, asking nothing', () => {
+  let reloads = 0;
+  const { win, container } = setup({
+    prepare: (w) => {
+      w.location.reload = () => reloads++;
+    },
+  });
+  const { box, hint } = chat2Row(container);
+  box.checked = false;
+  box.dispatchEvent(new win.Event('change'));
+  assert.equal(win.localStorage.getItem('tdfChat2.off'), '1');
+  assert.equal(reloads, 1);
+  assert.equal(hint.textContent, '');
+});
+
+test('a Use Chat 2.0 write the browser refuses says so under the row and does not reload', () => {
+  let reloads = 0;
+  const { win, container } = setup({
+    prepare: (w) => {
+      w.location.reload = () => reloads++;
+      Object.defineProperty(w, 'localStorage', {
+        configurable: true,
+        value: {
+          getItem: () => null,
+          setItem: () => {
+            throw new Error('quota exceeded');
+          },
+          removeItem: () => {},
+        },
+      });
+    },
+  });
+  const { box, hint } = chat2Row(container);
+  box.checked = false;
+  box.dispatchEvent(new win.Event('change'));
+  assert.equal(reloads, 0);
+  assert.equal(box.checked, true);
+  assert.equal(hint.textContent, 'Could not apply: quota exceeded');
+});
+
+test('checking Use Chat 2.0 while it is on writes nothing and does not reload', () => {
+  let reloads = 0;
+  const { win, container } = setup({
+    prepare: (w) => {
+      w.location.reload = () => reloads++;
+    },
+  });
+  const { box } = chat2Row(container);
+  box.checked = true;
+  box.dispatchEvent(new win.Event('change'));
+  assert.equal(win.localStorage.getItem('tdfChat2.off'), null);
+  assert.equal(reloads, 0);
 });

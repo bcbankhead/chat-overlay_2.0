@@ -1,4 +1,5 @@
-// The Settings flyout (UI design 2026-10-27, Flyouts → Settings). Chat: the Auto-scroll switch
+// The Settings flyout (UI design 2026-10-27, Flyouts → Settings). Chat: Use Chat 2.0 (TDF-0037),
+// the Auto-scroll switch
 // over the engine's #autoScrollID, and Clear chat buffer. Storage: Chat history (days), Clear
 // history now and Delete messages by user (TDF-0010), Gallery size limit (MB), Include my images
 // (TDF-0009.13), Store images offline and Compress stored images (TDF-0036). Media: Use media
@@ -9,6 +10,7 @@
 
 import { describeError } from '../../core/errors.js';
 import { clearView } from '../../core/events.js';
+import { chat2Off, setChat2Off } from '../../core/optOut.js';
 import { MB_BYTES, parseDays, parseMegabytes, senderLabel } from './selectors.js';
 
 /**
@@ -61,6 +63,30 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     root.append(el('div', 'tdf-opt-hint tdf-warn', `The storage limits did not run on load: ${failure}`));
   }
   root.append(el('div', 'tdf-opt-section tdf-opt-first', 'Chat'));
+
+  // Use Chat 2.0: unchecking records the choice (optOut.js, TDF-0037) and reloads into the
+  // original chat, asking nothing; its Switch to Chat 2.0 link turns it back on. A write the
+  // browser refuses says so here and does not reload.
+  const chat2Row = el('label', 'tdf-opt-row');
+  const chat2 = el('input', 'tdf-opt-check tdf-opt-chat2');
+  chat2.type = 'checkbox';
+  chat2.checked = !chat2Off(win);
+  chat2Row.append(el('span', '', 'Use Chat 2.0'), chat2);
+  const chat2Hint = el('div', 'tdf-opt-hint tdf-warn');
+  chat2Hint.setAttribute('aria-live', 'polite');
+  root.append(chat2Row, chat2Hint);
+  chat2.addEventListener('change', () => {
+    if (chat2.checked) return;
+    chat2Hint.textContent = '';
+    try {
+      setChat2Off(win, true);
+    } catch (err) {
+      chat2.checked = true;
+      chat2Hint.textContent = `Could not apply: ${describeError(err)}`;
+      return;
+    }
+    win.location.reload();
+  });
 
   // Auto-scroll: the engine's own checkbox, both ways; the engine reads it on every line.
   const scrollRow = el('label', 'tdf-opt-row');

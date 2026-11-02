@@ -2,6 +2,7 @@
 // holds the double-load guard and the chat-page check.
 
 import { MAIN_DIV } from '../../core/parse.js';
+import { chat2Off } from '../../core/optOut.js';
 import { whenDomReady } from '../../core/ready.js';
 import { expectReady } from '../../core/reveal.js';
 import { startTagging } from './start.js';
@@ -10,7 +11,7 @@ import css from './tagging.css';
 const win = /** @type {any} */ (window);
 // Only the first copy of the script subscribes and attaches (the __tdfChat2 prefix is the one
 // build.mjs's second-copy check sets).
-if (!win.__tdfChat2Tagging) {
+if (!win.__tdfChat2Tagging && !chat2Off(window)) {
   win.__tdfChat2Tagging = true;
   const done = expectReady('tagging');
   // Ready once its store has rebuilt and its UI is installed, or the start has failed (a
