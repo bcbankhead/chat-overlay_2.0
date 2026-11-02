@@ -13,6 +13,7 @@
 
 import { describeError } from '../../core/errors.js';
 import { clearView } from '../../core/events.js';
+import { profileUrlFor } from '../../core/forumAvatar.js';
 import { chat2Off, setChat2Off } from '../../core/optOut.js';
 import { parseHistoryCount } from '../../core/retention.js';
 import { HISTORY_ON, MB_BYTES, parseMegabytes, senderLabel } from './selectors.js';
@@ -34,6 +35,11 @@ const megabytes = (bytes) => `${(bytes / MB_BYTES).toFixed(1)} MB`;
 // package.json's version, set by build.mjs's esbuild `define`; an unbuilt run (the tests) has none.
 /** @type {string} */
 const VERSION = typeof __TDF_CHAT_VERSION__ === 'string' ? __TDF_CHAT_VERSION__ : 'dev';
+
+// The version credits its author (TDF-0045): hovering or focusing it appends the credit, and it
+// links to the author's forum profile, by fixed user id, in a new tab.
+const AUTHOR = 'SoloBang76';
+const AUTHOR_ID = '573314';
 
 /**
  * Fill the flyout body; returns the cleanup the rail runs on close.
@@ -61,7 +67,26 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
 
   const root = el('div', 'tdf-opt');
   // The version floats right, ahead of the title, so the title keeps its own text and siblings.
-  root.append(el('span', 'tdf-opt-version', `v${VERSION}`), el('div', 'tdf-opt-title', 'Settings'));
+  // `v<version>` stays visible at rest (a deploy is confirmed by looking); the credit shows on
+  // hover or focus. With no engine profileUrl it is a focusable span with role="note", so its
+  // aria-label is a permitted name: the credit, no link.
+  const profile = profileUrlFor(/** @type {any} */ (win).profileUrl, win.location.href, { userID: AUTHOR_ID });
+  /** @type {HTMLElement} */
+  let version;
+  if (profile !== null) {
+    const link = el('a', 'tdf-opt-version');
+    link.href = profile;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    version = link;
+  } else {
+    version = el('span', 'tdf-opt-version');
+    version.tabIndex = 0;
+    version.setAttribute('role', 'note');
+  }
+  version.setAttribute('aria-label', `v${VERSION}, by ${AUTHOR}`);
+  version.append(el('span', 'tdf-opt-version-num', `v${VERSION}`), el('span', 'tdf-opt-version-by', ` · By ${AUTHOR}`));
+  root.append(version, el('div', 'tdf-opt-title', 'Settings'));
   const failure = loadFailure();
   if (failure !== null) {
     root.append(el('div', 'tdf-opt-hint tdf-warn', `The storage limits did not run on load: ${failure}`));

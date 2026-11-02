@@ -1152,3 +1152,39 @@ test('checking Use Chat 2.0 while it is on writes nothing and does not reload', 
   assert.equal(win.localStorage.getItem('tdfChat2.off'), null);
   assert.equal(reloads, 0);
 });
+
+// TDF-0045: the version credits its author and links to the author's forum profile.
+
+const PROFILE = 'https://forum.example/memberlist.php?mode=viewprofile&u=';
+
+test('the version shows v<version> at rest and carries the author credit', () => {
+  const { container } = setup({ prepare: (w) => { w.profileUrl = PROFILE; } });
+  const version = /** @type {HTMLElement} */ (container.querySelector('.tdf-opt-version'));
+  assert.match(version.querySelector('.tdf-opt-version-num')?.textContent ?? '', /^v/);
+  assert.equal(version.querySelector('.tdf-opt-version-by')?.textContent, ' · By SoloBang76');
+  assert.match(version.getAttribute('aria-label') ?? '', /by SoloBang76$/);
+  assert.equal(version.getAttribute('title'), null);
+});
+
+test('with an engine profileUrl the version links to the author profile in a new tab', () => {
+  const { container } = setup({ prepare: (w) => { w.profileUrl = PROFILE; } });
+  const version = /** @type {HTMLAnchorElement} */ (container.querySelector('.tdf-opt-version'));
+  assert.equal(version.tagName, 'A');
+  const url = new URL(version.href);
+  assert.equal(url.searchParams.get('u'), '573314');
+  assert.equal(url.searchParams.get('mode'), 'viewprofile');
+  assert.equal(version.target, '_blank');
+  assert.match(version.rel, /noopener/);
+  assert.equal(version.getAttribute('role'), null);
+});
+
+test('with no engine profileUrl the version is a focusable span with the credit and no link', () => {
+  const { container } = setup();
+  const version = /** @type {HTMLElement} */ (container.querySelector('.tdf-opt-version'));
+  assert.equal(version.tagName, 'SPAN');
+  assert.equal(version.getAttribute('href'), null);
+  assert.equal(version.getAttribute('tabindex'), '0');
+  assert.equal(version.getAttribute('role'), 'note');
+  assert.equal(version.querySelector('.tdf-opt-version-by')?.textContent, ' · By SoloBang76');
+  assert.match(version.getAttribute('aria-label') ?? '', /by SoloBang76$/);
+});
