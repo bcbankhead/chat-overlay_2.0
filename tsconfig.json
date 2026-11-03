@@ -41,6 +41,7 @@
     "src/features/gallery/roster.js",
     "src/features/gallery/reencode.js",
     "src/features/gallery/repost.js",
+    "src/features/gallery/order.js",
     "src/features/tagging/reactions.js",
     "src/features/tagging/infer.js",
     "src/features/tagging/queue.js",
