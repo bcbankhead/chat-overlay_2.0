@@ -273,10 +273,11 @@ body:has(#tdf-rail:not(.tdf-rail-failed)) :is(#roomIcon, #roomCreate, #roomSelec
   font-size: 12px;
 }
 
-/* Recently online (TDF-0058): a thin rule, a muted header, then ghosted rows. */
+/* Recently online (TDF-0058): a thin rule, a muted header, then ghosted rows.
+   The rule's 36px top margin sets the offline users visibly apart from the online ones (TDF-0059). */
 #tdf-rail .tdf-rail-rule {
   height: 0;
-  margin: 6px 8px 2px;
+  margin: 36px 8px 2px;
   border-top: 1px solid var(--tdf-rail-chip-border);
 }
 
