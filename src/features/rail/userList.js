@@ -78,20 +78,8 @@ export function createUserStore(win, container, onError) {
 /** At most this many rows in the current room's list; online users are never hidden (TDF-0058). */
 export const LIST_CAP = 20;
 
-const NO_PROFILE = 'Profile unavailable: this user has not been seen online since the page loaded';
-const PROFILES_OFF = 'Profile unavailable: profiles are turned off in this chat';
-const PROFILE_REF_UNKNOWN = "Profile unavailable: this chat's profile setting is not supported";
-
-/**
- * Why a ghosted row has no profile call, for its tooltip.
- * @param {import('./menuModel.js').EngineFlags} flags
- * @returns {string}
- */
-const noProfileReason = (flags) => {
-  if (!flags.profileOn) return PROFILES_OFF;
-  if (![0, 1, 2].includes(Number(flags.profileRef))) return PROFILE_REF_UNKNOWN;
-  return NO_PROFILE;
-};
+/** The one tooltip every inert ghosted row carries, whatever kept it from opening a profile (TDF-0059). */
+const OFFLINE_TOOLTIP = 'User offline';
 
 /**
  * @typedef {object} RoomView
@@ -259,7 +247,7 @@ export function createRoomList({
         li.dataset.room = room.roomID;
         if (!offlineProfileCall(user, flags)) {
           li.classList.add('tdf-rail-inert');
-          li.title = noProfileReason(flags);
+          li.title = OFFLINE_TOOLTIP;
         }
         const img = renderAvatar(doc, {
           name: user.name,

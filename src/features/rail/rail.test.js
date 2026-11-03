@@ -1028,13 +1028,13 @@ test('a ghosted row opens the profile only, with the forum id remembered from it
   await t.teardown();
 });
 
-test('a ghosted row with no profile id is inert and says why', async () => {
+test("a ghosted row with no profile id is inert and its tooltip reads 'User offline'", async () => {
   const presence = createPresence();
   presence.ingest('1', [seenLine('77', 'Stranger', 'exit', 100)]);
   const t = setup({ presence }); // profileRef 2, and Stranger was never online this load
   const ghost = t.doc.querySelector('.tdf-rail-offline[data-uuid="77"]');
   assert.ok(ghost.classList.contains('tdf-rail-inert'));
-  assert.equal(ghost.title, 'Profile unavailable: this user has not been seen online since the page loaded');
+  assert.equal(ghost.title, 'User offline');
   ghost.click();
   assert.deepEqual(t.calls, []);
   assert.equal(menuShown(t.doc), false);
@@ -1049,10 +1049,10 @@ test('a user online in another listed room is not ghosted in this one', async ()
   await t.teardown();
 });
 
-test('an inert ghosted row names the real reason: profiles off, or an unsupported profileRef', async () => {
+test("every inert ghosted row reads 'User offline': profiles off, or an unsupported profileRef", async () => {
   for (const [flags, why] of [
-    [{ profileOn: 0 }, 'Profile unavailable: profiles are turned off in this chat'],
-    [{ profileRef: 9 }, "Profile unavailable: this chat's profile setting is not supported"],
+    [{ profileOn: 0 }, 'User offline'],
+    [{ profileRef: 9 }, 'User offline'],
   ]) {
     const presence = createPresence();
     presence.ingest('1', [seenLine('12', 'Alice', 'exit', 500)]);
@@ -1100,6 +1100,7 @@ test('the ghosted rows are styled faded, behind a thin rule and a muted header',
   const css = readFileSync(new URL('./rail.css', import.meta.url), 'utf8');
   assert.match(css, /\.tdf-rail-offline \{\s*opacity: 0\.5;/);
   assert.match(css, /\.tdf-rail-rule \{[^}]*border-top: 1px solid var\(--tdf-rail-chip-border\)/);
+  assert.match(css, /\.tdf-rail-rule \{[^}]*margin: 36px 8px 2px;/); // TDF-0059: 30px above the rule
   assert.match(css, /\.tdf-rail-section-head \{[^}]*color: var\(--tdf-muted\)/);
 });
 
