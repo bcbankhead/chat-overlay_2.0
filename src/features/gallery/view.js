@@ -22,16 +22,29 @@
 // My Images (TDF-0046) shows only records the current user (the `self` dep) sent. It combines
 // with favourites, clears the user-filter chip when pressed, is hidden while no user name is
 // known, and resets each open, like favourites.
+// A tile can be dragged to a new place in the grid (TDF-0060): a mouse or pen past 6 px, a touch
+// after a 350 ms hold (an earlier move scrolls the flyout as before). The drop stores one key
+// between its visible neighbours (store.move), so a move under a filter leaves hidden tiles where
+// they were; the grid's order is order.js's. A press on any button never drags, the click after a
+// drag is swallowed, and store refreshes wait for the drop. Reset order, shown while any image has
+// a manual place, drops them all after a second press within 4 s.
 
 import { renderIcon } from '../rail/icons.js';
 import { listGalleryItemActions, listGalleryItemDecorations, onGalleryRegistryChange } from './api.js';
 import { clearGalleryErrors, listGalleryErrors, onGalleryErrors } from './errors.js';
 import { openLightbox } from './lightbox.js';
 import { isUnavailable } from './open.js';
+import { displayOrder } from './order.js';
 import { formatBytes, isLarge, shareUrl } from './shareParse.js';
 import { onImagesChange } from './store.js';
 
 const REMOVE_MS = 180;
+/** Movement before a mouse or pen press becomes a drag, and that ends a touch hold. */
+const DRAG_SLOP_PX = 6;
+const TOUCH_HOLD_MS = 350;
+/** Distance from the flyout body's edge where a drag scrolls it. */
+const EDGE_PX = 40;
+const RESET_ARM_MS = 4000;
 const UNAVAILABLE = 'Image unavailable from server';
 
 const ICONS = {
@@ -182,7 +195,11 @@ export function renderGallery(
   mineFilter.setAttribute('aria-label', 'Show my images only');
   mineFilter.setAttribute('aria-pressed', 'false');
   mineFilter.innerHTML = ICONS.person;
-  head.append(title, stats, chip, mineFilter, favFilter);
+  const resetOrder = doc.createElement('button');
+  resetOrder.type = 'button';
+  resetOrder.className = 'tdf-gallery-reset';
+  resetOrder.hidden = true;
+  head.append(title, stats, chip, resetOrder, mineFilter, favFilter);
   const errors = doc.createElement('div');
   errors.className = 'tdf-gallery-error';
   errors.setAttribute('role', 'status');
@@ -225,6 +242,30 @@ export function renderGallery(
     favOnly = !favOnly;
     favFilter.setAttribute('aria-pressed', String(favOnly));
     void refresh();
+  });
+
+  /** @type {ReturnType<typeof setTimeout> | null} pending while Reset order is armed */
+  let resetTimer = null;
+  function disarmReset() {
+    if (resetTimer !== null) win.clearTimeout(resetTimer);
+    resetTimer = null;
+    resetOrder.classList.remove('tdf-armed');
+    resetOrder.textContent = 'Reset order';
+    resetOrder.title = 'Return every image to newest first';
+    resetOrder.setAttribute('aria-label', 'Reset order: return every image to newest first');
+  }
+  disarmReset();
+  resetOrder.addEventListener('click', () => {
+    if (resetTimer === null) {
+      resetOrder.classList.add('tdf-armed');
+      resetOrder.textContent = 'Reset order?';
+      resetOrder.title = 'Press again to return every image to newest first';
+      resetOrder.setAttribute('aria-label', 'Press again to reset the order to newest first');
+      resetTimer = win.setTimeout(disarmReset, RESET_ARM_MS);
+      return;
+    }
+    disarmReset();
+    store?.resetOrder().catch(report);
   });
 
   function renderChip() {
@@ -421,6 +462,8 @@ export function renderGallery(
       img.className = 'tdf-gallery-thumb';
       img.alt = `Image from ${item.user}`;
       img.decoding = 'async';
+      // The browser's own image drag would cancel the pointer drag.
+      img.draggable = false;
       img.addEventListener('load', () => img.classList.add('tdf-ready'), { once: true });
       img.src = url;
       if (img.complete && img.naturalWidth) img.classList.add('tdf-ready');
@@ -554,27 +597,39 @@ export function renderGallery(
 
   /** @param {import('./store.js').ImageStore} s */
   async function load(s) {
-    if (mineOnly) return (await s.listByUser(self())).sort((a, b) => b.receivedAt - a.receivedAt);
+    if (mineOnly) return displayOrder(await s.listByUser(self()));
     if (!userFilter) return s.list();
     const names = [...new Set([userFilter.user, userFilter.label])];
     const lists = await Promise.all(names.map((n) => s.listByUser(n)));
     const byId = new Map(lists.flat().map((r) => [r.id, r]));
-    return [...byId.values()].sort((a, b) => b.receivedAt - a.receivedAt);
+    return displayOrder([...byId.values()]);
   }
 
   async function refresh() {
+    // A store change mid-drag waits for the drop, so the grid does not move under the pointer.
+    if (drag?.started) {
+      refreshOwed = true;
+      return;
+    }
     const mine = ++token;
     syncMine();
     try {
       const s = store ?? (store = await storeReady);
       const [items, totals] = await Promise.all([load(s), s.stats()]);
       if (closed || mine !== token) return;
+      // A refresh that began before a drag started finishes after the drop instead.
+      if (drag?.started) {
+        refreshOwed = true;
+        return;
+      }
 
       const size = totals.originals + totals.thumbs;
       stats.textContent = `${totals.count} image${totals.count === 1 ? '' : 's'} · ${formatBytes(size)}`;
       stats.title =
         `Originals: ${formatBytes(totals.originals)} · Thumbnails: ${formatBytes(totals.thumbs)} · ` +
         `Favourites: ${totals.favorites}`;
+      resetOrder.hidden = totals.positioned === 0;
+      if (resetOrder.hidden) disarmReset();
 
       const shown = favOnly ? items.filter((r) => r.favorite) : items;
       /** @type {Map<string, Tile>} */
@@ -605,8 +660,279 @@ export function renderGallery(
     }
   }
 
+  /**
+   * A press on a tile that may become a drag, then the drag itself (TDF-0060).
+   * @typedef {object} Drag
+   * @property {Tile} tile
+   * @property {number} pointerId
+   * @property {string} pointerType
+   * @property {number} startX     where the press, then the drag, began
+   * @property {number} startY
+   * @property {number} x          the pointer's latest position
+   * @property {number} y
+   * @property {boolean} started
+   * @property {ReturnType<typeof setTimeout> | null} hold   a touch's long-press timer
+   * @property {HTMLElement | null} slot   where the tile will drop
+   * @property {number} startScroll  the flyout body's scrollTop when the drag began
+   * @property {number} frame      the auto-scroll's animation frame, 0 for none
+   */
+  /** @type {Drag | null} */
+  let drag = null;
+  let refreshOwed = false;
+  let swallowClick = false;
+
+  /** The tiles and the slot in grid order, without the tile being dragged. */
+  const cells = () =>
+    /** @type {HTMLElement[]} */ ([...grid.children]).filter(
+      (c) =>
+        !c.classList.contains('tdf-dragging') &&
+        (c.classList.contains('tdf-gallery-tile') || c.classList.contains('tdf-gallery-slot')),
+    );
+
+  /** @param {PointerEvent} event */
+  function onPointerDown(event) {
+    if (drag || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    const target = /** @type {Element | null} */ (event.target);
+    // The star, trash, Post and every other action button keep their own press.
+    if (!target || target.closest('button')) return;
+    const el = target.closest('.tdf-gallery-tile');
+    const tile = [...tiles.values()].find((t) => t.el === el);
+    if (!tile || tile.el.classList.contains('tdf-removing')) return;
+    drag = {
+      tile,
+      pointerId: event.pointerId,
+      pointerType: event.pointerType,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: event.clientX,
+      y: event.clientY,
+      started: false,
+      hold: null,
+      slot: null,
+      startScroll: container.scrollTop,
+      frame: 0,
+    };
+    if (event.pointerType === 'touch') {
+      const pending = drag;
+      pending.hold = win.setTimeout(() => {
+        pending.hold = null;
+        if (drag === pending) startDrag();
+      }, TOUCH_HOLD_MS);
+    }
+    doc.addEventListener('pointermove', onPointerMove);
+    doc.addEventListener('pointerup', onPointerUp);
+    doc.addEventListener('pointercancel', onPointerCancel);
+    doc.addEventListener('keydown', onKeyDown);
+  }
+
+  /** @param {PointerEvent} event */
+  function onPointerMove(event) {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    drag.x = event.clientX;
+    drag.y = event.clientY;
+    if (!drag.started) {
+      if (Math.hypot(drag.x - drag.startX, drag.y - drag.startY) < DRAG_SLOP_PX) return;
+      // A touch that moves before its hold is a scroll; a mouse or pen that moves is a drag.
+      if (drag.pointerType === 'touch') endPress();
+      else startDrag();
+      return;
+    }
+    event.preventDefault();
+    follow();
+    autoScroll();
+  }
+
+  /** Lift the pressed tile out of the grid's flow and leave a slot where it was. */
+  function startDrag() {
+    if (!drag) return;
+    const { tile } = drag;
+    // A refresh before the threshold may have dropped the pressed tile.
+    if (!tile.el.isConnected || tiles.get(tile.item.id) !== tile) {
+      endPress();
+      return;
+    }
+    endPopover();
+    const rect = tile.el.getBoundingClientRect();
+    const box = grid.getBoundingClientRect();
+    const slot = doc.createElement('div');
+    slot.className = 'tdf-gallery-slot';
+    grid.insertBefore(slot, tile.el);
+    drag.slot = slot;
+    drag.started = true;
+    drag.startX = drag.x;
+    drag.startY = drag.y;
+    drag.startScroll = container.scrollTop;
+    tile.el.classList.add('tdf-dragging');
+    tile.el.style.left = `${rect.left - box.left}px`;
+    tile.el.style.top = `${rect.top - box.top}px`;
+    try {
+      tile.el.setPointerCapture(drag.pointerId);
+    } catch {
+      // A pointer already released cannot be captured; the document's listeners still follow it.
+    }
+    follow();
+  }
+
+  /** Keep the lifted tile under the pointer and move the slot to the cell it is over. */
+  function follow() {
+    if (!drag?.slot) return;
+    const { slot } = drag;
+    const dx = drag.x - drag.startX;
+    const dy = drag.y - drag.startY + (container.scrollTop - drag.startScroll);
+    drag.tile.el.style.transform = `translate(${dx}px, ${dy}px)`;
+    const list = cells();
+    /** @type {HTMLElement | null} */
+    let over = null;
+    let best = Infinity;
+    for (const c of list) {
+      const r = c.getBoundingClientRect();
+      const inside = drag.x >= r.left && drag.x <= r.right && drag.y >= r.top && drag.y <= r.bottom;
+      const d = inside ? -1 : Math.hypot(drag.x - (r.left + r.right) / 2, drag.y - (r.top + r.bottom) / 2);
+      if (d < best) {
+        best = d;
+        over = c;
+      }
+    }
+    if (!over || over === slot) return;
+    // The slot takes the cell it is over: after that tile when the slot was before it, else before.
+    if (list.indexOf(slot) < list.indexOf(over)) grid.insertBefore(slot, over.nextSibling);
+    else grid.insertBefore(slot, over);
+  }
+
+  /** While the pointer is near the flyout body's top or bottom edge, scroll it, once a frame. */
+  function autoScroll() {
+    if (!drag?.started || drag.frame) return;
+    const box = container.getBoundingClientRect();
+    if (box.height <= 0) return;
+    // The sticky header covers the body's top, so the top zone starts below it.
+    const top = Math.max(box.top, head.getBoundingClientRect().bottom);
+    const step =
+      drag.y < top + EDGE_PX ? drag.y - (top + EDGE_PX) : drag.y > box.bottom - EDGE_PX ? drag.y - (box.bottom - EDGE_PX) : 0;
+    if (!step) return;
+    const current = drag;
+    current.frame = win.requestAnimationFrame(() => {
+      current.frame = 0;
+      if (drag !== current) return;
+      const before = container.scrollTop;
+      container.scrollTop += Math.sign(step) * Math.ceil(Math.min(EDGE_PX, Math.abs(step)) / 4);
+      if (container.scrollTop === before) return;
+      follow();
+      autoScroll();
+    });
+  }
+
+  /** @param {PointerEvent} event */
+  function onPointerUp(event) {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    if (!drag.started) {
+      // A press that never became a drag: its click opens the tile as before.
+      endPress();
+      return;
+    }
+    const { tile, slot } = drag;
+    const list = cells();
+    const at = slot ? list.indexOf(slot) : -1;
+    // Beside the tile's own element is where it started, so nothing is written.
+    const moved =
+      slot !== null && at !== -1 && slot.nextElementSibling !== tile.el && slot.previousElementSibling !== tile.el;
+    const others = list.filter((c) => c !== slot);
+    const above = moved ? (others[at - 1] ?? null) : null;
+    const below = moved ? (others[at] ?? null) : null;
+    if (slot) grid.insertBefore(tile.el, slot);
+    swallowClick = true;
+    win.setTimeout(() => {
+      swallowClick = false;
+    }, 0);
+    if (!moved || !store) {
+      endPress();
+      return;
+    }
+    // An owed refresh waits for the move, or it would read the old order and snap the tile back.
+    const write = store.move(tile.item.id, above?.dataset.id ?? null, below?.dataset.id ?? null);
+    const owed = refreshOwed;
+    refreshOwed = false;
+    endPress();
+    write.then(
+      () => {
+        if (owed && !closed) void refresh();
+      },
+      (err) => {
+        report(err);
+        if (!closed) void refresh();
+      },
+    );
+  }
+
+  /** @param {PointerEvent} event */
+  function onPointerCancel(event) {
+    if (drag && event.pointerId === drag.pointerId) endPress();
+  }
+
+  /** @param {KeyboardEvent} event */
+  function onKeyDown(event) {
+    if (event.key !== 'Escape' || !drag?.started) return;
+    event.preventDefault();
+    event.stopPropagation();
+    endPress();
+  }
+
+  /** End the press or drag; a tile not dropped stays where it was. Then run a refresh it held. */
+  function endPress() {
+    const ending = drag;
+    if (!ending) return;
+    drag = null;
+    if (ending.hold !== null) win.clearTimeout(ending.hold);
+    if (ending.frame) win.cancelAnimationFrame(ending.frame);
+    doc.removeEventListener('pointermove', onPointerMove);
+    doc.removeEventListener('pointerup', onPointerUp);
+    doc.removeEventListener('pointercancel', onPointerCancel);
+    doc.removeEventListener('keydown', onKeyDown);
+    const { el } = ending.tile;
+    ending.slot?.remove();
+    el.classList.remove('tdf-dragging');
+    el.style.removeProperty('left');
+    el.style.removeProperty('top');
+    el.style.removeProperty('transform');
+    try {
+      if (el.hasPointerCapture(ending.pointerId)) el.releasePointerCapture(ending.pointerId);
+    } catch {
+      // Already released.
+    }
+    if (refreshOwed && !closed) {
+      refreshOwed = false;
+      void refresh();
+    }
+  }
+
+  grid.addEventListener('pointerdown', onPointerDown);
+  // A drag's release still clicks the tile: swallowed here, before the tile's own open sees it.
+  root.addEventListener(
+    'click',
+    (event) => {
+      if (!swallowClick) return;
+      swallowClick = false;
+      event.stopPropagation();
+      event.preventDefault();
+    },
+    true,
+  );
+  // Once a touch drag has started the flyout must not scroll under it; before, it scrolls natively.
+  root.addEventListener(
+    'touchmove',
+    (event) => {
+      if (drag?.started) event.preventDefault();
+    },
+    { passive: false },
+  );
+  // A long-press would otherwise open the browser's image menu.
+  root.addEventListener('contextmenu', (event) => {
+    if (drag) event.preventDefault();
+  });
+  grid.addEventListener('dragstart', (event) => event.preventDefault());
+
   // A registry change redraws every tile, so actions and decorations apply to all of them.
   const offRegistry = onGalleryRegistryChange(() => {
+    endPress();
     for (const tile of tiles.values()) dropTile(tile);
     tiles = new Map();
     void refresh();
@@ -620,6 +946,9 @@ export function renderGallery(
 
   return () => {
     closed = true;
+    endPress();
+    refreshOwed = false;
+    disarmReset();
     offRegistry();
     offImages();
     offErrors();

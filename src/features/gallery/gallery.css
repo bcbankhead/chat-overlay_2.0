@@ -97,6 +97,28 @@
   display: none;
 }
 
+/* Reset order (TDF-0060): shown only while an image has a manual place; the first press arms it. */
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-reset {
+  height: 28px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--tdf-muted);
+  background: var(--tdf-rail-chip-bg);
+  border: 1px solid var(--tdf-rail-chip-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-reset.tdf-armed {
+  color: #cf222e;
+  border-color: #cf222e;
+}
+
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-reset[hidden] {
+  display: none;
+}
+
 /* Failures recorded while the gallery was closed (errors.js); a click dismisses them. */
 :root[data-tdf-theme] #tdf-rail .tdf-gallery-error {
   margin: 0 0 8px;
@@ -114,6 +136,8 @@
 
 /* Three columns of 128×128 thumbnails, as many rows as there are images. */
 :root[data-tdf-theme] #tdf-rail .tdf-gallery-grid {
+  /* The lifted tile of a drag is placed against the grid (TDF-0060). */
+  position: relative;
   display: grid;
   grid-template-columns: repeat(3, 128px);
   gap: 6px;
@@ -131,6 +155,32 @@
   height: 128px;
   cursor: pointer;
   transition: opacity 180ms ease-out, transform 180ms ease-out;
+}
+
+/* A tile can be dragged (TDF-0060): no text selection or long-press image menu under the press. */
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-tile {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Lifted out of the grid's flow, translated under the pointer by view.js. */
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-tile.tdf-dragging {
+  position: absolute;
+  z-index: 2;
+  cursor: grabbing;
+  opacity: 0.9;
+  transition: none;
+  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.35));
+}
+
+/* Where the dragged tile will drop. */
+:root[data-tdf-theme] #tdf-rail .tdf-gallery-slot {
+  width: 128px;
+  height: 128px;
+  box-sizing: border-box;
+  border: 2px dashed var(--tdf-link);
+  border-radius: 8px;
 }
 
 :root[data-tdf-theme] #tdf-rail .tdf-gallery-tile.tdf-removing {

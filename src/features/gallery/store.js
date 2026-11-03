@@ -5,6 +5,7 @@
 
 import { STORES, done, request } from '../../core/db.js';
 import { reportGalleryError } from './errors.js';
+import { displayOrder, keyBetween, displayKey, planRebalance } from './order.js';
 import { overLimit } from './shareParse.js';
 
 /**
@@ -29,6 +30,9 @@ import { overLimit } from './shareParse.js';
  * @property {boolean} [compressChecked] the stored blob's compression was decided (TDF-0036):
  *                                  re-encoded, kept as smaller, excluded or failed; the
  *                                  backfill never processes it again
+ * @property {number} [position]    manual display key (TDF-0060), in receivedAt's units; absent
+ *                                  until a member drags the tile. Display order only (order.js):
+ *                                  eviction ignores it
  */
 
 /** Refused by `remove` for a favourite. */
@@ -67,8 +71,6 @@ function notify() {
 const originalBytes = (r) => r.blob?.size ?? 0;
 /** @param {ImageRecord} r */
 const thumbBytes = (r) => r.thumb?.size ?? 0;
-/** @param {ImageRecord[]} rows newest first */
-const newestFirst = (rows) => rows.sort((a, b) => b.receivedAt - a.receivedAt);
 
 /**
  * What a size limit of `limitBytes` would delete from `rows`.
@@ -163,19 +165,19 @@ export function createImageStore(db) {
       return !exists;
     },
 
-    /** Every image, newest first. */
+    /** Every image, in display order (order.js): manual positions, else newest first. */
     async list() {
-      return newestFirst(await all());
+      return displayOrder(await all());
     },
 
     /**
-     * One sender's images, newest first.
+     * One sender's images, in display order.
      * @param {string} user
      * @returns {Promise<ImageRecord[]>}
      */
     async listByUser(user) {
       const rows = await request(tx('readonly').objectStore(STORES.images).index('user').getAll(user));
-      return newestFirst(rows);
+      return displayOrder(rows);
     },
 
     /**
@@ -272,18 +274,77 @@ export function createImageStore(db) {
       if (row) notify();
     },
 
-    /** Count, size on disk split into originals and thumbnails, and favourites. */
+    /**
+     * Move one image between two others in display order (TDF-0060), null for an open end, in
+     * one transaction: one write when the neighbours' gap has room (order.js keyBetween), else
+     * a respaced run (order.js planRebalance). A missing record is left alone; a missing
+     * neighbour is an open end.
+     * @param {string} id
+     * @param {string | null} aboveId
+     * @param {string | null} belowId
+     */
+    async move(id, aboveId, belowId) {
+      const t = tx('readwrite');
+      const store = t.objectStore(STORES.images);
+      /** @param {string | null} key */
+      const read = (key) =>
+        key === null ? undefined : /** @type {Promise<ImageRecord | undefined>} */ (request(store.get(key)));
+      const [row, above, below] = await Promise.all([read(id), read(aboveId), read(belowId)]);
+      /** @type {ImageRecord[]} */
+      let written = [];
+      if (row) {
+        const k = keyBetween(above ? displayKey(above) : null, below ? displayKey(below) : null);
+        if (k !== null) {
+          written = [{ ...row, position: k }];
+        } else {
+          const rows = /** @type {ImageRecord[]} */ (await request(store.getAll()));
+          const byId = new Map(rows.map((r) => [r.id, r]));
+          written = planRebalance(rows, id, aboveId, belowId).map((w) => ({
+            .../** @type {ImageRecord} */ (byId.get(w.id)),
+            position: w.position,
+          }));
+        }
+        for (const r of written) store.put(r);
+      }
+      await done(t);
+      if (written.length) notify();
+    },
+
+    /**
+     * Drop every manual position, returning the gallery to newest first, in one transaction.
+     * Notifies only when a record changed.
+     * @returns {Promise<number>} how many records had a position
+     */
+    async resetOrder() {
+      const t = tx('readwrite');
+      const store = t.objectStore(STORES.images);
+      const rows = /** @type {ImageRecord[]} */ (await request(store.getAll()));
+      let changed = 0;
+      for (const r of rows) {
+        if (r.position === undefined) continue;
+        const { position: _gone, ...rest } = r;
+        store.put(rest);
+        changed += 1;
+      }
+      await done(t);
+      if (changed) notify();
+      return changed;
+    },
+
+    /** Count, size on disk split into originals and thumbnails, favourites, and manually placed. */
     async stats() {
       const rows = await all();
       let originals = 0;
       let thumbs = 0;
       let favorites = 0;
+      let positioned = 0;
       for (const r of rows) {
         originals += originalBytes(r);
         thumbs += thumbBytes(r);
         if (r.favorite) favorites += 1;
+        if (r.position !== undefined) positioned += 1;
       }
-      return { count: rows.length, originals, thumbs, favorites };
+      return { count: rows.length, originals, thumbs, favorites, positioned };
     },
 
     /**

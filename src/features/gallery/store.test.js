@@ -73,7 +73,7 @@ test('stats split originals and thumbnails and count favourites', async () => {
   await store.put(image({ id: 'b', thumb: bytes(20) }));
   await store.put(image({ id: 'c' }));
   const totals = await store.stats();
-  assert.deepEqual(totals, { count: 3, originals: 1000, thumbs: 50, favorites: 1 });
+  assert.deepEqual(totals, { count: 3, originals: 1000, thumbs: 50, favorites: 1, positioned: 0 });
 });
 
 test('usage reads size on disk and the limit preview together, in one read', async () => {
@@ -221,4 +221,97 @@ test('recompress writes only while the stored blob is the one read, and keeps th
   assert.equal(await store.recompress('gone', 100, fields), false);
   assert.equal(await store.has('gone'), false);
   assert.equal((await store.stats()).originals, 40, 'stats see the stored blob');
+});
+
+test('move persists a manual order across a reopened store, and notifies (TDF-0060)', async () => {
+  const name = `gallery-store-${++n}`;
+  const db = await openDb({ name });
+  const store = createImageStore(db);
+  await store.put(image({ id: 'a', receivedAt: 1000 }));
+  await store.put(image({ id: 'b', receivedAt: 2000 }));
+  await store.put(image({ id: 'c', receivedAt: 3000 }));
+  let calls = 0;
+  const off = onImagesChange(() => (calls += 1));
+  await store.move('a', 'c', 'b');
+  off();
+  assert.equal(calls, 1);
+  assert.deepEqual((await store.list()).map((r) => r.id), ['c', 'a', 'b']);
+  assert.equal((await store.get('a'))?.position, 2500);
+  assert.equal((await store.get('b'))?.position, undefined, 'one drop writes one record');
+  db.close();
+
+  const reopened = createImageStore(await openDb({ name }));
+  assert.deepEqual((await reopened.list()).map((r) => r.id), ['c', 'a', 'b']);
+  assert.equal((await reopened.stats()).positioned, 1);
+});
+
+test('move: a missing record writes nothing and does not notify; a new capture lands on top (TDF-0060)', async () => {
+  const store = await fresh();
+  await store.put(image({ id: 'a', receivedAt: 1000 }));
+  await store.put(image({ id: 'b', receivedAt: 2000 }));
+  let calls = 0;
+  const off = onImagesChange(() => (calls += 1));
+  await store.move('gone', 'a', 'b');
+  assert.equal(calls, 0);
+  await store.move('b', 'a', null);
+  assert.deepEqual((await store.list()).map((r) => r.id), ['a', 'b']);
+  await store.put(image({ id: 'new', receivedAt: 3000 }));
+  off();
+  assert.deepEqual((await store.list()).map((r) => r.id), ['new', 'a', 'b']);
+  assert.deepEqual((await store.listByUser('alice')).map((r) => r.id), ['new', 'a', 'b'], 'listByUser in display order');
+});
+
+test('move rebalances an exhausted gap in the same transaction (TDF-0060)', async () => {
+  const store = await fresh();
+  await store.put(image({ id: 'a', receivedAt: 5, position: 1 }));
+  await store.put(image({ id: 'b', receivedAt: 5, position: 1 }));
+  await store.put(image({ id: 'c', receivedAt: 0 }));
+  await store.put(image({ id: 'far', receivedAt: -1000 }));
+  await store.move('c', 'a', 'b');
+  assert.deepEqual((await store.list()).map((r) => r.id), ['a', 'c', 'b', 'far']);
+  assert.equal((await store.get('far'))?.position, undefined, 'a row outside the run is not written');
+});
+
+test('move across hidden rows takes the visible neighbours\' keys and writes no other row (TDF-0060)', async () => {
+  // Visible under a filter: a, c, e. Moving e between a and c leaves b and d where they were.
+  const store = await fresh();
+  for (const [id, receivedAt] of /** @type {[string, number][]} */ ([['a', 500], ['b', 400], ['c', 300], ['d', 200], ['e', 100]])) {
+    await store.put(image({ id, receivedAt }));
+  }
+  await store.move('e', 'a', 'c');
+  const order = (await store.list()).map((r) => r.id);
+  assert.deepEqual(order.filter((id) => id !== 'e'), ['a', 'b', 'c', 'd']);
+  assert.ok(order.indexOf('e') > order.indexOf('a') && order.indexOf('e') < order.indexOf('c'));
+  assert.equal((await store.stats()).positioned, 1, 'one drop writes one record');
+});
+test('resetOrder drops every position and notifies only when one changed (TDF-0060)', async () => {
+  const store = await fresh();
+  await store.put(image({ id: 'a', receivedAt: 1000 }));
+  await store.put(image({ id: 'b', receivedAt: 2000, favorite: true }));
+  await store.move('b', 'a', null);
+  assert.deepEqual((await store.list()).map((r) => r.id), ['a', 'b']);
+  let calls = 0;
+  const off = onImagesChange(() => (calls += 1));
+  assert.equal(await store.resetOrder(), 1);
+  assert.equal(calls, 1);
+  assert.deepEqual((await store.list()).map((r) => r.id), ['b', 'a']);
+  assert.equal((await store.get('b'))?.favorite, true, 'nothing else changes');
+  assert.equal(Object.hasOwn(/** @type {object} */ (await store.get('b')), 'position'), false);
+  assert.equal(await store.resetOrder(), 0);
+  off();
+  assert.equal(calls, 1);
+  assert.equal((await store.stats()).positioned, 0);
+});
+
+test('enforceLimit still evicts by receivedAt, whatever the manual order, and never a favourite (TDF-0060)', async () => {
+  const store = await fresh();
+  await store.put(image({ id: 'fav', receivedAt: 1, favorite: true, bytes: 100 }));
+  await store.put(image({ id: 'old', receivedAt: 2, bytes: 100 }));
+  await store.put(image({ id: 'new', receivedAt: 3, bytes: 100 }));
+  // Drag the oldest non-favourite to the top: eviction must still take it first.
+  await store.move('old', null, 'new');
+  assert.deepEqual((await store.list()).map((r) => r.id), ['old', 'new', 'fav']);
+  assert.deepEqual(await store.enforceLimit(200), ['old']);
+  assert.deepEqual(await store.enforceLimit(0), ['new']);
+  assert.equal(await store.has('fav'), true);
 });
