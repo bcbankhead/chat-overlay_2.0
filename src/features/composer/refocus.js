@@ -1,16 +1,22 @@
 // The message box is where focus belongs. It takes focus when the chat loads, when the last open
 // menu, picker, flyout or media popover closes, after a plain click outside every other field,
-// when a printable key is pressed with nothing editable focused (the key lands in the box), and
-// when the window regains focus. It never takes focus from another text field, from a text
-// selection the user has made, or while a menu or the media popover (TDF-0035) is open — the
-// popover's arrow keys reach it only while focus is off the box (TDF-0040). A press that closes
-// a menu leaves the decision to its click, so a drag that starts outside a menu still selects text. Clicks, load and window focus are
-// mouse-only: on a touch screen each would open the keyboard. A keyboard-activated click (Enter or
-// Space on a focused control) leaves focus on that control, and a popover closed from the keyboard
-// or on a touch screen leaves focus where the popover returned it (its opener). The menus belong to other slices,
-// so they are watched, not wired (TDF-0009 Shared Contract, Extension points).
+// after a middle click or a right press, when a focused control is removed from the page, when a
+// printable key is pressed with nothing editable focused (the key lands in the box), and when the
+// window regains focus. Clicks are watched in the capture phase, so a control that stops a click's
+// propagation (gallery buttons, a drag release swallowed on its root) still hands focus back
+// (TDF-0061). It never takes focus from another text field, from a text selection the user has
+// made, or while a menu or the media popover (TDF-0035) is open — the popover's arrow keys reach it
+// only while focus is off the box (TDF-0040). A press that closes a menu leaves the decision to
+// its click, so a drag that starts outside a menu still selects text; a press that removes the
+// focused control is settled when it ends, click or no click. Clicks, removals, load and window focus are mouse-only: on a touch screen each would open
+// the keyboard. A keyboard-activated click (Enter or Space on a focused control) or context menu
+// leaves focus on that control, and a popover closed from the keyboard or on a touch screen leaves
+// focus where the popover returned it (its opener). The menus belong to other slices, so they are
+// watched, not wired (TDF-0009 Shared Contract, Extension points).
 
 const POPOVER = '.tdf-lb';
+/** The mouse events after which the box takes focus back. */
+const PRESSES = /** @type {const} */ (['click', 'auxclick', 'contextmenu']);
 
 /**
  * A menu, picker, flyout or media popover that is open, by the markup its owner gives it. The
@@ -60,14 +66,32 @@ export function installRefocus(bar, doc = bar.ownerDocument) {
   let touch = false;
   /** whether the last input was a key rather than a pointer press */
   let keyed = false;
+  /** the element that last took focus, so its removal from the page can be seen */
+  /** @type {Element | null} */
+  let focused = null;
+  /** @param {FocusEvent} event */
+  const onFocusIn = (event) => {
+    focused = /** @type {Element | null} */ (event.target);
+  };
   /** @param {PointerEvent} event */
   const onPointerDown = (event) => {
     pressing = true;
     keyed = false;
     touch = event.pointerType === 'touch';
   };
+  /** Whether the control that last took focus has left the page and dropped focus to the body. */
+  const dropped = () => {
+    const active = doc.activeElement;
+    return focused !== null && focused !== bar && !focused.isConnected && (active === null || active === doc.body);
+  };
   const onPointerUp = () => {
     pressing = false;
+    // A focused control removed during the press: a click that follows takes focus itself, and a
+    // press that ends with no click (cancelled, a native drag) must not leave focus on the body.
+    if (dropped()) {
+      focused = null;
+      if (!touch && !coarse()) setTimeout(take, 0);
+    }
   };
   const check = () => {
     const isOpen = menuOpen();
@@ -75,18 +99,30 @@ export function installRefocus(bar, doc = bar.ownerDocument) {
     // opener itself; a keyboard or touch close keeps it there.
     const popoverKept = popoverWasOpen && (keyed || coarse());
     if (wasOpen && !isOpen && !pressing && !popoverKept) take();
+    // A focused control removed from the page (a trashed tile, a re-rendered rail row) drops focus
+    // to the body. During a press it waits for the press's end; not on a touch screen.
+    if (!pressing && dropped()) {
+      focused = null;
+      if (!coarse()) take();
+    }
     wasOpen = isOpen;
     popoverWasOpen = popoverOpen();
   };
-  /** @param {MouseEvent} event */
+  /**
+   * A mouse click, middle click or right press, seen in the capture phase so a target that stops
+   * the event's propagation (gallery buttons, a drag release swallowed on its root) cannot hide it.
+   * @param {MouseEvent} event
+   */
   const onClick = (event) => {
-    // A click with no press behind it (detail 0) is a keyboard activation: focus stays on the control.
-    if (event.detail === 0 || touch) return;
+    // A click with no press behind it (detail 0) is a keyboard activation: focus stays on the
+    // control. A context menu opened from the keyboard has no press behind it either.
+    if (touch || (event.type === 'contextmenu' ? keyed : event.detail === 0)) return;
     const target = /** @type {Element | null} */ (event.target);
     const field = target?.closest?.('input, textarea, select, [contenteditable]') ?? null;
     if (holdsTyping(field, bar)) return;
-    // After the target's own handlers, so a click that opens a menu sees it open.
-    queueMicrotask(take);
+    // A task, not a microtask: from the capture phase a microtask would run before the target's
+    // own handlers, and a click that opens a menu must see it open.
+    setTimeout(take, 0);
   };
   /** @param {KeyboardEvent} event */
   const onKey = (event) => {
@@ -107,8 +143,9 @@ export function installRefocus(bar, doc = bar.ownerDocument) {
   doc.addEventListener('pointerdown', onPointerDown, true);
   doc.addEventListener('pointerup', onPointerUp, true);
   doc.addEventListener('pointercancel', onPointerUp, true);
-  doc.addEventListener('click', onClick);
+  for (const type of PRESSES) doc.addEventListener(type, onClick, true);
   doc.addEventListener('keydown', onKey, true);
+  doc.addEventListener('focusin', onFocusIn, true);
   win?.addEventListener('focus', onWindowFocus);
   if (!coarse()) take();
   return () => {
@@ -116,8 +153,9 @@ export function installRefocus(bar, doc = bar.ownerDocument) {
     doc.removeEventListener('pointerdown', onPointerDown, true);
     doc.removeEventListener('pointerup', onPointerUp, true);
     doc.removeEventListener('pointercancel', onPointerUp, true);
-    doc.removeEventListener('click', onClick);
+    for (const type of PRESSES) doc.removeEventListener(type, onClick, true);
     doc.removeEventListener('keydown', onKey, true);
+    doc.removeEventListener('focusin', onFocusIn, true);
     win?.removeEventListener('focus', onWindowFocus);
   };
 }

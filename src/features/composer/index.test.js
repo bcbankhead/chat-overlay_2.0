@@ -628,6 +628,183 @@ test('clicking Send leaves focus in the box', async () => {
   assert.ok(document.activeElement === bar);
 });
 
+// TDF-0061: paths by which the box lost focus with nothing else holding typing.
+
+test('a click a control stops from propagating still returns focus to the box', async () => {
+  const { window, document, bar } = page();
+  const button = document.createElement('button');
+  button.addEventListener('click', (e) => e.stopPropagation());
+  document.body.append(button);
+  await settle();
+  button.focus();
+  await press(window, button);
+  assert.ok(document.activeElement === bar, 'a bubble-phase stop no longer hides the click');
+
+  button.focus();
+  await press(window, button, { pointerType: 'touch' });
+  assert.ok(document.activeElement === button, 'a tap still leaves the keyboard closed');
+});
+
+test('a click whose target opens a menu after a microtask leaves focus off the box', async () => {
+  const { window, document, bar } = page();
+  const menu = document.createElement('div');
+  menu.className = 'tdf-rail-menu';
+  menu.hidden = true;
+  const opener = document.createElement('button');
+  // The refocus listener runs first, in the capture phase: a microtask it queued would run
+  // before this one and focus the box under the opening menu.
+  opener.addEventListener('click', () => queueMicrotask(() => { menu.hidden = false; }));
+  document.body.append(menu, opener);
+  await settle();
+  opener.focus();
+  await press(window, opener);
+  assert.ok(document.activeElement === opener, 'the deferral waits a task, not a microtask');
+});
+
+test('a drag release whose click is swallowed in the capture phase returns focus to the box', async () => {
+  const { window, document, bar } = page();
+  const root = document.createElement('div');
+  const tile = document.createElement('button');
+  root.append(tile);
+  root.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+  document.body.append(root);
+  await settle();
+  tile.focus();
+  await press(window, tile);
+  assert.ok(document.activeElement === bar);
+});
+
+test('a focused control removed from the page returns focus to the box', async () => {
+  const { window, document, bar } = page();
+  await settle();
+  const keyed = document.createElement('button');
+  document.body.append(keyed);
+  keyed.focus();
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+  keyed.remove();
+  await settle();
+  assert.ok(document.activeElement === bar, 'removed after a key');
+
+  const pressed = document.createElement('button');
+  document.body.append(pressed);
+  pressed.focus();
+  pressed.dispatchEvent(new window.PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }));
+  pressed.dispatchEvent(new window.PointerEvent('pointerup', { bubbles: true, pointerType: 'mouse' }));
+  pressed.remove();
+  await settle();
+  assert.ok(document.activeElement === bar, 'removed after a mouse press');
+
+  const held = document.createElement('button');
+  document.body.append(held);
+  held.focus();
+  held.dispatchEvent(new window.PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }));
+  held.remove();
+  await settle();
+  assert.ok(document.activeElement !== bar, 'during a press, the press decides');
+  document.body.dispatchEvent(new window.PointerEvent('pointerup', { bubbles: true, pointerType: 'mouse' }));
+  document.body.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 1 }));
+  await settle();
+  assert.ok(document.activeElement === bar, 'the press ends in a click');
+
+  const cancelled = document.createElement('button');
+  document.body.append(cancelled);
+  cancelled.focus();
+  cancelled.dispatchEvent(new window.PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }));
+  cancelled.remove();
+  await settle();
+  document.body.dispatchEvent(new window.PointerEvent('pointercancel', { bubbles: true, pointerType: 'mouse' }));
+  await settle();
+  assert.ok(document.activeElement === bar, 'the press ends with no click');
+
+  const moved = document.createElement('button');
+  const next = document.createElement('button');
+  document.body.append(moved, next);
+  moved.focus();
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+  moved.remove();
+  next.focus();
+  await settle();
+  assert.ok(document.activeElement === next, 'focus the owner moved elsewhere stays there');
+  next.remove();
+  await settle();
+
+  const layer = document.createElement('div');
+  layer.className = 'tdf-lb';
+  const cell = document.createElement('button');
+  layer.append(cell);
+  document.body.append(layer);
+  await settle();
+  cell.focus();
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  cell.remove();
+  await settle();
+  assert.ok(document.activeElement !== bar, 'not while the media popover is open (TDF-0040)');
+  layer.remove();
+  await settle();
+
+  const text = document.createElement('p');
+  text.textContent = 'chat text';
+  const other = document.createElement('button');
+  document.body.append(text, other);
+  other.focus();
+  const range = document.createRange();
+  range.selectNodeContents(text);
+  document.getSelection()?.addRange(range);
+  other.remove();
+  await settle();
+  assert.ok(document.activeElement !== bar, 'a text selection is kept');
+  document.getSelection()?.removeAllRanges();
+
+  const touch = page({ coarse: true });
+  await settle();
+  const tapped = touch.document.createElement('button');
+  touch.document.body.append(tapped);
+  tapped.focus();
+  tapped.remove();
+  await settle();
+  assert.ok(touch.document.activeElement !== touch.bar, 'not on a touch screen');
+});
+
+test('a middle click or a right press returns focus to the box; a keyboard context menu does not', async () => {
+  const { window, document, bar } = page();
+  const text = document.createElement('p');
+  text.textContent = 'chat text';
+  const button = document.createElement('button');
+  document.body.append(text, button);
+  await settle();
+  const pointer = (/** @type {any} */ el, /** @type {string} */ pointerType) => {
+    el.dispatchEvent(new window.PointerEvent('pointerdown', { bubbles: true, pointerType, button: 1 }));
+    el.dispatchEvent(new window.PointerEvent('pointerup', { bubbles: true, pointerType, button: 1 }));
+  };
+
+  button.focus();
+  pointer(button, 'mouse');
+  button.dispatchEvent(new window.MouseEvent('auxclick', { bubbles: true, detail: 1, button: 1 }));
+  await settle();
+  assert.ok(document.activeElement === bar, 'a middle click');
+
+  bar.blur();
+  pointer(text, 'mouse');
+  text.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 }));
+  await settle();
+  assert.ok(document.activeElement === bar, 'a right press');
+
+  button.focus();
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true }));
+  button.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  await settle();
+  assert.ok(document.activeElement === button, 'the Menu key leaves focus on the control');
+
+  pointer(button, 'touch');
+  button.dispatchEvent(new window.MouseEvent('auxclick', { bubbles: true, detail: 1 }));
+  button.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  await settle();
+  assert.ok(document.activeElement === button, 'a long press on a touch screen does not open the keyboard');
+});
+
 for (const [name, make] of /** @type {[string, (d: any) => any][]} */ ([
   ['a textarea', (d) => d.createElement('textarea')],
   ['a select', (d) => d.createElement('select')],
