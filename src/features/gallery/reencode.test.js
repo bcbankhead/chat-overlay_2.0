@@ -78,6 +78,39 @@ test('GIFs and non-raster types are kept as they are, without decoding', async (
   }
 });
 
+/** @param {string} s */
+const ascii = (s) => [...s].map((c) => c.charCodeAt(0));
+
+/**
+ * An original of `type` whose bytes start with `head`, padded to `size`.
+ * @param {string} type @param {number[]} head @param {number} [size]
+ */
+const headed = (type, head, size = 1000) => {
+  const data = new Uint8Array(size);
+  data.set(head);
+  return new Blob([data], { type });
+};
+
+/** @param {number} flags */
+const webpHead = (flags) => [...ascii('RIFF'), 0, 0, 0, 0, ...ascii('WEBPVP8X'), 10, 0, 0, 0, flags];
+
+test('an animated WebP, APNG or AVIF is kept as fetched, without decoding', async () => {
+  const apng = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 8, ...ascii('acTL')];
+  const avis = [0, 0, 0, 20, ...ascii('ftypavis'), 0, 0, 0, 0, ...ascii('mif1')];
+  const gifAsPng = headed('image/png', ascii('GIF89a'));
+  for (const blob of [headed('image/webp', webpHead(0x02)), headed('image/png', apng), headed('image/avif', avis), gifAsPng]) {
+    const { env, log } = canvasEnv();
+    assert.equal(await compressOriginal(blob, env), null);
+    assert.deepEqual(log.size, []);
+  }
+});
+
+test('a static WebP is still re-encoded', async () => {
+  const { env, log } = canvasEnv();
+  assert.equal((await compressOriginal(headed('image/webp', webpHead(0x10)), env))?.type, 'image/jpeg');
+  assert.deepEqual(log.size, [300, 600]);
+});
+
 test('an opaque PNG is re-encoded as JPEG 0.8 at its own dimensions, scanned in strips, and the bitmap released', async () => {
   const { env, log } = canvasEnv({ width: 300, height: 600 });
   const out = await compressOriginal(original('image/png'), env);
