@@ -10,11 +10,13 @@
 // With Use media quickview on (TDF-0035), a click on a share image, in a public message or a
 // whisper, opens the media popover over the chat's share images in chat order instead; its zoom
 // is the same new-tab open. Off, a whisper's image keeps following its link.
+// A video share the chat embedded (video.js, TDF-0065) is listed beside the images and framed
+// like one; its corner button opens the popover at it, or, with quickview off, a new tab.
 
 import { emitLiked } from '../../core/events.js';
 import { openLightbox } from '../gallery/lightbox.js';
-import { extractShareIds } from '../gallery/shareParse.js';
 import { burst as floatHearts } from './hearts.js';
+import { imageShareId, inMediaBody, VIDEO, VIDEO_OPEN } from './video.js';
 
 const FRAME = 'tdf-rx-frame';
 const LIKE = 'tdf-rx-like';
@@ -70,8 +72,8 @@ export function installReactionUi({
    */
   const celebrate = (shareId) => {
     for (const frame of framesOf(shareId)) {
-      const img = frame.querySelector('img');
-      if (img) burst(doc, win, img);
+      const media = frame.querySelector(`img, .${VIDEO}`);
+      if (media) burst(doc, win, media);
     }
   };
 
@@ -99,12 +101,12 @@ export function installReactionUi({
   const shareOf = (img) => (img.closest('.tdf-msg.tdf-kind-public .tdf-body') ? shareIdOf(img) : null);
 
   /**
-   * The share id an image links to, or null; any message kind.
+   * The share id an image (or an embedded video's wrapper) links to, or null; any message kind.
    * @param {Element} img
    */
   const shareIdOf = (img) => {
-    const link = img.closest('a');
-    return extractShareIds(`${link?.getAttribute('href') ?? ''} ${img.getAttribute('src') ?? ''}`)[0] ?? null;
+    if (img.classList.contains(VIDEO)) return /** @type {HTMLElement} */ (img).dataset.share || null;
+    return imageShareId(img);
   };
 
   /**
@@ -112,17 +114,15 @@ export function installReactionUi({
    * which the view renders only to the whisper's sender and recipient.
    * @param {Element} img
    */
-  const mediaShareOf = (img) =>
-    img.closest('.tdf-msg.tdf-kind-public .tdf-body') || img.closest('.tdf-msg.tdf-kind-whisper .tdf-body')
-      ? shareIdOf(img)
-      : null;
+  const mediaShareOf = (img) => (inMediaBody(img) ? shareIdOf(img) : null);
 
   /** @type {{ close: () => void } | null} the popover this install opened last */
   let popover = null;
 
   /**
-   * Open the media popover at a share image, over every share image in the chat, in chat order.
-   * @param {HTMLImageElement} clicked
+   * Open the media popover at a share, over every share image and embedded video in the chat,
+   * in chat order.
+   * @param {HTMLElement} clicked
    * @param {string} shareId
    */
   const openQuickview = (clicked, shareId) => {
@@ -130,10 +130,18 @@ export function installReactionUi({
     const items = [];
     /** @type {Map<string, string>} where each share's zoom opens */
     const hrefs = new Map();
-    for (const node of doc.querySelectorAll('#tdf-chat .tdf-msg .tdf-body img')) {
-      const img = /** @type {HTMLImageElement} */ (node);
-      const id = mediaShareOf(img);
+    for (const node of doc.querySelectorAll(`#tdf-chat .tdf-msg .tdf-body img, #tdf-chat .tdf-msg .tdf-body .${VIDEO}`)) {
+      const id = mediaShareOf(node);
       if (id === null || hrefs.has(id)) continue;
+      if (node.classList.contains(VIDEO)) {
+        const wrapper = /** @type {HTMLElement} */ (node);
+        const video = /** @type {HTMLVideoElement | null} */ (wrapper.querySelector('video'));
+        if (!video) continue;
+        hrefs.set(id, wrapper.dataset.href || video.src);
+        items.push({ id, src: video.src, thumb: null, kind: 'video' });
+        continue;
+      }
+      const img = /** @type {HTMLImageElement} */ (node);
       hrefs.set(id, img.closest('a')?.href ?? img.src);
       // A share image the chat could not render (a video's, or a broken one) gives no thumbnail.
       const broken = img.complete && img.naturalWidth === 0 && img.getAttribute('src') !== null;
@@ -176,7 +184,7 @@ export function installReactionUi({
    * @returns {HTMLElement}
    */
   const frameOf = (img, shareId) => {
-    const target = img.closest('a') ?? img;
+    const target = img.closest(`a, .${VIDEO}`) ?? img;
     const parent = target.parentElement;
     if (parent?.classList.contains(FRAME)) return parent;
     const frame = doc.createElement('span');
@@ -257,7 +265,7 @@ export function installReactionUi({
   const stripToken = (msg) => {
     if (!msg.classList.contains('tdf-kind-public')) return;
     const body = msg.querySelector('.tdf-body');
-    if (!body || body.querySelector('a') || [...body.querySelectorAll('img')].some((img) => shareOf(img) !== null)) return;
+    if (!body || body.querySelector(`a, .${VIDEO}`) || [...body.querySelectorAll('img')].some((img) => shareOf(img) !== null)) return;
     const walker = doc.createTreeWalker(body, SHOW_TEXT);
     /** @type {Text[]} */
     const texts = [];
@@ -282,7 +290,7 @@ export function installReactionUi({
   const render = (msg) => {
     stripToken(msg);
     const own = me !== '' && /** @type {HTMLElement} */ (msg).dataset.user === me;
-    for (const img of msg.querySelectorAll('.tdf-body img')) {
+    for (const img of msg.querySelectorAll(`.tdf-body img, .tdf-body .${VIDEO}`)) {
       const shareId = shareOf(img);
       if (shareId !== null) decorate(frameOf(img, shareId), shareId, own);
     }
@@ -306,6 +314,24 @@ export function installReactionUi({
       else if (!entry && !store.likesFor(shareId).mine) like(shareId, LIKE_CODE, likeButton);
       return;
     }
+    const openButton = /** @type {HTMLElement | null} */ (target.closest(`.${VIDEO} > .${VIDEO_OPEN}`));
+    if (openButton) {
+      event.preventDefault();
+      const wrapper = /** @type {HTMLElement} */ (openButton.parentElement);
+      const id = mediaShareOf(wrapper);
+      if (id === null) return;
+      try {
+        wrapper.querySelector('video')?.pause();
+        if (quickview()) openQuickview(openButton, id);
+        else if (!win.open(wrapper.dataset.href ?? '', '_blank', 'noopener')) {
+          report(new Error('gallery: the browser blocked the new tab'));
+        }
+      } catch (err) {
+        report(err);
+      }
+      return;
+    }
+    // Clicks on an embedded video are left to its own controls.
     if (target.tagName !== 'IMG') return;
     // Quickview on: a share image, public or whispered, opens the popover. Read now, so the
     // setting applies without a reload.

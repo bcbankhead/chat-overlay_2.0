@@ -6,6 +6,7 @@ import { onLiked } from '../../core/events.js';
 import { createReactionQueue } from './queue.js';
 import { SMILIE_CODES_FIXTURE as CODES } from './smilieCodes.fixture.js';
 import { installReactionUi } from './ui.js';
+import { installChatVideo } from './video.js';
 
 const A = '100000000111111';
 const settle = () => new Promise((r) => setTimeout(r, 20));
@@ -77,7 +78,9 @@ function page({ likes = NONE, accept = true, request = null, codes = [...CODES],
   });
   /** @type {Element[]} */
   const bursts = [];
-  const uninstall = installReactionUi({
+  // As start.js does, apart from the reaction UI.
+  const offVideo = installChatVideo({ doc, report: (err) => reports.push(err) });
+  const offUi = installReactionUi({
     doc,
     win,
     store,
@@ -87,6 +90,10 @@ function page({ likes = NONE, accept = true, request = null, codes = [...CODES],
     ...(quickview ? { quickview: () => quickview.on } : {}),
     report: (err) => reports.push(err),
   });
+  const uninstall = () => {
+    offUi();
+    offVideo();
+  };
   /** @param {Element} el @param {string} [type] */
   const mouse = (el, type = 'click', x = 50, y = 60) => {
     const event = new win.MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y });
@@ -609,4 +616,138 @@ test('uninstall closes a popover the install opened', () => {
   assert.ok(p.doc.querySelector('.tdf-lb'));
   p.uninstall();
   assert.equal(p.doc.querySelector('.tdf-lb'), null);
+});
+
+/**
+ * Fail a share image's load, as a video share's does, so the chat embeds it as a video.
+ * @param {any} win
+ * @param {Element} img
+ */
+const failLoad = (win, img) => img.dispatchEvent(new win.Event('error'));
+
+test('a video share keeps its like frame once embedded, with no link left around it', () => {
+  const p = page({ quickview: { on: true } });
+  failLoad(p.win, /** @type {Element} */ (p.posted()));
+  const frame = /** @type {HTMLElement} */ (p.frame());
+  assert.ok(frame.querySelector(':scope > .tdf-video video'));
+  assert.equal(frame.querySelector('a'), null);
+  assert.ok(p.like(), 'the heart is still there');
+  p.store.set({ count: 2, mine: false });
+  assert.equal(p.stackSize(), 2, 'and the stack still renders on a store change');
+  assert.equal(p.doc.querySelectorAll('.tdf-rx-frame').length, 1, 'no second frame');
+});
+
+test('quickview on: the roster lists embedded videos beside images in chat order, a video with no thumbnail', () => {
+  const p = page({ quickview: { on: true } });
+  p.doc.querySelector('.tdf-list').innerHTML = roster();
+  p.store.set(NONE);
+  // happy-dom loads no image: A rendered; B (the whisper) and C are videos.
+  for (const img of p.doc.querySelectorAll('img.tdf-posted')) {
+    Object.defineProperty(img, 'complete', { value: true });
+    Object.defineProperty(img, 'naturalWidth', { value: 100 });
+  }
+  failLoad(p.win, /** @type {Element} */ (p.doc.querySelector('.tdf-kind-whisper img')));
+  failLoad(p.win, /** @type {Element} */ (p.doc.querySelector('.tdf-msg[data-id="4"] img')));
+  assert.equal(p.doc.querySelectorAll('.tdf-video').length, 2);
+  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-msg[data-id="4"] .tdf-video-open')).click();
+  assert.deepEqual(p.opened, [], 'no tab opens');
+  assert.equal(p.doc.querySelector('.tdf-lb-count')?.textContent, '3 / 3', 'A, B, C: the popover opens at C');
+  const stage = p.doc.querySelector('.tdf-lb-stage video');
+  assert.ok(stage, 'the stage shows a video');
+  assert.equal(stage.getAttribute('src'), shareHref(C));
+  const cells = [...p.doc.querySelectorAll('.tdf-lb-thumb')];
+  assert.deepEqual(
+    cells.map((c) => c.querySelector('img')?.getAttribute('src') ?? null),
+    [shareHref(A), null, null],
+    'the images keep their thumbnails; the videos have none',
+  );
+  assert.deepEqual(
+    cells.map((c) => c.classList.contains('tdf-lb-thumb-video')),
+    [false, true, true],
+  );
+  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-close')).click();
+});
+
+test('quickview on: a whispered video\'s open button opens the popover at it', () => {
+  const p = page({ quickview: { on: true } });
+  p.doc.querySelector('.tdf-list').innerHTML = roster();
+  p.store.set(NONE);
+  failLoad(p.win, /** @type {Element} */ (p.doc.querySelector('.tdf-kind-whisper img')));
+  const event = p.click(/** @type {Element} */ (p.doc.querySelector('.tdf-kind-whisper .tdf-video-open')));
+  assert.equal(event.defaultPrevented, true);
+  assert.equal(p.doc.querySelector('.tdf-lb-count')?.textContent, '2 / 3');
+  assert.deepEqual(p.opened, []);
+  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-close')).click();
+});
+
+test('quickview off: a video\'s open button opens one new tab at its share, and no popover', () => {
+  const p = page({ quickview: { on: false } });
+  failLoad(p.win, /** @type {Element} */ (p.posted()));
+  const event = p.click(/** @type {Element} */ (p.doc.querySelector('.tdf-video-open')));
+  assert.equal(event.defaultPrevented, true);
+  assert.deepEqual(p.opened, [[shareHref(A), '_blank', 'noopener']]);
+  assert.equal(p.doc.querySelector('.tdf-lb'), null);
+  assert.deepEqual(p.reports, []);
+});
+
+test('quickview off: a blocked tab from a video\'s open button is reported', () => {
+  const p = page({ quickview: { on: false }, blocked: true });
+  failLoad(p.win, /** @type {Element} */ (p.posted()));
+  p.click(/** @type {Element} */ (p.doc.querySelector('.tdf-video-open')));
+  assert.equal(p.opened.length, 1);
+  assert.equal(/** @type {Error} */ (p.reports[0]).message, 'gallery: the browser blocked the new tab');
+});
+
+test('a click on the embedded video itself is left to its controls', () => {
+  const p = page({ quickview: { on: true } });
+  failLoad(p.win, /** @type {Element} */ (p.posted()));
+  const event = p.click(/** @type {Element} */ (p.doc.querySelector('.tdf-video video')));
+  assert.equal(event.defaultPrevented, false);
+  assert.deepEqual(p.opened, []);
+  assert.equal(p.doc.querySelector('.tdf-lb'), null);
+});
+
+test('the open button pauses the inline video before the popover opens it', () => {
+  const p = page({ quickview: { on: true } });
+  failLoad(p.win, /** @type {Element} */ (p.posted()));
+  const video = /** @type {HTMLVideoElement} */ (p.doc.querySelector('.tdf-video video'));
+  let paused = 0;
+  video.pause = () => {
+    paused += 1;
+  };
+  p.click(/** @type {Element} */ (p.doc.querySelector('.tdf-video-open')));
+  assert.equal(paused, 1);
+  assert.ok(p.doc.querySelector('.tdf-lb'), 'the popover opens');
+  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-close')).click();
+});
+
+test('quickview off: the open button pauses the inline video before the new tab', () => {
+  const p = page({ quickview: { on: false } });
+  failLoad(p.win, /** @type {Element} */ (p.posted()));
+  const video = /** @type {HTMLVideoElement} */ (p.doc.querySelector('.tdf-video video'));
+  let paused = 0;
+  video.pause = () => {
+    paused += 1;
+  };
+  p.click(/** @type {Element} */ (p.doc.querySelector('.tdf-video-open')));
+  assert.equal(paused, 1);
+  assert.equal(p.opened.length, 1);
+});
+
+test("a like on a framed video floats hearts from the video's wrapper", () => {
+  const p = page();
+  failLoad(p.win, /** @type {Element} */ (p.posted()));
+  p.click(/** @type {Element} */ (p.like()));
+  assert.deepEqual(p.bursts, [p.doc.querySelector('.tdf-rx-frame > .tdf-video')]);
+});
+
+test('a like-shaped message holding an embedded video keeps its token', () => {
+  const p = page();
+  const list = /** @type {Element} */ (p.doc.querySelector('.tdf-list'));
+  list.insertAdjacentHTML(
+    'beforeend',
+    textRow(`<span class="tdf-video" data-share="${A}"><video></video></span><img src='smilies/9.gif' alt=':h'> ^111111`, { id: '30' }),
+  );
+  p.store.set(NONE);
+  assert.equal(p.doc.querySelector('.tdf-msg[data-id="30"] .tdf-body')?.textContent, ' ^111111');
 });
