@@ -47,6 +47,7 @@
     "src/features/tagging/reactions.js",
     "src/features/tagging/infer.js",
     "src/features/tagging/queue.js",
+    "src/features/tagging/video.js",
     "src/features/options/selectors.js",
     "src/forum/navbar.js",
     "src/forum/searchModal.js"

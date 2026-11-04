@@ -1,7 +1,8 @@
 /* Image likes on a posted image (ui.js). Scoped to .tdf-rx-*. The icons sit over the image,
    so they are white with a shadow rather than coloured from the theme tokens. The corner heart
    shows on hover or keyboard focus (always on a device without hover); a heart you gave stays. Everything waits
-   for .tdf-posted, which the view adds once the image has loaded. The floating hearts
+   for .tdf-posted, which the view adds once the image has loaded; a framed embedded video
+   (.tdf-video, video.js), which never carries it, follows the same rules without waiting. The floating hearts
    (hearts.js) sit on the page body, outside the overlay, so they carry their own colour. */
 
 #tdf-chat .tdf-rx-frame {
@@ -36,8 +37,20 @@
   display: block;
 }
 
+/* An embedded video (video.js) is framed the same way; it never carries .tdf-posted. */
+#tdf-chat .tdf-rx-frame:has(> .tdf-video):hover > .tdf-rx-like,
+#tdf-chat .tdf-rx-frame:has(> .tdf-video):focus-within > .tdf-rx-like,
+#tdf-chat .tdf-rx-frame:has(> .tdf-video) > .tdf-rx-like.tdf-rx-mine {
+  display: block;
+}
+
 @media (hover: none) {
   #tdf-chat .tdf-rx-frame:has(img.tdf-posted) > .tdf-rx-like {
+    display: block;
+  }
+
+  #tdf-chat .tdf-rx-frame:has(> .tdf-video) > .tdf-rx-like,
+  #tdf-chat .tdf-video > .tdf-video-open {
     display: block;
   }
 }
@@ -78,8 +91,56 @@
   filter: drop-shadow(0 0 2px rgb(0 0 0 / 0.6));
 }
 
-#tdf-chat .tdf-rx-frame:has(img.tdf-posted) > .tdf-rx-stack {
+#tdf-chat .tdf-rx-frame:has(img.tdf-posted) > .tdf-rx-stack,
+#tdf-chat .tdf-rx-frame:has(> .tdf-video) > .tdf-rx-stack {
   display: block;
+}
+
+/* An uploaded video embedded in place of its broken share image (video.js, TDF-0065), within the
+   posted image's 250 px bounds. Its open button sits top-left, clear of the like heart, on hover
+   or focus (always on a device without hover). The like stack sits at the bottom-left, over the
+   video's controls, so it lets the pointer through (pointer-events: none above). */
+#tdf-chat .tdf-video {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  line-height: 0;
+  vertical-align: middle;
+}
+
+#tdf-chat .tdf-video > video {
+  max-width: 250px;
+  max-height: 250px;
+  background: #000000;
+}
+
+#tdf-chat .tdf-video-open {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  display: none;
+  margin: 0;
+  padding: 3px;
+  border: 0;
+  background: none;
+  line-height: 0;
+  cursor: pointer;
+  filter: drop-shadow(0 0 2px rgb(0 0 0 / 0.6));
+}
+
+#tdf-chat .tdf-video:hover > .tdf-video-open,
+#tdf-chat .tdf-video:focus-within > .tdf-video-open {
+  display: block;
+}
+
+#tdf-chat .tdf-video-open svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 #tdf-chat .tdf-rx-stack svg {

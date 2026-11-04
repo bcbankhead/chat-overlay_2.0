@@ -14,6 +14,7 @@ import { createReactionQueue } from './queue.js';
 import { toHexColor } from './reactions.js';
 import { createTagStore } from './store.js';
 import { installReactionUi } from './ui.js';
+import { installChatVideo } from './video.js';
 
 /**
  * The colour a like's token is hidden in when the native chat's own background cannot be
@@ -169,6 +170,9 @@ export function startTagging({ win, doc, css, indexedDB = win.indexedDB }) {
     style.textContent = css;
     doc.head.appendChild(style);
   }
+
+  // Apart from the database, so a failed open still embeds video shares (ui.js opens them).
+  installChatVideo({ doc, report: fail });
 
   const opened = openDb({ indexedDB });
   // Read at each image click (ui.js), which cannot await; a failed open is reported through
