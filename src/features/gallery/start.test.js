@@ -6,7 +6,7 @@ import { openDb } from '../../core/db.js';
 import { emitInbound, emitLiked } from '../../core/events.js';
 import { createHistory } from '../../core/history.js';
 import { createSettings } from '../../core/settings.js';
-import { COMPOSER_NOT_READY, installStager } from '../composer/api.js';
+import { COMPOSER_NOT_READY, installUploader } from '../composer/api.js';
 import { installRailHost, listPanels, listUserMenuActions } from '../rail/api.js';
 import { listGalleryItemActions } from './api.js';
 import { clearGalleryErrors } from './errors.js';
@@ -55,7 +55,7 @@ test('start wires capture, the Gallery panel and the "View images" menu action',
 
     /** @type {unknown[]} */
     const opened = [];
-    const uninstall = installRailHost({ open: (p, arg) => opened.push([p.id, arg]), close: () => {}, report: () => {} });
+    const uninstall = installRailHost({ open: (p, arg) => opened.push([p.id, arg]), report: () => {} });
     const user = { uuID: '9', name: 'bob b', rawName: 'bob%20b', roomID: '1', userID: '2', avatar: '', block: '1', ip: '', statusText: '' };
     const action = listUserMenuActions(user, () => {}).find((a) => a.id === 'gallery-view-images');
     assert.equal(action?.label, 'View images');
@@ -296,14 +296,14 @@ test('start registers Re-post as a gallery item action', async () => {
   assert.ok(post);
   assert.equal(post.label, 'Re-post');
   assert.equal(post.icon, undefined);
-  assert.equal('cooldownMs' in post, false);
+  assert.equal(post.cooldownMs, 5000);
   assert.equal(post.disabled?.(/** @type {any} */ ({ id: ID, broken: true, contentType: '' })), 'Image unavailable from server');
   assert.equal(post.disabled?.(/** @type {any} */ ({ id: ID, broken: false, contentType: 'image/png' })), null);
   await settle();
   clearGalleryErrors();
 });
 
-test('Re-post fetches a record without a blob relative to win.location.href, stages it through composer/api.js and closes the gallery; nothing is uploaded', async () => {
+test('Re-post fetches a record without a blob relative to win.location.href and uploads it at once through composer/api.js, to the whisper target', async () => {
   const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   const doc = win.document;
   /** @type {string[]} */
@@ -312,17 +312,19 @@ test('Re-post fetches a record without a blob relative to win.location.href, sta
     fetched.push(String(input));
     return new Response(new Blob([new Uint8Array(10)]), { headers: { 'content-type': 'image/png' } });
   };
-  /** @type {File[]} */
-  const staged = [];
+  /** @type {{ file: File, toUser: string }[]} */
+  const uploaded = [];
   /** @type {string | null} */
   let refusal = null;
-  const uninstallStager = installStager((file) => {
-    staged.push(file);
-    return refusal;
+  let whisper = '';
+  const uninstallUploader = installUploader({
+    whisperTo: () => whisper,
+    upload: async (file, toUser) => {
+      uploaded.push({ file, toUser });
+      if (refusal) throw new Error(refusal);
+    },
   });
-  /** @type {string[]} */
-  const closed = [];
-  const uninstallHost = installRailHost({ open: () => {}, close: (p) => void closed.push(p.id), report: () => {} });
+  const uninstallHost = installRailHost({ open: () => {}, report: () => {} });
   try {
     startGallery({ win, doc, css: '', indexedDB: new IDBFactory() });
     const post = listGalleryItemActions().find((a) => a.id === 'post');
@@ -330,39 +332,39 @@ test('Re-post fetches a record without a blob relative to win.location.href, sta
     const item = /** @type {any} */ ({ id: ID, broken: false, contentType: 'image/png' });
 
     await post.onSelect(item);
-    assert.deepEqual(fetched, [shareUrl(ID, win.location.href)], 'only the share is fetched: no upload');
-    assert.deepEqual(staged.map((f) => [f.name, f.type, f.size]), [[`${ID}.png`, 'image/png', 10]]);
-    assert.deepEqual(closed, ['gallery']);
+    assert.deepEqual(fetched, [shareUrl(ID, win.location.href)]);
+    assert.deepEqual(uploaded.map(({ file, toUser }) => [file.name, file.type, file.size, toUser]), [[`${ID}.png`, 'image/png', 10, '']]);
 
-    refusal = 'A file is still uploading';
-    await assert.rejects(Promise.resolve(post.onSelect(item)), { message: 'A file is still uploading' });
-    assert.equal(staged.length, 2);
-    assert.deepEqual(closed, ['gallery'], 'a refusal leaves the gallery open');
+    whisper = 'Bob';
+    await post.onSelect(item);
+    assert.equal(uploaded[1].toUser, 'Bob', 'privately to the whispered user');
 
-    uninstallStager();
+    refusal = 'Upload failed: signed out';
+    await assert.rejects(Promise.resolve(post.onSelect(item)), { message: 'Upload failed: signed out' });
+    assert.equal(uploaded.length, 3);
+
+    uninstallUploader();
     await assert.rejects(Promise.resolve(post.onSelect(item)), { message: COMPOSER_NOT_READY });
   } finally {
-    uninstallStager();
+    uninstallUploader();
     uninstallHost();
     await settle();
     clearGalleryErrors();
   }
 });
 
-test('Re-post stages nothing when the Gallery flyout closes while the share is still being fetched', async () => {
+test('Re-post still uploads when the Gallery flyout closes while the share is still being fetched', async () => {
   const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   /** @type {(r: Response) => void} */
   let respond = () => {};
   win.fetch = () => new Promise((resolve) => (respond = resolve));
-  /** @type {File[]} */
-  const staged = [];
-  const uninstallStager = installStager((file) => {
-    staged.push(file);
-    return null;
+  /** @type {{ file: File, toUser: string }[]} */
+  const uploaded = [];
+  const uninstallUploader = installUploader({
+    whisperTo: () => '',
+    upload: async (file, toUser) => void uploaded.push({ file, toUser }),
   });
-  /** @type {string[]} */
-  const closed = [];
-  const uninstallHost = installRailHost({ open: () => {}, close: (p) => void closed.push(p.id), report: () => {} });
+  const uninstallHost = installRailHost({ open: () => {}, report: () => {} });
   try {
     startGallery({ win, doc: win.document, css: '', indexedDB: new IDBFactory() });
     const panel = listPanels().find((p) => p.id === 'gallery');
@@ -373,10 +375,9 @@ test('Re-post stages nothing when the Gallery flyout closes while the share is s
     if (typeof cleanup === 'function') cleanup();
     respond(new Response(new Blob([new Uint8Array(10)]), { headers: { 'content-type': 'image/png' } }));
     await pending;
-    assert.deepEqual(staged, []);
-    assert.deepEqual(closed, []);
+    assert.deepEqual(uploaded.map(({ file, toUser }) => [file.name, toUser]), [[`${ID}.png`, '']]);
   } finally {
-    uninstallStager();
+    uninstallUploader();
     uninstallHost();
     await settle();
     clearGalleryErrors();
@@ -393,11 +394,13 @@ test('Re-post and capture share one ledger: a re-posted compressed image is not 
     const blob = String(input).includes(REPOST) && sent ? sent : new Blob([new Uint8Array(10)], { type: 'image/png' });
     return new Response(blob, { headers: { 'content-type': blob.type || 'image/png' } });
   };
-  const uninstallStager = installStager((file) => {
-    sent = file;
-    return null;
+  const uninstallUploader = installUploader({
+    whisperTo: () => '',
+    upload: async (file) => {
+      sent = file;
+    },
   });
-  const uninstallHost = installRailHost({ open: () => {}, close: () => {}, report: () => {} });
+  const uninstallHost = installRailHost({ open: () => {}, report: () => {} });
   const logged = console.error;
   console.error = () => {};
   try {
@@ -418,7 +421,7 @@ test('Re-post and capture share one ledger: a re-posted compressed image is not 
     assert.deepEqual((await store.list()).map((r) => r.id), [ID]);
   } finally {
     console.error = logged;
-    uninstallStager();
+    uninstallUploader();
     uninstallHost();
     await settle();
     clearGalleryErrors();

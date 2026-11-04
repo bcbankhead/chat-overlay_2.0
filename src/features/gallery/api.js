@@ -16,6 +16,7 @@ import { reportGalleryError } from './errors.js';
  * @property {(item: import('./store.js').ImageRecord) => string | null} [disabled]
  *   the reason the action is unavailable for this item, used as the button's title and
  *   aria-label; null when it is enabled. Read each time the tile is drawn
+ * @property {number} [cooldownMs]       after a resolved Promise, the button stays disabled this long
  */
 
 /** @typedef {(item: import('./store.js').ImageRecord, el: HTMLElement) => void} GalleryItemDecoration */
@@ -45,6 +46,11 @@ function notify() {
 export function registerGalleryItemAction(action) {
   if (!action || typeof action.id !== 'string' || !action.id) throw new TypeError('gallery item action needs a string id');
   if (typeof action.onSelect !== 'function') throw new TypeError('gallery item action needs an onSelect function');
+  const { cooldownMs } = action;
+  if (cooldownMs !== undefined && (typeof cooldownMs !== 'number' || !Number.isFinite(cooldownMs) || cooldownMs < 0)) {
+    const shown = typeof cooldownMs === 'string' ? JSON.stringify(cooldownMs) : String(cooldownMs);
+    throw new TypeError(`gallery item action cooldownMs must be a finite, non-negative number, got ${shown}`);
+  }
   actions.set(action.id, action);
   notify();
   return () => {

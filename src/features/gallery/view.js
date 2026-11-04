@@ -16,9 +16,10 @@
 // shown, in display order; its zoom is the tile's own open, and an unavailable tile still
 // retries rather than opening.
 // Registered actions sit in a bar at the lower right, opposite the size chip. One whose
-// onSelect returns a Promise holds its button busy until it settles, then returns it to idle
-// or shows the failure's reason (TDF-0038); its state is kept by item id at module scope, so
-// a redraw or a reopened flyout keeps it, and a promise settling after close still records it.
+// onSelect returns a Promise holds its button busy until it settles, then cools down for its
+// cooldownMs (TDF-0038, TDF-0062's Re-post) or shows the failure's reason, retryable at once;
+// its state is kept by item id at module scope, so a redraw or a reopened flyout keeps it, and
+// a promise settling after close still records it.
 // My Images (TDF-0046) shows only records the current user (the `self` dep) sent. It combines
 // with favourites, clears the user-filter chip when pressed, is hidden while no user name is
 // known, and resets each open, like favourites.
@@ -91,8 +92,8 @@ const ICONS = {
 /**
  * A registered action's state on one item, kept at module scope rather than by the tile or the
  * view, since a registry change rebuilds every tile and the rail renders a new view on every
- * open. No entry is idle.
- * @typedef {{ state: 'busy' } | { state: 'failed', reason: string }} ActionState
+ * open. No entry is idle; neither is a cooling one past its `until` (a Date.now() time).
+ * @typedef {{ state: 'busy' } | { state: 'cooling', until: number } | { state: 'failed', reason: string }} ActionState
  */
 
 /** @type {Map<string, Map<string, ActionState>>} item id → action id → its state */
@@ -106,15 +107,19 @@ const actionListeners = new Set();
  * @returns {ActionState | undefined}
  */
 function getActionState(itemId, actionId) {
-  return actionStates.get(itemId)?.get(actionId);
+  const st = actionStates.get(itemId)?.get(actionId);
+  if (st?.state !== 'cooling' || Date.now() < st.until) return st;
+  setActionState(itemId, actionId, null, false);
+  return undefined;
 }
 
 /**
  * @param {string} itemId
  * @param {string} actionId
  * @param {ActionState | null} next  null returns it to idle
+ * @param {boolean} [notify]  false skips telling the mounted views
  */
-function setActionState(itemId, actionId, next) {
+function setActionState(itemId, actionId, next, notify = true) {
   let byAction = actionStates.get(itemId);
   if (next) {
     if (!byAction) actionStates.set(itemId, (byAction = new Map()));
@@ -123,7 +128,7 @@ function setActionState(itemId, actionId, next) {
     byAction.delete(actionId);
     if (!byAction.size) actionStates.delete(itemId);
   }
-  for (const listener of [...actionListeners]) listener(itemId, actionId);
+  if (notify) for (const listener of [...actionListeners]) listener(itemId, actionId);
 }
 
 /**
@@ -140,7 +145,7 @@ function reconcile(parent, els) {
   }
 }
 
-/** Test only: forget every action's state, so one test's in-flight or failed action does not leak into the next. */
+/** Test only: forget every action's state, so one test's in-flight, cooling or failed action does not leak into the next. */
 export function resetGalleryActionStates() {
   actionStates.clear();
 }
@@ -291,6 +296,9 @@ export function renderGallery(
   /** @type {Set<string>} ids whose retry is running, so each retries once at a time */
   const retrying = new Set();
 
+  /** @type {Map<string, ReturnType<typeof setTimeout>>} item id + action id → this view's timer to redraw a cooldown's end, cleared on close */
+  const cooldowns = new Map();
+
   /**
    * @param {string} itemId
    * @param {string} actionId
@@ -311,7 +319,18 @@ export function renderGallery(
     const entry = tile.actions.get(actionId);
     if (!entry) return;
     const { button, action } = entry;
-    const st = getActionState(tile.item.id, actionId);
+    const itemId = tile.item.id;
+    const st = getActionState(itemId, actionId);
+    const key = `${itemId}\u0000${actionId}`;
+    if (st?.state === 'cooling' && !cooldowns.has(key)) {
+      cooldowns.set(
+        key,
+        win.setTimeout(() => {
+          cooldowns.delete(key);
+          redrawAction(itemId, actionId);
+        }, Math.max(0, st.until - Date.now())),
+      );
+    }
     /** @type {string | null} */
     let reason = null;
     try {
@@ -319,7 +338,7 @@ export function renderGallery(
     } catch (err) {
       report(err);
     }
-    const blocked = Boolean(reason) || st?.state === 'busy';
+    const blocked = Boolean(reason) || st?.state === 'busy' || st?.state === 'cooling';
     button.setAttribute('aria-disabled', String(blocked));
     button.classList.toggle('tdf-busy', st?.state === 'busy');
     button.classList.toggle('tdf-failed', st?.state === 'failed');
@@ -329,16 +348,18 @@ export function renderGallery(
       ? reason
       : st?.state === 'busy'
         ? `${action.label}…`
-        : st?.state === 'failed'
-          ? `${action.label} failed: ${st.reason}`
-          : action.label;
+        : st?.state === 'cooling'
+          ? `${action.label} — done`
+          : st?.state === 'failed'
+            ? `${action.label} failed: ${st.reason}`
+            : action.label;
     button.title = label;
     button.setAttribute('aria-label', label);
   }
 
   /**
    * Run a registered action from its button. A synchronous action is called as before; a
-   * returned Promise holds the button busy, then idle or failed. Its settling is recorded
+   * returned Promise holds the button busy, then cooling or failed. Its settling is recorded
    * even once this view has closed, so the next open draws it.
    * @param {Tile} tile
    * @param {string} actionId
@@ -360,7 +381,10 @@ export function renderGallery(
     if (!result || typeof result.then !== 'function') return;
     setActionState(itemId, actionId, { state: 'busy' });
     result.then(
-      () => setActionState(itemId, actionId, null),
+      () => {
+        const ms = action.cooldownMs ?? 0;
+        setActionState(itemId, actionId, ms > 0 ? { state: 'cooling', until: Date.now() + ms } : null);
+      },
       (err) => {
         setActionState(itemId, actionId, { state: 'failed', reason: err instanceof Error ? err.message : String(err) });
         report(err);
@@ -953,6 +977,8 @@ export function renderGallery(
     offImages();
     offErrors();
     actionListeners.delete(redrawAction);
+    for (const timer of cooldowns.values()) win.clearTimeout(timer);
+    cooldowns.clear();
     endPopover();
     for (const tile of tiles.values()) dropTile(tile);
     tiles = new Map();

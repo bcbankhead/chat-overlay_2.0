@@ -1,43 +1,57 @@
-// The composer's extension point (TDF-0043): stageAttachment, which hands a file to the message
-// box as its waiting attachment, exactly as a drop does. attach.js installs the one stager while
-// the box is mounted. A module-level registry, independent of feature import order: build.mjs
-// emits one bundle, so every feature sees the same one. Other slices import from this file,
-// never from the composer's other modules.
-
-/** The reason nothing could be staged: the box is not mounted, or the root theme is not yet. */
-export const COMPOSER_NOT_READY = 'The chat input box is not ready for an attachment';
+// The composer's extension point (TDF-0062): uploadAttachment with whisperTo, which post a file
+// at once through the box's own upload route and whisper rule. attach.js installs the one
+// uploader while the box is mounted. A module-level registry, independent of feature import
+// order: build.mjs emits one bundle, so every feature sees the same one. Other slices import from
+// this file, never from the composer's other modules.
 
 /**
- * Stages a file as the box's waiting attachment: a refusal reason, or null when it is staged.
- * `onDiscard` runs once if the staged file is then dropped unposted: removed with its ×, or
- * replaced by another attachment. A post, or a refusal, never runs it.
- * @typedef {(file: File, onDiscard?: () => void) => string | null} Stager
+ * The reason a file could not be attached or uploaded: the box is not mounted, or the root theme
+ * is not yet.
  */
-
-/** @type {Stager | null} installed by attach.js while the box is mounted */
-let stager = null;
+export const COMPOSER_NOT_READY = 'The chat input box is not ready';
 
 /**
- * Called by the composer's attach on install; stageAttachment reaches it until the returned
- * function runs.
- * @param {Stager} fn
- * @returns {() => void} uninstall, which clears only a stager still current
+ * The composer's own upload route and whisper rule (TDF-0062), lent to a feature that posts a
+ * file at once rather than staging it.
+ * @typedef {object} Uploader
+ * @property {() => string} whisperTo  the user being whispered to, or '' for the room
+ * @property {(file: File, toUser: string) => Promise<void>} upload  posts the file privately to toUser when given, else to the room; rejects with the reason
  */
-export function installStager(fn) {
-  stager = fn;
+
+/** @type {Uploader | null} installed by attach.js while the box is mounted */
+let uploader = null;
+
+/**
+ * Called by the composer's attach on install; whisperTo and uploadAttachment reach it until the
+ * returned function runs.
+ * @param {Uploader} next
+ * @returns {() => void} uninstall, which clears only an uploader still current
+ */
+export function installUploader(next) {
+  uploader = next;
   return () => {
-    if (stager === fn) stager = null;
+    if (uploader === next) uploader = null;
   };
 }
 
 /**
- * Put a file in the message box as the waiting attachment, replacing any waiting one. Posting
- * it is left to the member's Enter or Send.
- * @param {File} file
- * @param {() => void} [onDiscard]  run once if the file is dropped unposted (see Stager)
- * @returns {string | null} why it was not staged, or null when it was
+ * Who a post made now would go to: the whispered user, or '' for the room; null while the box is
+ * not mounted, meaning not ready (a post is refused with COMPOSER_NOT_READY rather than sent to
+ * the room). Read it before any await, so a whisper changed mid-fetch does not redirect it.
+ * @returns {string | null}
  */
-export function stageAttachment(file, onDiscard) {
-  if (!stager) return COMPOSER_NOT_READY;
-  return stager(file, onDiscard);
+export function whisperTo() {
+  return uploader ? uploader.whisperTo() : null;
+}
+
+/**
+ * Post a file at once through the composer's upload route, privately to `toUser` when given,
+ * otherwise to the room. Nothing is staged in the box.
+ * @param {File} file
+ * @param {string} toUser
+ * @returns {Promise<void>} rejects with the reason, or COMPOSER_NOT_READY while the box is not mounted
+ */
+export async function uploadAttachment(file, toUser) {
+  if (!uploader) throw new Error(COMPOSER_NOT_READY);
+  await uploader.upload(file, toUser);
 }

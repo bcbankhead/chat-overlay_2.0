@@ -12,12 +12,12 @@
 // Until the root theme mounts, composer.css hides the thumbnail, so nothing attaches and Enter
 // and Send reach the engine as before. A file that cannot attach says why on the hint line.
 //
-// The same attach is installed as the composer's stager (api.js), so another feature can hand
-// the box a file — the gallery's Re-post (TDF-0043) — under the same rules as a drop.
+// The upload route and whisper rule are installed as the composer's uploader (api.js), so the
+// gallery's Re-post (TDF-0062) posts a file at once.
 
 import { describeError } from '../../core/errors.js';
 import { MAIN_DIV } from '../../core/parse.js';
-import { COMPOSER_NOT_READY, installStager } from './api.js';
+import { COMPOSER_NOT_READY, installUploader } from './api.js';
 import { uploadShare } from './share.js';
 import { whisperTarget } from './whisper.js';
 
@@ -74,7 +74,7 @@ export function installAttach(bar, host) {
 
   host.append(input, icon, thumb, hint);
 
-  /** @type {{ file: File, url: string, busy: boolean, onDiscard?: () => void } | null} */
+  /** @type {{ file: File, url: string, busy: boolean } | null} */
   let pending = null;
 
   const place = () => {
@@ -115,30 +115,26 @@ export function installAttach(bar, host) {
     video.load();
   };
 
-  /** Say why on the hint line, and hand the reason back. @param {string} reason */
-  const refused = (reason) => {
-    refuse(reason);
-    return reason;
-  };
-
   /**
    * Make a file the waiting attachment, replacing any waiting one.
    * @param {File | null | undefined} file
-   * @param {() => void} [onDiscard]  run once if this file is then removed or replaced unposted
-   * @returns {string | null} why it did not attach, or null when it did
    */
-  const attach = (file, onDiscard) => {
+  const attach = (file) => {
     // Unthemed, the thumbnail and the hint are hidden (composer.css): nothing to draw on.
-    if (!themed()) return COMPOSER_NOT_READY;
+    if (!themed()) return;
     // A file chooser closed without a choice: nothing was asked for, so the hint stays as it is.
-    if (!file) return 'No file to attach';
-    if (!ADMITTED.test(file.type)) return refused(`Only images and videos can be attached: ${file.name}`);
-    if (pending?.busy) return refused('A file is still uploading');
-    const replaced = pending;
-    if (replaced) revoke(replaced.url);
+    if (!file) return;
+    if (!ADMITTED.test(file.type)) {
+      refuse(`Only images and videos can be attached: ${file.name}`);
+      return;
+    }
+    if (pending?.busy) {
+      refuse('A file is still uploading');
+      return;
+    }
+    if (pending) revoke(pending.url);
     const url = typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : '';
-    pending = { file, url, busy: false, onDiscard };
-    replaced?.onDiscard?.();
+    pending = { file, url, busy: false };
     const isVideo = /^video\//.test(file.type);
     // The preview not in use drops its source, so no stale image or video lingers behind it.
     if (isVideo) {
@@ -156,9 +152,24 @@ export function installAttach(bar, host) {
     bar.classList.add('tdf-attach-has');
     place();
     bar.focus();
-    return null;
   };
-  installStager(attach);
+
+  // An uploader (Re-post) upload is in flight. One upload at a time, the box's own or an
+  // uploader's: each refuses while another is running.
+  let lending = false;
+  installUploader({
+    whisperTo: () => whisperTarget(document),
+    upload: async (file, toUser) => {
+      if (!themed()) throw new Error(COMPOSER_NOT_READY);
+      if (pending?.busy || lending) throw new Error('A file is still uploading');
+      lending = true;
+      try {
+        await uploadShare(file, toUser);
+      } finally {
+        lending = false;
+      }
+    },
+  });
 
   const clear = () => {
     if (pending) revoke(pending.url);
@@ -180,6 +191,10 @@ export function installAttach(bar, host) {
 
   const post = async () => {
     if (!pending || pending.busy) return;
+    if (lending) {
+      refuse('A file is still uploading');
+      return;
+    }
     const current = pending;
     current.busy = true;
     thumb.classList.remove('tdf-attach-failed');
@@ -206,9 +221,7 @@ export function installAttach(bar, host) {
   });
   remove.addEventListener('click', () => {
     if (pending?.busy) return;
-    const removed = pending;
     clear();
-    removed?.onDiscard?.();
     bar.focus();
   });
 

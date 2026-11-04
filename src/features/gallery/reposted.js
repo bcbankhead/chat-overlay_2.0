@@ -4,9 +4,9 @@
 // sent bytes, not the stored record: a compressed stored copy (TDF-0036) hashes differently from
 // the record's own hash, which is why the content-hash dedupe (TDF-0009.13) missed it. Entries
 // are counted per hash, so re-posting one tile twice registers twice; a match consumes one.
-// Re-post withdraws its own registration when the staged attachment is refused, removed or
-// replaced unposted, so an entry is outstanding only while its attachment waits in the box, or
-// once posted, until capture takes it.
+// Re-post registers before its upload and withdraws the registration when the upload is
+// rejected (TDF-0062), so an entry is outstanding only while its upload is in flight, or once
+// posted, until capture takes it.
 // Held in memory only: nothing survives a reload.
 
 /**
