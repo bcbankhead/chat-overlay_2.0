@@ -38,7 +38,7 @@ Key features,
     - save all user attachments in the local gallery including your own
     - gallery will be a flyout from the right, but will always show the top 3 images in an overlapping slide format
     - clicking a tile opens the in-chat media popover (with `Use media quickview` on, the default) or the image in a new tab (with it off); an unavailable image retries instead of opening
-    - each tile has a `Re-post` button in its lower-right corner that puts the image in the chat input box as the waiting attachment, replacing any file already waiting, and closes the gallery without opening the tile; it posts on Enter or Send, privately to the whispered user while whispering, otherwise to the room; it is disabled for an unavailable image (TDF-0038, TDF-0043)
+    - each tile has a `Re-post` button in its lower-right corner that posts the image at the click, without opening the tile or closing the gallery, privately to the whispered user while whispering, otherwise to the room; after a successful post it is unavailable for 5 seconds; it is disabled for an unavailable image (TDF-0038, TDF-0043, TDF-0062)
     - with `Compress stored images` on (off by default), stored full copies are re-encoded as smaller JPEGs at their own dimensions, new and already-stored alike; GIFs and transparent images are kept as they are, except that an image whose pixels the browser will not let be read is flattened onto white and re-encoded
     - mark for deletion
     - delete button at bottom (stick bottom control)

@@ -8,7 +8,7 @@ import * as esbuild from 'esbuild';
 import { fileURLToPath } from 'node:url';
 import { adapt, THEME_BG } from '../../core/ink.js';
 import { MESSAGE_BOX_ID, openLightbox } from '../gallery/lightbox.js';
-import { COMPOSER_NOT_READY, installStager, stageAttachment } from './api.js';
+import { COMPOSER_NOT_READY, installUploader, uploadAttachment, whisperTo } from './api.js';
 import { OPEN_MENU } from './refocus.js';
 import { whisperTarget } from './whisper.js';
 
@@ -33,8 +33,8 @@ before(async () => {
         "import { mount } from '../../core/shell.js';",
         "import { BAR } from './index.js';",
         "import { openSmileyPicker } from './smilies.js';",
-        "import { COMPOSER_NOT_READY, stageAttachment } from './api.js';",
-        'window.__test = { mount, openSmileyPicker, BAR, stageAttachment, COMPOSER_NOT_READY };',
+        "import { COMPOSER_NOT_READY, uploadAttachment, whisperTo } from './api.js';",
+        'window.__test = { mount, openSmileyPicker, BAR, uploadAttachment, whisperTo, COMPOSER_NOT_READY };',
       ].join('\n'),
       resolveDir: here,
       sourcefile: 'harness.js',
@@ -1486,22 +1486,19 @@ test('closing the popover on a touch screen does not refocus the box', async () 
   assert.ok(document.activeElement === opener);
 });
 
-// The stager (TDF-0043): another feature hands the box a file through api.js stageAttachment.
-
-test('a staged file waits as the thumbnail, focused in the box, and nothing uploads until Enter', async () => {
+test('a dropped file waits as the thumbnail, focused in the box, and nothing uploads until Enter', async () => {
   const { window, document, bar, state, win } = page();
   const calls = stubShare(win);
   const other = document.createElement('input');
   document.body.appendChild(other);
   other.focus();
   const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
-  assert.equal(win.__test.stageAttachment(new window.File(['x'], 'cat.png', { type: 'image/png' })), null);
+  drop(window, bar, new window.File(['x'], 'cat.png', { type: 'image/png' }));
   assert.equal(thumb.hidden, false);
   assert.equal(thumb.title, 'cat.png');
-  assert.equal(bar.classList.contains('tdf-attach-has'), true);
   assert.equal(document.activeElement, bar, 'focus moves to the box');
   await settle();
-  assert.deepEqual(calls, [], 'nothing is uploaded at staging');
+  assert.deepEqual(calls, [], 'nothing is uploaded at the drop');
   bar.value = 'look';
   enter(window, bar, false);
   await settle();
@@ -1511,17 +1508,10 @@ test('a staged file waits as the thumbnail, focused in the box, and nothing uplo
   assert.equal(state.clicks, 1, 'the text goes through the engine Send');
 });
 
-test('a staged file replaces one already waiting', () => {
+test('a dropped file follows the whisper in force at send, not at the drop', async () => {
   const { window, document, bar, win } = page();
-  drop(window, bar, new window.File(['x'], 'first.png', { type: 'image/png' }));
-  assert.equal(win.__test.stageAttachment(new window.File(['y'], 'second.png', { type: 'image/png' })), null);
-  assert.equal(/** @type {any} */ (document.querySelector('.tdf-attach-thumb')).title, 'second.png');
-});
-
-test('a staged file follows the whisper in force at send, not at staging', async () => {
-  const { window, document, win } = page();
   const calls = stubShare(win);
-  win.__test.stageAttachment(new window.File(['x'], 'cat.png', { type: 'image/png' }));
+  drop(window, bar, new window.File(['x'], 'cat.png', { type: 'image/png' }));
   win.whisperUser('Alice');
   /** @type {any} */ (document.getElementById('optionsSend')).click();
   await settle();
@@ -1530,50 +1520,110 @@ test('a staged file follows the whisper in force at send, not at staging', async
   assert.equal(calls[1].body.get('shareWithUser'), 'Alice');
 });
 
-test('a staged file the box refuses returns the reason and shows it on the hint line', async () => {
-  const { window, document, bar, win } = page();
-  const hint = /** @type {any} */ (document.querySelector('.tdf-attach-hint'));
-  const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
-  assert.equal(win.__test.stageAttachment(new window.File(['x'], 'notes.txt', { type: 'text/plain' })), 'Only images and videos can be attached: notes.txt');
-  assert.equal(hint.textContent, 'Only images and videos can be attached: notes.txt');
-  assert.equal(hint.classList.contains('tdf-attach-refused'), true);
-  assert.equal(thumb.hidden, true);
-
-  win.fetch = () => new Promise(() => {});
-  drop(window, bar, new window.File(['x'], 'cat.png', { type: 'image/png' }));
-  enter(window, bar, false);
-  await settle();
-  assert.equal(win.__test.stageAttachment(new window.File(['y'], 'other.png', { type: 'image/png' })), 'A file is still uploading');
-  assert.equal(hint.textContent, 'A file is still uploading');
-  assert.equal(thumb.title, 'cat.png', 'the uploading file is kept');
-});
-
-test('before the theme mounts a staged file is refused as not ready, and nothing is drawn', () => {
-  const { window, document, win } = page({ theme: null });
-  const reason = win.__test.stageAttachment(new window.File(['x'], 'cat.png', { type: 'image/png' }));
-  assert.equal(reason, win.__test.COMPOSER_NOT_READY);
-  assert.equal(reason, 'The chat input box is not ready for an attachment');
+test('before the theme mounts a chosen file attaches nothing and says nothing', () => {
+  const { window, document } = page({ theme: null });
+  const input = /** @type {any} */ (document.querySelector('input[type=file]'));
+  Object.defineProperty(input, 'files', { value: [new window.File(['x'], 'pick.png', { type: 'image/png' })] });
+  input.dispatchEvent(new window.Event('change'));
   assert.equal(/** @type {any} */ (document.querySelector('.tdf-attach-thumb')).hidden, true);
   assert.equal(document.querySelector('.tdf-attach-hint')?.classList.contains('tdf-attach-refused'), false);
 });
 
-test('without the chat the box installs no stager, and staging is refused as not ready', () => {
-  const { window, win } = page({ chat: false });
-  assert.equal(win.__test.stageAttachment(new window.File(['x'], 'cat.png', { type: 'image/png' })), win.__test.COMPOSER_NOT_READY);
+// The uploader (TDF-0062): another feature posts a file at once through api.js uploadAttachment,
+// to the target api.js whisperTo reads, without staging it in the box.
+
+test('uploadAttachment posts a file to the room at once through the share route; nothing is staged or sent', async () => {
+  const { window, document, bar, state, win } = page();
+  const calls = stubShare(win);
+  assert.equal(win.__test.whisperTo(), '', 'the room while not whispering');
+  bar.value = 'draft';
+  await win.__test.uploadAttachment(new window.File(['x'], 'cat.png', { type: 'image/png' }), win.__test.whisperTo());
+  assert.deepEqual(calls.map((c) => c.method), ['GET', 'POST']);
+  assert.match(calls[0].url, /\/forum\/chat\/plugins\/share\/$/);
+  assert.equal(calls[1].body.get('shareID'), '1');
+  assert.equal(calls[1].body.get('shareWithUser'), '');
+  assert.equal(calls[1].body.get('uploadedfile').name, 'cat.png');
+  assert.equal(/** @type {any} */ (document.querySelector('.tdf-attach-thumb')).hidden, true, 'no thumbnail');
+  assert.equal(bar.classList.contains('tdf-attach-has'), false);
+  assert.equal(bar.value, 'draft', 'the typed text is left alone');
+  assert.equal(state.clicks, 0);
+  assert.equal(state.sent, 0);
 });
 
-test('a stager uninstalled after another replaced it leaves the newer one installed', () => {
+test('whisperTo reads the whispered user, and uploadAttachment sends privately to the user it is given', async () => {
+  const { window, win } = page();
+  const calls = stubShare(win);
+  win.whisperUser('Alice');
+  const toUser = win.__test.whisperTo();
+  assert.equal(toUser, 'Alice');
+  await win.__test.uploadAttachment(new window.File(['x'], 'cat.png', { type: 'image/png' }), toUser);
+  assert.match(calls[0].url, /shareWithUser=Alice$/);
+  assert.equal(calls[1].body.get('shareID'), '2');
+  assert.equal(calls[1].body.get('shareWithUser'), 'Alice');
+});
+
+test('a failed uploadAttachment rejects with the reason and leaves the box as it was', async () => {
+  const { window, document, win } = page();
+  stubShare(win, { postBody: 'no access<div></div>' });
+  await assert.rejects(
+    win.__test.uploadAttachment(new window.File(['x'], 'cat.png', { type: 'image/png' }), ''),
+    { message: 'Upload refused: not signed in to the chat' },
+  );
+  assert.equal(/** @type {any} */ (document.querySelector('.tdf-attach-thumb')).hidden, true);
+});
+
+test('without the chat the box installs no uploader: whisperTo is the room and uploadAttachment is refused as not ready', async () => {
+  const { window, win } = page({ chat: false });
+  assert.equal(win.__test.whisperTo(), '');
+  await assert.rejects(
+    win.__test.uploadAttachment(new window.File(['x'], 'cat.png', { type: 'image/png' }), ''),
+    { message: win.__test.COMPOSER_NOT_READY },
+  );
+});
+
+test('before the theme mounts uploadAttachment is refused as not ready, and nothing is posted', async () => {
+  const { window, win } = page({ theme: null });
+  const calls = stubShare(win);
+  await assert.rejects(
+    win.__test.uploadAttachment(new window.File(['x'], 'cat.png', { type: 'image/png' }), ''),
+    { message: win.__test.COMPOSER_NOT_READY },
+  );
+  assert.deepEqual(calls, []);
+});
+
+test('while the box is uploading its own file uploadAttachment is refused, and nothing more is posted', async () => {
+  const { window, document, bar, win } = page();
+  let posts = 0;
+  win.fetch = async (/** @type {any} */ _url, /** @type {any} */ init = {}) => {
+    if (init.method !== 'POST') return new win.Response(FORM);
+    posts += 1;
+    return new Promise(() => {});
+  };
+  drop(window, bar, new window.File(['x'], 'cat.png', { type: 'image/png' }));
+  enter(window, bar, false);
+  await settle();
+  await assert.rejects(
+    win.__test.uploadAttachment(new window.File(['y'], 'other.png', { type: 'image/png' }), ''),
+    { message: 'A file is still uploading' },
+  );
+  assert.equal(posts, 1);
+  assert.equal(/** @type {any} */ (document.querySelector('.tdf-attach-thumb')).title, 'cat.png');
+});
+
+test('an uploader uninstalled after another replaced it leaves the newer one installed', async () => {
   /** @type {string[]} */
   const seen = [];
   const file = /** @type {File} */ (/** @type {unknown} */ ({ name: 'x.png', type: 'image/png' }));
-  const offOld = installStager(() => (seen.push('old'), null));
-  const offNew = installStager(() => (seen.push('new'), 'refused'));
+  const offOld = installUploader({ whisperTo: () => 'old', upload: async () => void seen.push('old') });
+  const offNew = installUploader({ whisperTo: () => 'new', upload: async (_f, toUser) => void seen.push(`new:${toUser}`) });
   offOld();
-  assert.equal(stageAttachment(file), 'refused', 'the stale uninstall did not clear the current stager');
+  assert.equal(whisperTo(), 'new', 'the stale uninstall did not clear the current uploader');
+  await uploadAttachment(file, 'Bob');
   offNew();
-  assert.equal(stageAttachment(file), COMPOSER_NOT_READY);
+  assert.equal(whisperTo(), '');
+  await assert.rejects(uploadAttachment(file, ''), { message: COMPOSER_NOT_READY });
   offNew();
-  assert.deepEqual(seen, ['new']);
+  assert.deepEqual(seen, ['new:Bob']);
 });
 
 test('a file chooser closed with no file attaches nothing and says nothing', () => {

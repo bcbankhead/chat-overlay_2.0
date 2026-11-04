@@ -12,12 +12,12 @@
 // Until the root theme mounts, composer.css hides the thumbnail, so nothing attaches and Enter
 // and Send reach the engine as before. A file that cannot attach says why on the hint line.
 //
-// The same attach is installed as the composer's stager (api.js), so another feature can hand
-// the box a file — the gallery's Re-post (TDF-0043) — under the same rules as a drop.
+// The upload route and whisper rule are installed as the composer's uploader (api.js), so the
+// gallery's Re-post (TDF-0062) posts a file at once.
 
 import { describeError } from '../../core/errors.js';
 import { MAIN_DIV } from '../../core/parse.js';
-import { COMPOSER_NOT_READY, installStager } from './api.js';
+import { COMPOSER_NOT_READY, installUploader } from './api.js';
 import { uploadShare } from './share.js';
 import { whisperTarget } from './whisper.js';
 
@@ -155,7 +155,14 @@ export function installAttach(bar, host) {
     bar.focus();
     return null;
   };
-  installStager(attach);
+  installUploader({
+    whisperTo: () => whisperTarget(document),
+    upload: async (file, toUser) => {
+      if (!themed()) throw new Error(COMPOSER_NOT_READY);
+      if (pending?.busy) throw new Error('A file is still uploading');
+      await uploadShare(file, toUser);
+    },
+  });
 
   const clear = () => {
     if (pending) revoke(pending.url);

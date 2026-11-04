@@ -4,15 +4,15 @@
 // joins every user's menu, opening the flyout filtered to that sender. With Compress stored
 // images on, originals stored before are compressed in the background once the database opens,
 // and again from the moment the setting is switched on (TDF-0036). Each tile carries Re-post
-// (TDF-0038, TDF-0043), which puts its image in the chat input box, reached only through the
-// composer's api.js.
+// (TDF-0038, TDF-0062), which posts its image at once through the composer's upload route and
+// whisper rule, reached only through the composer's api.js.
 
 import { openDb } from '../../core/db.js';
 import { onInbound, onLiked } from '../../core/events.js';
 import { createHistory } from '../../core/history.js';
 import { createSettings, followSetting, onSettingChange } from '../../core/settings.js';
 import { registerRailPanel, registerUserMenuAction } from '../rail/api.js';
-import { stageAttachment } from '../composer/api.js';
+import { uploadAttachment, whisperTo } from '../composer/api.js';
 import { registerGalleryItemAction } from './api.js';
 import { startCapture } from './capture.js';
 import { fetchShare } from './fetchShare.js';
@@ -88,17 +88,13 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
     doc.head.appendChild(style);
   }
 
-  /** @type {object | null} */
-  let view = null;
   const panel = registerRailPanel({
     id: 'gallery',
     title: 'Gallery',
     icon: GALLERY_ICON,
     order: 10,
-    render: (container, arg) => {
-      const current = {};
-      view = current;
-      const cleanup = renderGallery(container, arg, {
+    render: (container, arg) =>
+      renderGallery(container, arg, {
         doc,
         win,
         store: storeReady,
@@ -108,22 +104,16 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
         quickview,
         includeMine,
         self,
-      });
-      return () => {
-        if (view === current) view = null;
-        if (typeof cleanup === 'function') cleanup();
-      };
-    },
+      }),
   });
 
-  // Re-post (TDF-0043): stages the tile's image in the chat input box, then closes the flyout.
+  // Re-post (TDF-0062): posts the tile's image at once, then cools down; the flyout stays open.
   registerGalleryItemAction(
     createRepostAction({
-      stage: (file) => stageAttachment(file),
+      upload: (file, toUser) => uploadAttachment(file, toUser),
+      whisperTo: () => whisperTo(),
       fetchShare: (id) => fetchShare(id, { base: win.location.href, fetch }),
       isUnavailable,
-      closeGallery: () => panel.close(),
-      galleryView: () => view,
     }),
   );
 
