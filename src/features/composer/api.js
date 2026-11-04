@@ -9,7 +9,9 @@ export const COMPOSER_NOT_READY = 'The chat input box is not ready for an attach
 
 /**
  * Stages a file as the box's waiting attachment: a refusal reason, or null when it is staged.
- * @typedef {(file: File) => string | null} Stager
+ * `onDiscard` runs once if the staged file is then dropped unposted: removed with its ×, or
+ * replaced by another attachment. A post, or a refusal, never runs it.
+ * @typedef {(file: File, onDiscard?: () => void) => string | null} Stager
  */
 
 /** @type {Stager | null} installed by attach.js while the box is mounted */
@@ -32,9 +34,10 @@ export function installStager(fn) {
  * Put a file in the message box as the waiting attachment, replacing any waiting one. Posting
  * it is left to the member's Enter or Send.
  * @param {File} file
+ * @param {() => void} [onDiscard]  run once if the file is dropped unposted (see Stager)
  * @returns {string | null} why it was not staged, or null when it was
  */
-export function stageAttachment(file) {
+export function stageAttachment(file, onDiscard) {
   if (!stager) return COMPOSER_NOT_READY;
-  return stager(file);
+  return stager(file, onDiscard);
 }
