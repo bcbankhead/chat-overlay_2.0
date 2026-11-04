@@ -509,6 +509,22 @@ test('registrations are validated', () => {
   assert.deepEqual(listGalleryItemActions(), []);
 });
 
+test('an action cooldownMs that is not a finite, non-negative number is refused, naming the field and value', () => {
+  for (const [bad, shown] of /** @type {[unknown, string][]} */ ([['5000', '"5000"'], [NaN, 'NaN'], [-1, '-1'], [Infinity, 'Infinity']])) {
+    assert.throws(
+      () => registerGalleryItemAction(/** @type {any} */ ({ id: 'cd', label: 'x', cooldownMs: bad, onSelect() {} })),
+      (err) => err instanceof TypeError && err.message.includes('cooldownMs') && err.message.includes(shown),
+    );
+  }
+  assert.deepEqual(listGalleryItemActions(), []);
+  for (const ok of [0, 5000]) {
+    const off = registerGalleryItemAction({ id: 'cd', label: 'x', cooldownMs: ok, onSelect() {} });
+    assert.equal(listGalleryItemActions()[0].cooldownMs, ok);
+    off();
+  }
+  assert.deepEqual(listGalleryItemActions(), []);
+});
+
 test('a stored thumbnail renders as an img whose URL is revoked when its tile goes, and on close', async () => {
   const g = await open();
   /** @type {string[]} */

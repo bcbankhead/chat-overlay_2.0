@@ -115,24 +115,23 @@ export function installAttach(bar, host) {
     video.load();
   };
 
-  /** Say why on the hint line, and hand the reason back. @param {string} reason */
-  const refused = (reason) => {
-    refuse(reason);
-    return reason;
-  };
-
   /**
    * Make a file the waiting attachment, replacing any waiting one.
    * @param {File | null | undefined} file
-   * @returns {string | null} why it did not attach, or null when it did
    */
   const attach = (file) => {
     // Unthemed, the thumbnail and the hint are hidden (composer.css): nothing to draw on.
-    if (!themed()) return COMPOSER_NOT_READY;
+    if (!themed()) return;
     // A file chooser closed without a choice: nothing was asked for, so the hint stays as it is.
-    if (!file) return 'No file to attach';
-    if (!ADMITTED.test(file.type)) return refused(`Only images and videos can be attached: ${file.name}`);
-    if (pending?.busy) return refused('A file is still uploading');
+    if (!file) return;
+    if (!ADMITTED.test(file.type)) {
+      refuse(`Only images and videos can be attached: ${file.name}`);
+      return;
+    }
+    if (pending?.busy) {
+      refuse('A file is still uploading');
+      return;
+    }
     if (pending) revoke(pending.url);
     const url = typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : '';
     pending = { file, url, busy: false };
@@ -153,14 +152,22 @@ export function installAttach(bar, host) {
     bar.classList.add('tdf-attach-has');
     place();
     bar.focus();
-    return null;
   };
+
+  // An uploader (Re-post) upload is in flight. One upload at a time, the box's own or an
+  // uploader's: each refuses while another is running.
+  let lending = false;
   installUploader({
     whisperTo: () => whisperTarget(document),
     upload: async (file, toUser) => {
       if (!themed()) throw new Error(COMPOSER_NOT_READY);
-      if (pending?.busy) throw new Error('A file is still uploading');
-      await uploadShare(file, toUser);
+      if (pending?.busy || lending) throw new Error('A file is still uploading');
+      lending = true;
+      try {
+        await uploadShare(file, toUser);
+      } finally {
+        lending = false;
+      }
     },
   });
 
@@ -184,6 +191,10 @@ export function installAttach(bar, host) {
 
   const post = async () => {
     if (!pending || pending.busy) return;
+    if (lending) {
+      refuse('A file is still uploading');
+      return;
+    }
     const current = pending;
     current.busy = true;
     thumb.classList.remove('tdf-attach-failed');

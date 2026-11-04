@@ -46,6 +46,11 @@ function notify() {
 export function registerGalleryItemAction(action) {
   if (!action || typeof action.id !== 'string' || !action.id) throw new TypeError('gallery item action needs a string id');
   if (typeof action.onSelect !== 'function') throw new TypeError('gallery item action needs an onSelect function');
+  const { cooldownMs } = action;
+  if (cooldownMs !== undefined && (typeof cooldownMs !== 'number' || !Number.isFinite(cooldownMs) || cooldownMs < 0)) {
+    const shown = typeof cooldownMs === 'string' ? JSON.stringify(cooldownMs) : String(cooldownMs);
+    throw new TypeError(`gallery item action cooldownMs must be a finite, non-negative number, got ${shown}`);
+  }
   actions.set(action.id, action);
   notify();
   return () => {

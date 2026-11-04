@@ -1572,9 +1572,9 @@ test('a failed uploadAttachment rejects with the reason and leaves the box as it
   assert.equal(/** @type {any} */ (document.querySelector('.tdf-attach-thumb')).hidden, true);
 });
 
-test('without the chat the box installs no uploader: whisperTo is the room and uploadAttachment is refused as not ready', async () => {
+test('without the chat the box installs no uploader: whisperTo is not ready (null) and uploadAttachment is refused as not ready', async () => {
   const { window, win } = page({ chat: false });
-  assert.equal(win.__test.whisperTo(), '');
+  assert.equal(win.__test.whisperTo(), null);
   await assert.rejects(
     win.__test.uploadAttachment(new window.File(['x'], 'cat.png', { type: 'image/png' }), ''),
     { message: win.__test.COMPOSER_NOT_READY },
@@ -1610,6 +1610,54 @@ test('while the box is uploading its own file uploadAttachment is refused, and n
   assert.equal(/** @type {any} */ (document.querySelector('.tdf-attach-thumb')).title, 'cat.png');
 });
 
+test("while an uploadAttachment is in flight, a second one and the box's own Enter are refused", async () => {
+  const { window, document, bar, win } = page();
+  /** @type {(value: any) => void} */
+  let release = () => {};
+  let posts = 0;
+  win.fetch = async (/** @type {any} */ _url, /** @type {any} */ init = {}) => {
+    if (init.method !== 'POST') return new win.Response(FORM);
+    posts += 1;
+    await new Promise((r) => (release = r));
+    return new win.Response('ok');
+  };
+  const first = win.__test.uploadAttachment(new window.File(['x'], 'cat.png', { type: 'image/png' }), '');
+  await settle();
+  assert.equal(posts, 1);
+  await assert.rejects(
+    win.__test.uploadAttachment(new window.File(['y'], 'other.png', { type: 'image/png' }), ''),
+    { message: 'A file is still uploading' },
+  );
+  drop(window, bar, new window.File(['z'], 'mine.png', { type: 'image/png' }));
+  const thumb = /** @type {any} */ (document.querySelector('.tdf-attach-thumb'));
+  const hint = /** @type {any} */ (document.querySelector('.tdf-attach-hint'));
+  enter(window, bar, false);
+  await settle();
+  assert.equal(posts, 1, 'the box did not post its own file');
+  assert.equal(hint.textContent, 'A file is still uploading');
+  assert.equal(hint.classList.contains('tdf-attach-refused'), true);
+  assert.equal(thumb.hidden, false, 'its file still waits');
+  assert.equal(thumb.classList.contains('tdf-attach-busy'), false);
+  release(undefined);
+  await first;
+  // Released: the box's own post goes ahead.
+  enter(window, bar, false);
+  await settle();
+  assert.equal(posts, 2);
+  release(undefined);
+  await settle();
+  assert.equal(thumb.hidden, true);
+});
+
+test('a failed uploadAttachment releases the in-flight guard, so the next upload goes ahead', async () => {
+  const { window, win } = page();
+  stubShare(win, { postBody: 'no access<div></div>' });
+  await assert.rejects(win.__test.uploadAttachment(new window.File(['x'], 'cat.png', { type: 'image/png' }), ''));
+  const calls = stubShare(win);
+  await win.__test.uploadAttachment(new window.File(['y'], 'other.png', { type: 'image/png' }), '');
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 1);
+});
+
 test('an uploader uninstalled after another replaced it leaves the newer one installed', async () => {
   /** @type {string[]} */
   const seen = [];
@@ -1620,7 +1668,7 @@ test('an uploader uninstalled after another replaced it leaves the newer one ins
   assert.equal(whisperTo(), 'new', 'the stale uninstall did not clear the current uploader');
   await uploadAttachment(file, 'Bob');
   offNew();
-  assert.equal(whisperTo(), '');
+  assert.equal(whisperTo(), null, 'not ready, never the room');
   await assert.rejects(uploadAttachment(file, ''), { message: COMPOSER_NOT_READY });
   offNew();
   assert.deepEqual(seen, ['new:Bob']);

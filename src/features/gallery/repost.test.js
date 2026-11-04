@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { COMPOSER_NOT_READY } from '../composer/api.js';
 import * as repost from './repost.js';
 import { POST_UNAVAILABLE, createRepostAction, extensionFor } from './repost.js';
 import { createRepostLedger } from './reposted.js';
@@ -11,7 +12,7 @@ const item = (over = {}) => ({ id: '100000000000001', contentType: 'image/png', 
 const fakeHash = async (/** @type {Blob} */ blob) => `h${blob.size}:${new Uint8Array(await blob.arrayBuffer())[0] ?? ''}`;
 
 /**
- * @param {{ refuse?: string, fetchFails?: string, unavailable?: boolean, whisper?: string, hashFails?: boolean }} [opts]
+ * @param {{ refuse?: string, fetchFails?: string, unavailable?: boolean, whisper?: string | null, hashFails?: boolean }} [opts]
  */
 function setup({ refuse, fetchFails, unavailable = false, whisper = '', hashFails = false } = {}) {
   const ledger = createRepostLedger();
@@ -23,6 +24,7 @@ function setup({ refuse, fetchFails, unavailable = false, whisper = '', hashFail
   const fetched = [];
   /** @type {string[]} */
   const events = [];
+  /** @type {{ current: string | null }} */
   const target = { current: whisper };
   /** @type {(() => void) | null} */
   let releaseFetch = null;
@@ -107,6 +109,21 @@ test('the whisper target is read at the click, before the fetch: a change mid-fe
     assert.equal(g.uploaded.length, 1);
     assert.equal(g.uploaded[0].toUser, before);
   }
+});
+
+test('while the composer is not ready, Re-post is refused at the click, before any fetch or hash', async () => {
+  const g = setup({ whisper: null });
+  await assert.rejects(g.action.onSelect(item()), { message: COMPOSER_NOT_READY });
+  assert.deepEqual(g.events, ['whisperTo'], 'nothing fetched or uploaded');
+  assert.deepEqual(g.fetched, []);
+  assert.deepEqual(g.uploaded, []);
+  assert.deepEqual(g.errors, []);
+  // Not ready at the click stays refused even if the composer would be ready by the upload.
+  const s = setup({ whisper: null });
+  const pending = s.action.onSelect(item({ blob: png() }));
+  s.target.current = 'Bob';
+  await assert.rejects(pending, { message: COMPOSER_NOT_READY });
+  assert.deepEqual(s.uploaded, []);
 });
 
 test('a repeat call uploads the image again (the cooldown is view.js\'s)', async () => {

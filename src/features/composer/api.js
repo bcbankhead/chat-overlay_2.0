@@ -35,12 +35,13 @@ export function installUploader(next) {
 }
 
 /**
- * Who a post made now would go to: the whispered user, or '' for the room (and while the box is
- * not mounted). Read it before any await, so a whisper changed mid-fetch does not redirect it.
- * @returns {string}
+ * Who a post made now would go to: the whispered user, or '' for the room; null while the box is
+ * not mounted, meaning not ready (a post is refused with COMPOSER_NOT_READY rather than sent to
+ * the room). Read it before any await, so a whisper changed mid-fetch does not redirect it.
+ * @returns {string | null}
  */
 export function whisperTo() {
-  return uploader ? uploader.whisperTo() : '';
+  return uploader ? uploader.whisperTo() : null;
 }
 
 /**

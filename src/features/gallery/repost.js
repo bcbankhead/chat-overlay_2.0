@@ -1,15 +1,16 @@
 // Re-post (TDF-0038, TDF-0043, TDF-0062): a gallery tile action that posts its image at the
 // click, through the composer's upload route (composer/api.js uploadAttachment): to the room, or
-// privately to the whispered user while whispering, read at the click before any await. The
-// source is the stored original when one was kept, else the share fetched again. After a post
-// the button cools down for POST_COOLDOWN_MS, so repeated clicks on that tile cannot post the
-// same image twice within it; a failure is shown on the button and can be retried at once. The
-// flyout stays open, and a post already begun completes if it closes mid-fetch. Before the
+// privately to the whispered user while whispering, read at the click before any await; while the
+// composer is not ready it is refused at the click, before any fetch. The source is the stored
+// original when one was kept, else the share fetched again. After a post the button cools down
+// for POST_COOLDOWN_MS, so repeated clicks on that tile cannot post the same image twice within
+// it; a failure is shown on the button and can be retried at once. The flyout stays open, and a post already begun completes if it closes mid-fetch. Before the
 // upload, the hash of the exact bytes sent is registered in the Re-post ledger (reposted.js) with
 // the tile's id, so capture recognises the share it produces and does not store the image again
 // (TDF-0063); a rejected upload withdraws it. A hash failure is reported and the Re-post goes
 // ahead unregistered. Every I/O is injected; start.js wires the real ones.
 
+import { COMPOSER_NOT_READY } from '../composer/api.js';
 import { baseType } from './reencode.js';
 
 /** @typedef {import('./reposted.js').RepostLedger} RepostLedger */
@@ -32,7 +33,7 @@ export const POST_UNAVAILABLE = 'Image unavailable from server';
 /**
  * @typedef {object} RepostDeps
  * @property {(file: File, toUser: string) => Promise<void>} upload  composer/api.js uploadAttachment: rejects with the reason
- * @property {() => string} whisperTo  composer/api.js whisperTo: the whispered user, or '' for the room
+ * @property {() => string | null} whisperTo  composer/api.js whisperTo: the whispered user, '' for the room, or null while the composer is not ready
  * @property {(id: string) => Promise<{ blob: Blob, contentType: string }>} fetchShare
  * @property {(item: RepostItem) => boolean} isUnavailable  open.js isUnavailable
  * @property {(blob: Blob) => Promise<string>} hash  hash.js sha256Hex: the content hash capture computes
@@ -76,6 +77,7 @@ export function createRepostAction({ upload, whisperTo, fetchShare, isUnavailabl
       if (isUnavailable(item)) throw new Error(`gallery: ${POST_UNAVAILABLE.toLowerCase()}`);
       // Read before the fetch, so a whisper started or ended meanwhile does not redirect the post.
       const toUser = whisperTo();
+      if (toUser === null) throw new Error(COMPOSER_NOT_READY);
       const source = item.blob ? { blob: item.blob, contentType: item.contentType } : await fetchShare(item.id);
       const type = source.blob.type || source.contentType;
       const file = new File([source.blob], `${item.id}.${extensionFor(type)}`, { type: baseType(type) });
