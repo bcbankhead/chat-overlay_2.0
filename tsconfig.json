@@ -39,6 +39,7 @@
     "src/features/gallery/shareParse.js",
     "src/features/gallery/hash.js",
     "src/features/gallery/roster.js",
+    "src/features/gallery/animated.js",
     "src/features/gallery/reencode.js",
     "src/features/gallery/repost.js",
     "src/features/gallery/order.js",

@@ -1,11 +1,17 @@
 // Stored-original compression (TDF-0036): a full image re-encoded as JPEG at its own width and
 // height, kept only when smaller than what was fetched. Built as thumb.js is, from
-// createImageBitmap and an OffscreenCanvas. GIFs are never handled (a canvas keeps only the first
-// frame), nor is anything outside REENCODE_TYPES. An image with real transparency is skipped,
+// createImageBitmap and an OffscreenCanvas. A canvas keeps only the first frame, so GIFs are never
+// handled, and neither is an animated WebP, APNG or AVIF, detected from its header by animated.js
+// (TDF-0064); nor is anything outside REENCODE_TYPES. An image with real transparency is skipped,
 // since JPEG has none; one whose pixels cannot be read is flattened onto white instead.
+
+import { mayBeAnimated } from './animated.js';
 
 /** JPEG quality of a re-encoded original; fixed, not a setting. */
 const QUALITY = 0.8;
+
+/** Leading bytes read for animation detection; a container not answered within them is kept. */
+const HEAD_BYTES = 64 * 1024;
 
 /** Rows read per alpha scan strip, so a large image is not read into one buffer. */
 const STRIP_ROWS = 256;
@@ -45,7 +51,8 @@ function hasAlpha(ctx, width, height) {
 
 /**
  * The original re-encoded as a smaller JPEG, or null when it is kept as it is: an unhandled
- * type, real transparency, or a re-encode that is not smaller. Decode and encode errors reject.
+ * type, an image that may be animated, real transparency, or a re-encode that is not smaller.
+ * Decode and encode errors reject.
  * @param {Blob} blob  the fetched original
  * @param {ReencodeEnv} [env]
  * @returns {Promise<Blob | null>}
@@ -53,6 +60,7 @@ function hasAlpha(ctx, width, height) {
 export async function compressOriginal(blob, env = globalThis) {
   const type = baseType(blob.type);
   if (!REENCODE_TYPES.has(type)) return null;
+  if (mayBeAnimated(new Uint8Array(await blob.slice(0, HEAD_BYTES).arrayBuffer()))) return null;
   const { createImageBitmap, OffscreenCanvas } = env;
   if (!createImageBitmap || !OffscreenCanvas) throw new Error('this browser cannot re-encode images');
   const bmp = await createImageBitmap(blob);
