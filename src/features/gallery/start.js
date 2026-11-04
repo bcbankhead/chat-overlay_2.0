@@ -5,7 +5,8 @@
 // images on, originals stored before are compressed in the background once the database opens,
 // and again from the moment the setting is switched on (TDF-0036). Each tile carries Re-post
 // (TDF-0038, TDF-0043), which puts its image in the chat input box, reached only through the
-// composer's api.js.
+// composer's api.js. One Re-post ledger is shared by Re-post and capture, so a re-posted image
+// is not captured into the gallery again (TDF-0063).
 
 import { openDb } from '../../core/db.js';
 import { onInbound, onLiked } from '../../core/events.js';
@@ -19,7 +20,9 @@ import { fetchShare } from './fetchShare.js';
 import { isUnavailable, openImage, retryImage } from './open.js';
 import { reportGalleryError } from './errors.js';
 import { compressOriginal } from './reencode.js';
+import { sha256Hex } from './hash.js';
 import { createRepostAction } from './repost.js';
+import { createRepostLedger } from './reposted.js';
 import { createImageStore } from './store.js';
 import { makeThumb } from './thumb.js';
 import { renderGallery } from './view.js';
@@ -56,6 +59,7 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
   // capture and My Images (TDF-0046), so what is saved as yours and what is shown as yours agree.
   const self = () => String(/** @type {any} */ (win).userName ?? '');
 
+  const reposted = createRepostLedger();
   const capture = startCapture({
     ready,
     onInbound,
@@ -68,6 +72,7 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
     report,
     self,
     compress: (blob) => compressOriginal(blob),
+    reposted,
   });
   const backfill = () => capture.backfill().catch(report);
   ready.then(
@@ -119,11 +124,14 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
   // Re-post (TDF-0043): stages the tile's image in the chat input box, then closes the flyout.
   registerGalleryItemAction(
     createRepostAction({
-      stage: (file) => stageAttachment(file),
+      stage: (file, onDiscard) => stageAttachment(file, onDiscard),
       fetchShare: (id) => fetchShare(id, { base: win.location.href, fetch }),
       isUnavailable,
       closeGallery: () => panel.close(),
       galleryView: () => view,
+      hash: (blob) => sha256Hex(blob),
+      ledger: reposted,
+      report,
     }),
   );
 

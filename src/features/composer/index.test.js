@@ -1518,6 +1518,32 @@ test('a staged file replaces one already waiting', () => {
   assert.equal(/** @type {any} */ (document.querySelector('.tdf-attach-thumb')).title, 'second.png');
 });
 
+test('a staged file\'s discard runs once when it is replaced or removed unposted, never when posted or refused', async () => {
+  const { window, document, bar, win } = page();
+  /** @type {string[]} */
+  const discarded = [];
+  const file = (/** @type {string} */ name) => new window.File(['x'], name, { type: 'image/png' });
+  assert.equal(win.__test.stageAttachment(file('a.png'), () => discarded.push('a')), null);
+  drop(window, bar, file('dropped.png'));
+  assert.deepEqual(discarded, ['a'], 'a drop over it discards it');
+  assert.equal(win.__test.stageAttachment(file('b.png'), () => discarded.push('b')), null);
+  assert.equal(win.__test.stageAttachment(file('c.png'), () => discarded.push('c')), null);
+  assert.deepEqual(discarded, ['a', 'b'], 'a staged file over it discards it');
+  /** @type {any} */ (document.querySelector('.tdf-attach-remove')).click();
+  assert.deepEqual(discarded, ['a', 'b', 'c'], 'its × discards it');
+  /** @type {any} */ (document.querySelector('.tdf-attach-remove')).click();
+  assert.equal(win.__test.stageAttachment(new window.File(['x'], 'notes.txt', { type: 'text/plain' }), () => discarded.push('refused')), 'Only images and videos can be attached: notes.txt');
+  assert.deepEqual(discarded, ['a', 'b', 'c']);
+
+  const calls = stubShare(win);
+  assert.equal(win.__test.stageAttachment(file('d.png'), () => discarded.push('d')), null);
+  enter(window, bar, false);
+  await settle();
+  assert.deepEqual(calls.map((c) => c.method), ['GET', 'POST']);
+  assert.equal(win.__test.stageAttachment(file('e.png')), null);
+  assert.deepEqual(discarded, ['a', 'b', 'c'], 'a posted file is not discarded, nor by the next one');
+});
+
 test('a staged file follows the whisper in force at send, not at staging', async () => {
   const { window, document, win } = page();
   const calls = stubShare(win);

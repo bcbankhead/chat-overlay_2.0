@@ -74,7 +74,7 @@ export function installAttach(bar, host) {
 
   host.append(input, icon, thumb, hint);
 
-  /** @type {{ file: File, url: string, busy: boolean } | null} */
+  /** @type {{ file: File, url: string, busy: boolean, onDiscard?: () => void } | null} */
   let pending = null;
 
   const place = () => {
@@ -124,18 +124,21 @@ export function installAttach(bar, host) {
   /**
    * Make a file the waiting attachment, replacing any waiting one.
    * @param {File | null | undefined} file
+   * @param {() => void} [onDiscard]  run once if this file is then removed or replaced unposted
    * @returns {string | null} why it did not attach, or null when it did
    */
-  const attach = (file) => {
+  const attach = (file, onDiscard) => {
     // Unthemed, the thumbnail and the hint are hidden (composer.css): nothing to draw on.
     if (!themed()) return COMPOSER_NOT_READY;
     // A file chooser closed without a choice: nothing was asked for, so the hint stays as it is.
     if (!file) return 'No file to attach';
     if (!ADMITTED.test(file.type)) return refused(`Only images and videos can be attached: ${file.name}`);
     if (pending?.busy) return refused('A file is still uploading');
-    if (pending) revoke(pending.url);
+    const replaced = pending;
+    if (replaced) revoke(replaced.url);
     const url = typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : '';
-    pending = { file, url, busy: false };
+    pending = { file, url, busy: false, onDiscard };
+    replaced?.onDiscard?.();
     const isVideo = /^video\//.test(file.type);
     // The preview not in use drops its source, so no stale image or video lingers behind it.
     if (isVideo) {
@@ -203,7 +206,9 @@ export function installAttach(bar, host) {
   });
   remove.addEventListener('click', () => {
     if (pending?.busy) return;
+    const removed = pending;
     clear();
+    removed?.onDiscard?.();
     bar.focus();
   });
 

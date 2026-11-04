@@ -4,6 +4,8 @@ import 'fake-indexeddb/auto';
 import { openDb } from '../../core/db.js';
 import { createSettings } from '../../core/settings.js';
 import { startCapture } from './capture.js';
+import { sha256Hex } from './hash.js';
+import { createRepostLedger } from './reposted.js';
 import { createImageStore } from './store.js';
 import { extractShareIds } from './shareParse.js';
 
@@ -19,7 +21,8 @@ const get = async (store, id) => (await store.list()).find((r) => r.id === id);
 /**
  * @param {{ ok?: boolean, type?: string, offline?: boolean, thumbFails?: boolean, ready?: Promise<any>,
  *   hang?: boolean, timeoutMs?: number, self?: string, hashFails?: boolean,
- *   compress?: (blob: Blob) => Promise<Blob | null>, compressOn?: boolean }} [opts]
+ *   compress?: (blob: Blob) => Promise<Blob | null>, compressOn?: boolean,
+ *   reposted?: import('./reposted.js').RepostLedger }} [opts]
  */
 async function harness({
   ok = true,
@@ -33,9 +36,10 @@ async function harness({
   hashFails = false,
   compress,
   compressOn = false,
+  reposted,
 } = {}) {
-  /** @type {{ ok: boolean, hang: boolean, type: string, self: string, bytes: Record<string, number> }} */
-  const state = { ok, hang, type, self, bytes: {} };
+  /** @type {{ ok: boolean, hang: boolean, type: string, self: string, bytes: Record<string, number>, served: Record<string, Blob> }} */
+  const state = { ok, hang, type, self, bytes: {}, served: {} };
   const db = await openDb({ name: `gallery-capture-${++n}` });
   const store = createImageStore(db);
   const settings = createSettings(db);
@@ -70,8 +74,12 @@ async function harness({
         return new Promise((_, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
       }
       if (!state.ok) return new Response('gone', { status: 404 });
+      const shareId = new URL(String(url)).searchParams.get('id') ?? '';
+      // A share given its own blob in state.served answers with exactly those bytes.
+      const own = state.served[shareId];
+      if (own) return new Response(own, { headers: { 'content-type': own.type || state.type } });
       // Every share serves the same 5000 bytes unless state.bytes gives it its own fill.
-      const fill = state.bytes[new URL(String(url)).searchParams.get('id') ?? ''] ?? 0;
+      const fill = state.bytes[shareId] ?? 0;
       return new Response(new Blob([new Uint8Array(5000).fill(fill)], { type: state.type }), {
         headers: { 'content-type': state.type },
       });
@@ -92,6 +100,7 @@ async function harness({
         }
       : {}),
     ...(compress ? { compress } : {}),
+    ...(reposted ? { reposted } : {}),
   });
   /** @param {Partial<import('../../core/history.js').MessageRecord>} over */
   const deliver = (over) => {
@@ -660,4 +669,152 @@ test('a backfill called during a run does not start a second one', async () => {
   // Once the run has finished, a later backfill lists again.
   await h.backfill();
   assert.equal(listed, 3);
+});
+
+// Re-post (TDF-0063): the share a Re-post produces is recognised by the hash of the bytes it sent.
+const REPOST = '555555555555555';
+
+/**
+ * A stored image, then its Re-post: the kept blob (or, without one, the fetched bytes) is what
+ * Re-post sends, registered under the source id, and the new share serves exactly those bytes.
+ * @param {{ offline?: boolean, compressOn?: boolean, includeMine?: boolean }} opts
+ */
+async function reposting({ offline = false, compressOn = false, includeMine = true }) {
+  const ledger = createRepostLedger();
+  const { compress } = shrinking();
+  const h = await harness({ self: 'me', offline, compressOn, compress, reposted: ledger });
+  if (includeMine) await h.settings.set('includeMyImages', true);
+  h.post({ id: '1', text: SHARE(ID) });
+  await settle();
+  const source = await get(h.store, ID);
+  assert.ok(source);
+  const sent = source.blob ?? new Blob([new Uint8Array(5000)], { type: 'image/jpeg' });
+  ledger.register(await sha256Hex(sent), ID);
+  h.state.served[REPOST] = sent;
+  return { h, ledger, sent };
+}
+
+for (const offline of [false, true]) {
+  for (const compressOn of [false, true]) {
+    for (const includeMine of [false, true]) {
+      test(`a re-posted share is not stored (offline ${offline}, compress ${compressOn}, include my images ${includeMine})`, async () => {
+        const { h } = await reposting({ offline, compressOn, includeMine });
+        h.deliver({ id: '2', user: 'me', text: SHARE(REPOST), receivedAt: 2 });
+        await settle();
+        // With Include my images off the own share is not captured at all; liking it is the path in.
+        h.like(REPOST, '2');
+        await settle();
+        assert.deepEqual((await h.store.list()).map((r) => r.id), [ID]);
+        assert.deepEqual(h.errors, []);
+      });
+    }
+  }
+}
+
+test('a like or broken retry of a re-posted share is skipped while its source is stored, and captured once it is removed', async () => {
+  const { h } = await reposting({ offline: true, compressOn: true });
+  h.deliver({ id: '2', user: 'me', text: SHARE(REPOST), receivedAt: 2 });
+  await settle();
+  assert.equal(h.fetched.filter((u) => u.includes(REPOST)).length, 1);
+  // The registration is consumed; the known re-post is still skipped, without a fetch.
+  h.like(REPOST, '2');
+  h.deliver({ id: '3', user: 'me', text: SHARE(REPOST), receivedAt: 3 });
+  await settle();
+  assert.equal(h.fetched.filter((u) => u.includes(REPOST)).length, 1);
+  assert.deepEqual((await h.store.list()).map((r) => r.id), [ID]);
+  await h.store.remove(ID);
+  h.like(REPOST, '2');
+  await settle();
+  assert.deepEqual((await h.store.list()).map((r) => r.id), [REPOST]);
+});
+
+test('a re-post whose first capture failed is removed as the re-post when its retry loads', async () => {
+  const { h } = await reposting({ offline: true, compressOn: true });
+  h.state.ok = false;
+  h.deliver({ id: '2', user: 'me', text: SHARE(REPOST), receivedAt: 2 });
+  await settle();
+  assert.equal((await get(h.store, REPOST))?.broken, true);
+  h.state.ok = true;
+  h.like(REPOST, '2');
+  await settle();
+  assert.deepEqual((await h.store.list()).map((r) => r.id), [ID]);
+});
+
+test('a favourite broken re-post is repaired and kept when its retry loads, and later likes are skipped', async () => {
+  const { h } = await reposting({ offline: true, compressOn: true });
+  h.state.ok = false;
+  h.deliver({ id: '2', user: 'me', text: SHARE(REPOST), receivedAt: 2 });
+  await settle();
+  await h.store.setFavorite(REPOST, true);
+  h.state.ok = true;
+  h.like(REPOST, '2');
+  await settle();
+  const kept = await get(h.store, REPOST);
+  assert.equal(kept?.broken, false);
+  assert.equal(kept?.favorite, true);
+  assert.deepEqual((await h.store.list()).map((r) => r.id).sort(), [ID, REPOST].sort());
+  const fetches = h.fetched.length;
+  h.like(REPOST, '2');
+  await settle();
+  assert.equal(h.fetched.length, fetches);
+});
+
+test('every share of the re-posted bytes is skipped after one registration, until the source is removed', async () => {
+  const { h, sent } = await reposting({ offline: true, compressOn: true });
+  const AGAIN = '666666666666666';
+  const LATER = '777777777777777';
+  h.state.served[AGAIN] = sent;
+  h.state.served[LATER] = sent;
+  // The upload reached the server, its response failed, and Enter sent the same bytes again.
+  h.deliver({ id: '2', user: 'me', text: SHARE(REPOST), receivedAt: 2 });
+  h.deliver({ id: '3', user: 'me', text: SHARE(AGAIN), receivedAt: 3 });
+  await settle();
+  assert.deepEqual((await h.store.list()).map((r) => r.id), [ID]);
+  await h.store.remove(ID);
+  h.deliver({ id: '4', user: 'me', text: SHARE(LATER), receivedAt: 4 });
+  await settle();
+  assert.deepEqual((await h.store.list()).map((r) => r.id), [LATER]);
+});
+
+test("the source's own share fetched again is not taken as its re-post, and keeps the registration", async () => {
+  // Uncompressed, the sent bytes are the source's own: its re-capture matches the registration.
+  const { h, ledger, sent } = await reposting({ offline: true, compressOn: false });
+  await h.store.remove(ID);
+  h.state.ok = false;
+  h.like(ID, '1');
+  await settle();
+  assert.equal((await get(h.store, ID))?.broken, true);
+  h.state.ok = true;
+  h.like(ID, '1');
+  await settle();
+  assert.deepEqual((await h.store.list()).map((r) => r.id), [ID]);
+  assert.equal((await get(h.store, ID))?.broken, false);
+  assert.deepEqual(h.errors, []);
+  // The registration still waits for the share the Re-post made.
+  assert.equal(ledger.take(await sha256Hex(sent)), ID);
+});
+
+test('a registration whose source was removed before the share arrived does not hold the share back', async () => {
+  const { h } = await reposting({ offline: true, compressOn: true });
+  await h.store.remove(ID);
+  h.deliver({ id: '2', user: 'me', text: SHARE(REPOST), receivedAt: 2 });
+  await settle();
+  assert.deepEqual((await h.store.list()).map((r) => r.id), [REPOST]);
+});
+
+test('with a Re-post registered, another own share of different bytes is still captured', async () => {
+  const { h } = await reposting({ offline: true, compressOn: true });
+  h.state.bytes[OTHER] = 9;
+  h.deliver({ id: '2', user: 'me', text: SHARE(OTHER), receivedAt: 2 });
+  await settle();
+  assert.deepEqual((await h.store.list()).map((r) => r.id).sort(), [ID, OTHER].sort());
+});
+
+test('without a Re-post, the compressed copy re-shared under a new id is captured, as before', async () => {
+  // The compressed kept copy hashes differently from the record's hash: the dedupe alone misses it.
+  const { h, ledger, sent } = await reposting({ offline: true, compressOn: true });
+  assert.equal(ledger.take(await sha256Hex(sent)), ID);
+  h.deliver({ id: '2', user: 'me', text: SHARE(REPOST), receivedAt: 2 });
+  await settle();
+  assert.deepEqual((await h.store.list()).map((r) => r.id).sort(), [ID, REPOST].sort());
 });

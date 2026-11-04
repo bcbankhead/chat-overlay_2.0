@@ -382,3 +382,45 @@ test('Re-post stages nothing when the Gallery flyout closes while the share is s
     clearGalleryErrors();
   }
 });
+
+test('Re-post and capture share one ledger: a re-posted compressed image is not captured again (TDF-0063)', async () => {
+  const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
+  win.userName = 'me';
+  const REPOST = '555555555555555';
+  /** @type {Blob | null} */
+  let sent = null;
+  win.fetch = async (/** @type {unknown} */ input) => {
+    const blob = String(input).includes(REPOST) && sent ? sent : new Blob([new Uint8Array(10)], { type: 'image/png' });
+    return new Response(blob, { headers: { 'content-type': blob.type || 'image/png' } });
+  };
+  const uninstallStager = installStager((file) => {
+    sent = file;
+    return null;
+  });
+  const uninstallHost = installRailHost({ open: () => {}, close: () => {}, report: () => {} });
+  const logged = console.error;
+  console.error = () => {};
+  try {
+    const indexedDB = new IDBFactory();
+    const db = await openDb({ indexedDB });
+    await createSettings(db).set('includeMyImages', true);
+    const store = createImageStore(db);
+    // The kept copy is a re-encode whose bytes differ from the record's hash, as TDF-0036 stores it.
+    const kept = new Blob([new Uint8Array(6).fill(3)], { type: 'image/jpeg' });
+    await store.put(/** @type {any} */ ({ id: ID, messageId: '1', user: 'me', mTime: '1', roomID: '1', receivedAt: 1, contentType: 'image/jpeg', thumb: null, bytes: 6, favorite: false, broken: false, blob: kept, hash: 'f'.repeat(64), compressChecked: true }));
+    startGallery({ win, doc: win.document, css: '', indexedDB });
+    const post = listGalleryItemActions().find((a) => a.id === 'post');
+    assert.ok(post);
+    await post.onSelect(/** @type {any} */ (await store.get(ID)));
+    assert.ok(sent);
+    emitInbound(/** @type {any} */ ({ id: '2', roomID: '1', mTime: '100', user: 'me', receivedAt: 2, text: `[[img src="plugins/share/view.php?id=${REPOST}"]]` }));
+    await settle();
+    assert.deepEqual((await store.list()).map((r) => r.id), [ID]);
+  } finally {
+    console.error = logged;
+    uninstallStager();
+    uninstallHost();
+    await settle();
+    clearGalleryErrors();
+  }
+});

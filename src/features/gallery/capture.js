@@ -12,6 +12,11 @@
 // With `compressStoredImages` on too, the kept copy is the fetched one re-encoded as a smaller
 // JPEG when that is smaller (TDF-0036); the hash stays the fetched bytes'. `backfill` applies
 // the same to originals stored before, one per task on the same queue.
+// A share whose fetched bytes match a Re-post's registration (reposted.js, TDF-0063) is the
+// re-posted copy of a stored image and is not stored, while that image remains: its later likes
+// and retries are skipped too, as is any later share of the same sent bytes (a re-upload whose
+// first response failed). Once the source is removed it is captured as any share is. The
+// source's own share is never its re-post, and does not use up the registration.
 
 import { fetchShare } from './fetchShare.js';
 import { sha256Hex } from './hash.js';
@@ -33,6 +38,8 @@ import { extractShareIds } from './shareParse.js';
  * @property {(blob: Blob) => Promise<string>} [hash]  content hash; sha256Hex when absent
  * @property {(blob: Blob) => Promise<Blob | null>} [compress]  a smaller re-encode of a stored
  *   original, or null to keep it (reencode.js); absent, originals are stored as fetched
+ * @property {import('./reposted.js').RepostLedger} [reposted]  Re-post's registrations; absent,
+ *   no share is recognised as a re-post
  */
 
 /**
@@ -40,11 +47,15 @@ import { extractShareIds } from './shareParse.js';
  * @param {CaptureDeps} deps
  * @returns {{ backfill: () => Promise<void> }}
  */
-export function startCapture({ ready, onInbound, onLiked, getMessage, roomID, fetch, makeThumb, base, report, timeoutMs, self, hash = sha256Hex, compress }) {
+export function startCapture({ ready, onInbound, onLiked, getMessage, roomID, fetch, makeThumb, base, report, timeoutMs, self, hash = sha256Hex, compress, reposted }) {
   /** @type {Set<string>} ids queued or being fetched */
   const queued = new Set();
   /** @type {Map<string, string>} ids skipped as a duplicate of another id's bytes, to their hash */
   const duplicates = new Map();
+  /** @type {Map<string, string>} ids recognised as a Re-post, to the id of the record re-posted */
+  const repostOf = new Map();
+  /** @type {Map<string, string>} sent hashes matched to a registration, to the id of the record re-posted */
+  const repostedHash = new Map();
   /** @type {Promise<void>} */
   let queue = Promise.resolve();
   /** Whether a backfill is running, from listing to its last task, so a second call does not run alongside. */
@@ -78,6 +89,12 @@ export function startCapture({ ready, onInbound, onLiked, getMessage, roomID, fe
     if (known !== undefined) {
       if (await store.findByHash(known)) return;
       duplicates.delete(id);
+    }
+    // A known re-post is not fetched again while the image it re-posts is still stored.
+    const sourceOf = repostOf.get(id);
+    if (sourceOf !== undefined) {
+      if (await store.get(sourceOf)) return;
+      repostOf.delete(id);
     }
     const existing = await store.get(id);
     if (existing && !existing.broken) return;
@@ -113,6 +130,31 @@ export function startCapture({ ready, onInbound, onLiked, getMessage, roomID, fe
     } catch (err) {
       // Stored without a hash, so not deduped; capture is never blocked by it.
       report(new Error(`gallery: no hash for image ${id}: ${err instanceof Error ? err.message : String(err)}`));
+    }
+    if (record.hash !== undefined && reposted) {
+      let source = reposted.take(record.hash);
+      // The source's own share is not its re-post: the registration is kept for the share it made.
+      if (source === id) {
+        reposted.register(record.hash, source);
+        source = null;
+      }
+      source ??= repostedHash.get(record.hash) ?? null;
+      if (source === id) source = null;
+      // The source gone since the Re-post: nothing holds the image, so it is captured.
+      if (source !== null && !(await store.get(source))) {
+        repostedHash.delete(record.hash);
+        source = null;
+      }
+      if (source !== null) {
+        repostedHash.set(record.hash, source);
+        repostOf.set(id, source);
+        // A broken first capture of the re-post is removed, unless it is a favourite.
+        if (!existing) return;
+        if (!existing.favorite) {
+          await store.remove(id);
+          return;
+        }
+      }
     }
     if (record.hash !== undefined) {
       const same = await store.findByHash(record.hash);
