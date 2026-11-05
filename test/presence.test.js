@@ -71,3 +71,23 @@ test('a line with an unreadable mTime orders as oldest and yields to any dated l
   p.ingest('1', [line('a', 'entry', '1')]);
   assert.equal(p.seen('1').find((l) => l.uuID === 'a').kind, 'entry');
 });
+
+test('serverNow is the device clock until an offset is set, then moved by it', (t) => {
+  let clock = 1_000_000;
+  t.mock.method(Date, 'now', () => clock);
+  const p = createPresence();
+  assert.equal(p.serverNow(), 1_000_000);
+  p.setServerOffset(-250);
+  assert.equal(p.serverNow(), 999_750);
+  clock += 1000;
+  assert.equal(p.serverNow(), 1_000_750);
+});
+
+test('a non-finite server offset is ignored', () => {
+  const p = createPresence();
+  p.setServerOffset(5000);
+  p.setServerOffset(NaN);
+  p.setServerOffset(Infinity);
+  const drift = p.serverNow() - Date.now();
+  assert.ok(drift >= 4990 && drift <= 5000, String(drift));
+});

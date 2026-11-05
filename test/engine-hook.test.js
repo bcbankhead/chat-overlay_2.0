@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { onConfirmChange, onDeleted, onInbound } from '../src/core/events.js';
-import { engineAvailable, installEngineHook, presenceLines } from '../src/core/engine-hook.js';
+import { engineAvailable, installEngineHook, presenceLines, stripWelcomeSentence } from '../src/core/engine-hook.js';
 import { parseUserMessage } from '../src/core/parse.js';
 import { createPresence, presence as pagePresence } from '../src/core/presence.js';
 import 'fake-indexeddb/auto';
@@ -1367,4 +1367,139 @@ test('without an injected store the hook writes the page presence store', () => 
   win.receiveMesReq.responseXML = xml(presenceLine('1', '60', 'Hal', 'exit', postLoad));
   win.handleMessages();
   assert.deepEqual(pagePresence.seen('tdf-0058-page').map((l) => l.uuID), ['60']);
+});
+
+// TDF-0066: entry and exit lines from before the page load never reach the engine, whatever
+// Chat history and HISTORY_ON allow, and no entry or exit line is stored. The rail still reads them.
+
+for (const [label, storing] of [['history on', () => true], ['history off', () => false]]) {
+  test(`${label}: a pre-load entry or exit line skips the engine and is not stored, shown, sounded or announced`, () => {
+    const { win, calls, poll } = datedSetup({ storing });
+    const seen = [];
+    const off = onInbound((r) => seen.push(r.id));
+    poll(presenceLine('8000', '40', 'Dan', 'entry', preLoad), presenceLine('8001', '41', 'Eve', 'exit', String(SERVER_NOW - 1)));
+    off();
+    assert.equal(win.engineCalls, 0);
+    assert.equal(win.showMessages, 0);
+    assert.deepEqual(win.sounds, []);
+    assert.deepEqual(calls, []);
+    assert.deepEqual(seen, []);
+  });
+}
+
+test('a post-load entry or exit line still draws and sounds, but is shown live and not stored', () => {
+  const { win, calls, poll } = datedSetup();
+  poll(presenceLine('8002', '40', 'Dan', 'entry', postLoad).replace('{x}{}', '{x}{doorbell.mp3}'));
+  poll(presenceLine('8003', '40', 'Dan', 'exit', String(SERVER_NOW + 9)).replace('{x}{}', '{x}{doorclose.mp3}'));
+  assert.equal(win.engineCalls, 2);
+  assert.deepEqual(win.sounds, ['doorbell.mp3', 'doorclose.mp3']);
+  assert.deepEqual(calls.filter((c) => c[0] === 'view.place').map((c) => [c[1].id, c[1].kind]), [['8002', 'entry'], ['8003', 'exit']]);
+  assert.equal(calls.filter((c) => c[0] === 'put').length, 0);
+});
+
+test('history on: held-back pre-load entry and exit lines take no HISTORY_ON places', () => {
+  const { win, calls, poll } = datedSetup();
+  const presenceBacklog = Array.from({ length: 30 }, (_, i) =>
+    presenceLine(String(9000 + i), String(60 + i), `U${i}`, i % 2 ? 'exit' : 'entry', String(SERVER_NOW - 5)),
+  );
+  // 25 chat lines, then 30 newer presence lines: every chat line still fits the budget.
+  poll(...preLoadBacklog(25), ...presenceBacklog);
+  const chat = Array.from({ length: 25 }, (_, i) => String(3000 + i));
+  assert.equal(win.engineCalls, 25);
+  assert.deepEqual(calls.filter((c) => c[0] === 'view.place').map((c) => c[1].id), chat);
+});
+
+test('without a usable Date header a pre-load entry line still draws', () => {
+  const { win, poll } = datedSetup({ date: null });
+  poll(presenceLine('8004', '40', 'Dan', 'entry', preLoad));
+  assert.equal(win.engineCalls, 1);
+});
+
+test('the rail still reads pre-load entry and exit lines with history on', () => {
+  const win = datedEngine();
+  const presence = createPresence();
+  const history = new Proxy({}, { get: () => async () => {} });
+  const view = new Proxy({}, { get: () => () => {} });
+  installEngineHook({ win, roomID: '1', presence }).attach({ history, view, storing: () => true });
+  win.receiveMesReq.responseXML = xml(presenceLine('1', '40', 'Dan', 'exit', preLoad));
+  win.handleMessages();
+  assert.equal(win.engineCalls, 0);
+  assert.deepEqual(presence.seen('1').map((l) => l.uuID), ['40']);
+});
+
+test("the first poll's Date header sets the presence store's server clock", (t) => {
+  let clock = Date.parse(SERVER_DATE) + 3_600_000; // the device runs an hour fast
+  t.mock.method(Date, 'now', () => clock);
+  const win = datedEngine();
+  const presence = createPresence();
+  const history = new Proxy({}, { get: () => async () => {} });
+  const view = new Proxy({}, { get: () => () => {} });
+  installEngineHook({ win, roomID: '1', presence }).attach({ history, view });
+  win.receiveMesReq.responseXML = xml(um('1', 'bob', 'hi', postLoad));
+  win.handleMessages();
+  assert.equal(presence.serverNow(), Date.parse(SERVER_DATE));
+  clock += 60_000;
+  assert.equal(presence.serverNow(), Date.parse(SERVER_DATE) + 60_000);
+});
+
+const ONLY_PERSON_SENTENCE = "If you don't see anyone else's name on the right side, you are the only person here.";
+const WELCOME =
+  "Welcome to TDF Chat! Please note that  all forum rules also apply here. If you don't see anyone else's name on the right side, you are the only person here. Look at the very bottom of the main forum page and most other pages to notice people currently in chat.";
+const WELCOME_STRIPPED =
+  'Welcome to TDF Chat! Please note that  all forum rules also apply here. Look at the very bottom of the main forum page and most other pages to notice people currently in chat.';
+
+test('stripWelcomeSentence drops exactly the sentence and the space before it', () => {
+  assert.equal(stripWelcomeSentence(WELCOME), WELCOME_STRIPPED);
+  assert.equal(stripWelcomeSentence(ONLY_PERSON_SENTENCE), '');
+  assert.equal(stripWelcomeSentence(`Hi. ${ONLY_PERSON_SENTENCE}`), 'Hi.');
+});
+
+test('stripWelcomeSentence leaves a text without the exact sentence unchanged', () => {
+  const changed = WELCOME.replace("don't", 'do not');
+  assert.equal(stripWelcomeSentence(changed), changed);
+  assert.equal(stripWelcomeSentence('Welcome!'), 'Welcome!');
+  assert.equal(stripWelcomeSentence(''), '');
+  assert.equal(stripWelcomeSentence(undefined), undefined, 'a non-string passes through');
+});
+
+test('the engine draws the welcome notice without the sentence, and the overlay notice matches', () => {
+  const { win, calls } = datedSetup();
+  win.createMessageDiv('1', '', 'chatContainer', 1, `1|#000|12px|verdana|${WELCOME}`, 'doorbell.mp3', '', '', '');
+  // The fake engine records the decoded message it drew.
+  assert.equal(win.lastText, `1|#000|12px|verdana|${WELCOME_STRIPPED}`);
+  assert.deepEqual(calls.filter((c) => c[0] === 'view.append').map((c) => c[1].text), [WELCOME_STRIPPED]);
+  assert.deepEqual(win.sounds, ['doorbell.mp3']);
+});
+
+test('an own echo containing the sentence is left alone', () => {
+  const { win } = datedSetup();
+  win.sendData('chatContainer');
+  win.createMessageDiv('0', '9', 'chatContainer', -1, ONLY_PERSON_SENTENCE, 'beep_high.mp3', 'alice', '', '');
+  assert.equal(win.lastText, ONLY_PERSON_SENTENCE);
+});
+
+test('a pre-load avatar-1 line that is not an entry or exit line still draws and is stored', () => {
+  const { win, calls, poll } = datedSetup();
+  const body = encodeURI('1|#000|12px|verdana|** The room topic changed|0|0');
+  poll(rawRecord('8010', { user: 'mod', toUser: '_', body, mTime: preLoad }));
+  assert.equal(win.engineCalls, 1);
+  assert.ok(calls.some((c) => c[0] === 'put' && c[1].id === '8010'));
+  assert.ok(calls.some((c) => c[0] === 'view.place' && c[1].id === '8010'));
+});
+
+test('a URI-encoded welcome notice is drawn without the sentence', () => {
+  assert.equal(stripWelcomeSentence(encodeURI(WELCOME)), encodeURI(WELCOME_STRIPPED));
+  assert.equal(stripWelcomeSentence(encodeURI('Welcome!')), encodeURI('Welcome!'));
+  const { win, calls } = datedSetup();
+  win.createMessageDiv('1', '', 'chatContainer', 1, encodeURI(`1|#000|12px|verdana|${WELCOME}`), 'doorbell.mp3', '', '', '');
+  assert.equal(win.lastText, `1|#000|12px|verdana|${WELCOME_STRIPPED}`);
+  assert.deepEqual(calls.filter((c) => c[0] === 'view.append').map((c) => c[1].text), [WELCOME_STRIPPED]);
+});
+
+test('a polled server message containing the sentence is drawn and stored unchanged', () => {
+  const { win, calls, poll } = datedSetup();
+  poll(um('8011', 'bob', `Hi. ${ONLY_PERSON_SENTENCE}`, postLoad));
+  assert.equal(win.lastText, `av.gif|#000|12px|verdana|Hi. ${ONLY_PERSON_SENTENCE}|0|0`);
+  assert.equal(calls.find((c) => c[0] === 'view.place' && c[1].id === '8011')[1].text, `Hi. ${ONLY_PERSON_SENTENCE}`);
+  assert.equal(calls.find((c) => c[0] === 'put' && c[1].id === '8011')[1].text, `Hi. ${ONLY_PERSON_SENTENCE}`);
 });

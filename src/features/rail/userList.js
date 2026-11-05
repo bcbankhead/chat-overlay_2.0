@@ -5,6 +5,7 @@
 // lines name who are not online show ghosted; a ghosted row opens the profile only (TDF-0058).
 
 import { renderAvatar } from '../../core/avatar.js';
+import { lastSeenText } from '../../core/lastSeen.js';
 import { safeDecodeURIComponent } from '../../core/parse.js';
 import { presence as pagePresence } from '../../core/presence.js';
 import { ICONS, renderIcon } from './icons.js';
@@ -78,8 +79,11 @@ export function createUserStore(win, container, onError) {
 /** At most this many rows in the current room's list; online users are never hidden (TDF-0058). */
 export const LIST_CAP = 20;
 
-/** The one tooltip every inert ghosted row carries, whatever kept it from opening a profile (TDF-0059). */
-const OFFLINE_TOOLTIP = 'User offline';
+/**
+ * An inert ghosted row's tooltip when its line has no usable time (TDF-0059); otherwise every
+ * ghosted row reads 'Last seen …' instead (TDF-0066).
+ */
+const OFFLINE_FALLBACK = 'User offline';
 
 /**
  * @typedef {object} RoomView
@@ -245,10 +249,20 @@ export function createRoomList({
         li.className = 'tdf-rail-user tdf-rail-offline';
         li.dataset.uuid = user.uuID;
         li.dataset.room = room.roomID;
-        if (!offlineProfileCall(user, flags)) {
-          li.classList.add('tdf-rail-inert');
-          li.title = OFFLINE_TOOLTIP;
-        }
+        const inert = !offlineProfileCall(user, flags);
+        if (inert) li.classList.add('tdf-rail-inert');
+        // Every ghosted row says when its user was last seen, on the server's clock (TDF-0066);
+        // without a usable time an inert row still says why it does nothing.
+        const seen = lastSeenText(line.mTime, presence.serverNow());
+        if (seen !== null) li.title = seen;
+        else if (inert) li.title = OFFLINE_FALLBACK;
+        // The list re-renders only on store changes, so a quiet room would let the age go stale.
+        const refreshSeen = () => {
+          const now = lastSeenText(line.mTime, presence.serverNow());
+          if (now !== null) li.title = now;
+        };
+        li.addEventListener('mouseenter', refreshSeen);
+        li.addEventListener('focus', refreshSeen);
         const img = renderAvatar(doc, {
           name: user.name,
           userID: user.userID ?? '',

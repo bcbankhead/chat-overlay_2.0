@@ -322,6 +322,30 @@ test('with Chat history on, replay shows the newest 25 lines and live messages g
   assert.equal(shown.at(-1), '8000');
 });
 
+test('stored entry and exit lines from an earlier load are not replayed (TDF-0066)', async () => {
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('historyCount', 25);
+  const base = { roomID: '1', user: 'bob', toUser: '', avatar: '', color: '', size: '', family: '', ircFlag: '0', lineBreakFlag: '0' };
+  const now = Date.now();
+  const t = db.transaction('messages', 'readwrite');
+  for (const [i, kind, text] of /** @type {const} */ ([
+    [0, 'public', 'hi'],
+    [1, 'entry', '** bob has joined the room ...'],
+    [2, 'public', 'there'],
+    [3, 'exit', '** bob has left the room ...'],
+  ])) {
+    const mTime = String(1000 + i);
+    t.objectStore('messages').put({ ...base, id: `m${i}`, mTime, kind, text, receivedAt: now - 60_000 + i, orderKey: Number(mTime) * 1000 });
+  }
+  await new Promise((resolve) => (t.oncomplete = resolve));
+  db.close();
+
+  const { document } = await page(await bundled(), indexedDB);
+  for (let i = 0; i < 20 && shownIds(document).length === 0; i++) await settle();
+  assert.deepEqual(shownIds(document), ['m0', 'm2']);
+});
+
 test('replay skips lines past the 30-day storage age, before the load-time prune runs (TDF-0033.5)', async () => {
   const DAY = 86_400_000;
   const indexedDB = new IDBFactory();

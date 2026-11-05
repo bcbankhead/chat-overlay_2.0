@@ -7,7 +7,8 @@
 // server sent from before the page loaded, which skip the engine entirely (TDF-0054). With it
 // on, only the newest HISTORY_ON of those reach the engine (TDF-0055). Every poll's entry and
 // exit lines, drawn or not, feed the page's presence store, which the rail's recently online
-// section reads (TDF-0058).
+// section reads (TDF-0058). Entry and exit lines from before the load never reach the engine, and
+// none is stored; the welcome notice loses its 'only person here' sentence (TDF-0066).
 
 import { describeError } from './errors.js';
 import { emitConfirmChange, emitDeleted, emitInbound } from './events.js';
@@ -101,6 +102,66 @@ const isModeration = (message) => {
 };
 
 /**
+ * Whether a classified line is an entry or exit line, and which. classify() calls every avatar-'1'
+ * line without the exit string an entry, so an entry also needs the engine's entry string.
+ * @param {import('./parse.js').MessageKind} kind
+ * @param {string} text the body text
+ * @param {{ publicEntry: string, publicExit: string }} lang
+ * @returns {'entry' | 'exit' | null}
+ */
+export function presenceLineKind(kind, text, lang) {
+  if (kind === 'exit') return 'exit';
+  if (kind === 'entry' && lang.publicEntry !== '' && String(text ?? '').includes(lang.publicEntry)) return 'entry';
+  return null;
+}
+
+/**
+ * Whether a server record is a main-div entry or exit line, and which.
+ * @param {ServerMessage} server
+ * @param {{ publicEntry: string, publicExit: string }} lang
+ * @returns {'entry' | 'exit' | null}
+ */
+function presenceKind(server, lang) {
+  if (server.targetDiv !== MAIN_DIV) return null;
+  const body = parseBody(server.body);
+  const kind = classify({ targetDiv: server.targetDiv, toUser: server.toUser, body }, lang);
+  return presenceLineKind(kind, body.text, lang);
+}
+
+/** The welcome notice's sentence the overlay drops: the rail, not the page's list, shows who is here (TDF-0066). */
+const ONLY_PERSON_SENTENCE = "If you don't see anyone else's name on the right side, you are the only person here.";
+
+/**
+ * The text without the 'only person here' sentence and the one space before it, or null when it
+ * has no such sentence.
+ * @param {string} text
+ * @returns {string | null}
+ */
+function dropSentence(text) {
+  const at = text.indexOf(ONLY_PERSON_SENTENCE);
+  if (at < 0) return null;
+  const start = at > 0 && text[at - 1] === ' ' ? at - 1 : at;
+  return text.slice(0, start) + text.slice(at + ONLY_PERSON_SENTENCE.length);
+}
+
+/**
+ * The welcome text without the 'only person here' sentence and the one space before it. Text
+ * without that exact sentence comes back unchanged. A URI-encoded message, which the engine
+ * decodeURI()s before drawing, is matched decoded and comes back re-encoded.
+ * @param {string} message
+ * @returns {string}
+ */
+export function stripWelcomeSentence(message) {
+  if (typeof message !== 'string') return message;
+  const plain = dropSentence(message);
+  if (plain !== null) return plain;
+  const decoded = safeDecodeURI(message);
+  if (decoded === message) return message;
+  const stripped = dropSentence(decoded);
+  return stripped === null ? message : encodeURI(stripped);
+}
+
+/**
  * A poll's main-div entry and exit lines, for the presence store. The engine's local entry
  * pseudo-message has no server record, so it never appears here.
  * @param {readonly ServerMessage[]} records
@@ -111,9 +172,8 @@ export function presenceLines(records, lang) {
   /** @type {import('./presence.js').PresenceLine[]} */
   const lines = [];
   for (const server of records) {
-    if (server.targetDiv !== MAIN_DIV) continue;
-    const kind = classify({ targetDiv: server.targetDiv, toUser: server.toUser, body: parseBody(server.body) }, lang);
-    if (kind !== 'entry' && kind !== 'exit') continue;
+    const kind = presenceKind(server, lang);
+    if (kind === null) continue;
     const rawName = String(server.user ?? '');
     lines.push({ uuID: server.uid, name: safeDecodeURI(rawName), rawName, kind, mTime: server.mTime });
   }
@@ -215,7 +275,20 @@ export function installEngineHook({ win, roomID, presence = pagePresence }) {
     server.targetDiv === MAIN_DIV &&
     loadCutoff !== null &&
     Number(server.mTime) < loadCutoff &&
-    !isModeration(server.body);
+    !isModeration(server.body) &&
+    !presenceBeforeLoad(server);
+
+  /**
+   * Whether a server record is a main-div entry or exit line sent before this page loaded. These
+   * never reach the engine, whatever Chat history and HISTORY_ON allow (TDF-0066), so they take
+   * no HISTORY_ON place either.
+   * @param {ServerMessage} server
+   */
+  const presenceBeforeLoad = (server) =>
+    server.targetDiv === MAIN_DIV &&
+    loadCutoff !== null &&
+    Number(server.mTime) < loadCutoff &&
+    presenceKind(server, lang) !== null;
 
   /** Whether Chat history is off: the setting once attached, its synchronous mirror before. */
   const historyOff = () => (buffered ? historyOffNow(win) : !storing());
@@ -237,6 +310,8 @@ export function installEngineHook({ win, roomID, presence = pagePresence }) {
     if (!Number.isFinite(serverMs)) return;
     cutoffRead = true;
     loadCutoff = Math.floor(serverMs / 1000) - Math.ceil((Date.now() - installAt) / 1000);
+    // The rail ages its last-seen tooltips on the server's clock (TDF-0066).
+    presence.setServerOffset(serverMs - Date.now());
   };
 
   /**
@@ -431,6 +506,13 @@ export function installEngineHook({ win, roomID, presence = pagePresence }) {
     /** @type {string} */ mTime,
   ) {
     if (abandoned) return origCreate.apply(this, arguments);
+    // An engine-local notice (the welcome among them) drops the 'only person here' sentence before
+    // the engine draws it, so the engine row and the overlay notice read the same (TDF-0066). An
+    // own echo is the member's own text and is left alone.
+    if (!inPoll && !(mUser && mUser === win.userName)) {
+      const stripped = guard('Welcome notice not trimmed', () => stripWelcomeSentence(message));
+      if (stripped !== undefined && stripped !== message) arguments[4] = message = stripped;
+    }
     /** @type {EngineCall} */
     const call = { mDiv, message, mUser: mUser ?? '', mToUser: mToUser ?? '', mTime: String(mTime ?? '') };
     // Pair the call with its server record before the original runs. The engine renders a
@@ -450,7 +532,9 @@ export function installEngineHook({ win, roomID, presence = pagePresence }) {
     // history off every one does (TDF-0054); with it on, all but the poll's newest HISTORY_ON
     // (TDF-0055). Without a server Date header nothing is suppressed. Moderation commands still
     // reach the engine, which applies them, and private windows are out of scope. A setting read
-    // that throws draws the message.
+    // that throws draws the message. An entry or exit line from before the load never draws, with
+    // Chat history on or off (TDF-0066); the presence store already read it at the poll.
+    if (server && presenceBeforeLoad(server)) return false;
     if (
       server &&
       heldBackable(server) &&
@@ -546,7 +630,8 @@ export function installEngineHook({ win, roomID, presence = pagePresence }) {
         return;
       }
       if (!rendered || replayedIds.has(record.id)) return;
-      if (storing()) report(history.put(record));
+      // Entry and exit lines are live only: a later load would hide them anyway (TDF-0066).
+      if (storing() && presenceLineKind(kind, body.text, lang) === null) report(history.put(record));
       view.place(record);
       emit(record);
       return;
