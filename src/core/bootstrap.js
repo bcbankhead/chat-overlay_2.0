@@ -13,7 +13,7 @@ import { createAvatarResolver } from './avatarResolver.js';
 import { createBlockState } from './blockState.js';
 import { CLOAK_MS, cloak } from './cloak.js';
 import { openDb } from './db.js';
-import { installEngineHook } from './engine-hook.js';
+import { installEngineHook, presenceLineKind } from './engine-hook.js';
 import { describeError } from './errors.js';
 import { emitConfirmChange, onClearView, onDeleted } from './events.js';
 import { createHistory } from './history.js';
@@ -161,8 +161,12 @@ async function start(lift, coreReady) {
     // Replay shows the newest historyCount lines; the view keeps at most LIVE_CEILING either way.
     // Lines past the storage age are skipped here rather than left to the Options feature's
     // load-time prune, which may finish after this read.
-    const records =
-      historyCount === 0 ? [] : await history.recent(roomID, historyCount, storageCutoff(historyCount, Date.now()));
+    // Entry and exit lines stored by earlier loads are never replayed: the chat shows only this
+    // session's (TDF-0066). Until they age out, a replay may show fewer than historyCount lines.
+    const presenceLang = { publicEntry: String(win.publicEntry ?? ''), publicExit: String(win.publicExit ?? '') };
+    const records = (
+      historyCount === 0 ? [] : await history.recent(roomID, historyCount, storageCutoff(historyCount, Date.now()))
+    ).filter((r) => presenceLineKind(r.kind, r.text, presenceLang) === null);
 
     // Published for the rail and the profile flyout, which show the same avatars.
     const avatars = createAvatarResolver({ win, db });

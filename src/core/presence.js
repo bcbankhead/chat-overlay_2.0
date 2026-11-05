@@ -19,7 +19,19 @@
  *   newest line; subscribers are told when anything changed
  * @property {(roomID: string) => PresenceLine[]} seen the room's users, newest line first
  * @property {(fn: () => void) => () => void} subscribe returns unsubscribe
+ * @property {(ms: number) => void} setServerOffset record `server clock - device clock` (ms), as
+ *   the hook read it from a poll's Date header (TDF-0066); a non-finite value is ignored
+ * @property {() => number} serverNow epoch ms on the server's clock: the device clock moved by
+ *   the recorded offset, which is 0 until one is set
  */
+
+/**
+ * Whether a message kind is an entry or exit line: the kind presence reads, and the one the chat
+ * shows live only (TDF-0066).
+ * @param {unknown} kind
+ * @returns {kind is 'entry' | 'exit'}
+ */
+export const isPresenceKind = (kind) => kind === 'entry' || kind === 'exit';
 
 /**
  * @param {string} mTime
@@ -41,8 +53,15 @@ export function createPresence() {
   const rooms = new Map();
   /** @type {Set<() => void>} */
   const listeners = new Set();
+  let serverOffset = 0;
 
   return {
+    setServerOffset(ms) {
+      if (Number.isFinite(ms)) serverOffset = ms;
+    },
+    serverNow() {
+      return Date.now() + serverOffset;
+    },
     ingest(roomID, lines) {
       let room = rooms.get(roomID);
       let changed = false;

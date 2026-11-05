@@ -980,14 +980,72 @@ test('live lines move users between the sections without a reload', async () => 
   await t.teardown();
 });
 
-test('a ghosted row opens the profile only, with the forum id remembered from its online row', async () => {
+const HOUR_S = 60 * 60;
+const DAY_S = 24 * HOUR_S;
+
+/**
+ * A presence store whose server clock reads `serverSeconds`, so last-seen tooltips are fixed.
+ * @param {ReturnType<typeof createPresence>} presence
+ * @param {number} serverSeconds
+ */
+const atServerTime = (presence, serverSeconds) => {
+  presence.setServerOffset(serverSeconds * 1000 - Date.now());
+  return presence;
+};
+
+test("an inert ghosted row whose line has no usable time falls back to 'User offline'; a profile row has no title", async () => {
   const presence = createPresence();
+  presence.ingest('1', [seenLine('77', 'Stranger', 'exit', 0)]);
+  const t = setup({ presence, flags: { profileOn: 0 } });
+  assert.equal(t.doc.querySelector('.tdf-rail-offline[data-uuid="77"]').title, 'User offline');
+  await t.teardown();
+  const p2 = createPresence();
+  p2.ingest('1', [seenLine('12', 'Alice', 'exit', 0)]);
+  const t2 = setup({ presence: p2 });
+  t2.doc.getElementById('userlist_121').remove();
+  await nextFrame();
+  const ghost = t2.doc.querySelector('.tdf-rail-offline[data-uuid="12"]');
+  assert.ok(!ghost.classList.contains('tdf-rail-inert'));
+  assert.equal(ghost.title, '');
+  await t2.teardown();
+});
+
+test('last-seen is aged on the server clock, not the device clock', async () => {
+  const presence = createPresence();
+  const deviceNow = Math.floor(Date.now() / 1000);
+  // The server runs a day behind the device: a line sent one hour ago on its clock is an hour old.
+  presence.setServerOffset(-DAY_S * 1000);
+  presence.ingest('1', [seenLine('77', 'Stranger', 'exit', deviceNow - DAY_S - 2 * HOUR_S)]);
+  const t = setup({ presence });
+  assert.equal(t.doc.querySelector('.tdf-rail-offline[data-uuid="77"]').title, 'Last seen 2 hours ago');
+  await t.teardown();
+});
+
+test('a ghosted row re-ages its last-seen tooltip on hover and focus, without a re-render', async () => {
+  const presence = atServerTime(createPresence(), 100 + 30 * 60);
+  presence.ingest('1', [seenLine('77', 'Stranger', 'exit', 100)]);
+  const t = setup({ presence });
+  const ghost = t.doc.querySelector('.tdf-rail-offline[data-uuid="77"]');
+  assert.equal(ghost.title, 'Last seen < 1 hour ago');
+  atServerTime(presence, 100 + 5 * HOUR_S);
+  assert.equal(ghost.title, 'Last seen < 1 hour ago', 'a clock change alone does not re-render');
+  ghost.dispatchEvent(new t.win.MouseEvent('mouseenter'));
+  assert.equal(ghost.title, 'Last seen 5 hours ago');
+  atServerTime(presence, 100 + 3 * DAY_S);
+  ghost.dispatchEvent(new t.win.FocusEvent('focus'));
+  assert.equal(ghost.title, 'Last seen 3 days ago');
+  assert.equal(t.doc.querySelector('.tdf-rail-offline[data-uuid="77"]'), ghost, 'the same row');
+  await t.teardown();
+});
+
+test('a ghosted row opens the profile only, with the forum id remembered from its online row', async () => {
+  const presence = atServerTime(createPresence(), 500 + 3 * HOUR_S);
   const t = setup({ presence }); // profileRef 2
   presence.ingest('1', [seenLine('12', 'Alice', 'exit', 500)]);
   t.doc.getElementById('userlist_121').remove();
   await nextFrame();
   const ghost = t.doc.querySelector('.tdf-rail-offline[data-uuid="12"]');
-  assert.equal(ghost.title, '');
+  assert.equal(ghost.title, 'Last seen 3 hours ago');
   for (const type of ['click', 'contextmenu']) {
     const event = new t.win.MouseEvent(type, { bubbles: true, cancelable: true });
     ghost.querySelector('.tdf-rail-user-name').dispatchEvent(event);
@@ -998,13 +1056,13 @@ test('a ghosted row opens the profile only, with the forum id remembered from it
   await t.teardown();
 });
 
-test("a ghosted row with no profile id is inert and its tooltip reads 'User offline'", async () => {
-  const presence = createPresence();
+test("a ghosted row with no profile id is inert and its tooltip reads 'Last seen …' only", async () => {
+  const presence = atServerTime(createPresence(), 100 + 2 * DAY_S);
   presence.ingest('1', [seenLine('77', 'Stranger', 'exit', 100)]);
   const t = setup({ presence }); // profileRef 2, and Stranger was never online this load
   const ghost = t.doc.querySelector('.tdf-rail-offline[data-uuid="77"]');
   assert.ok(ghost.classList.contains('tdf-rail-inert'));
-  assert.equal(ghost.title, 'User offline');
+  assert.equal(ghost.title, 'Last seen 2 days ago');
   ghost.click();
   assert.deepEqual(t.calls, []);
   assert.equal(menuShown(t.doc), false);
@@ -1019,12 +1077,12 @@ test('a user online in another listed room is not ghosted in this one', async ()
   await t.teardown();
 });
 
-test("every inert ghosted row reads 'User offline': profiles off, or an unsupported profileRef", async () => {
+test("every inert ghosted row reads 'Last seen …': profiles off, or an unsupported profileRef", async () => {
   for (const [flags, why] of [
-    [{ profileOn: 0 }, 'User offline'],
-    [{ profileRef: 9 }, 'User offline'],
+    [{ profileOn: 0 }, 'Last seen < 1 hour ago'],
+    [{ profileRef: 9 }, 'Last seen < 1 hour ago'],
   ]) {
-    const presence = createPresence();
+    const presence = atServerTime(createPresence(), 500 + 59 * 60);
     presence.ingest('1', [seenLine('12', 'Alice', 'exit', 500)]);
     const t = setup({ presence, flags });
     t.doc.getElementById('userlist_121').remove();
