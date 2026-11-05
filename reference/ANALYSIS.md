@@ -32,6 +32,10 @@ Source snapshot: `reference/site-js/` (fetched unauthenticated; `settings.js.php
   `[[br]][[a href="plugins/share/view.php?id=<digits>" target="_blank"]][[img src="plugins/share/view.php?id=<same>" style="max-width:250px; max-height:250px;" border="0"]][[/a]]`
   Quotes are `"`. Detect images by `plugins/share/view.php?id=` in the text field. Ids are usually 15 digits, not always: `17933387086952` (14) was seen live on 2026-10-30.
 - `GET plugins/share/view.php?id=…` (same-origin, session cookie) → `200 image/jpeg`, raw bytes (1.7 MB sample, full resolution), no `Content-Disposition`, `no-store`. Bytes can be fetched into IndexedDB as a Blob. Content-type must be read from the response (do not assume JPEG).
+- **Observed non-image upload** (video, 2026-11-04, share `179383656428429`). A non-image share is not `[[img]]` markup: it arrives as an upload notice, rendered as
+  `<br>File Uploaded: [Bunny- kiss 1.mp4] - <a href="plugins/share/view.php?id=<digits>" target="_blank">Click Here</a> to view the file.`
+  The link is relative, so no link preview is made for it. The bracketed filename is the only sign of the file's type; the chat treats `.mp4`, `.webm`, `.mov` and `.m4v` as video (TDF-0065, `src/features/tagging/video.js`).
+- `GET plugins/share/view.php?id=…` for that mp4 → `200 video/mp4`; a `<video>` on the URL plays it (512×910, 5.04 s). It ignores `Range` and sends no `Accept-Ranges`, so seeking before the whole file has loaded may not work.
 - Server returns no history, so an image is only capturable while the script is running and polling.
 
 ## Decisions

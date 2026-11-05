@@ -751,3 +751,40 @@ test('a like-shaped message holding an embedded video keeps its token', () => {
   p.store.set(NONE);
   assert.equal(p.doc.querySelector('.tdf-msg[data-id="30"] .tdf-body')?.textContent, ' ^111111');
 });
+
+/** @param {string} name @param {string} [id] */
+const uploadNotice = (name, id = A) =>
+  `<br>File Uploaded: [${name}] - <a href="${shareHref(id)}" target="_blank">Click Here</a> to view the file.`;
+
+test('a public upload notice added later becomes a video inside a like frame', async () => {
+  const p = page();
+  const list = /** @type {Element} */ (p.doc.querySelector('.tdf-list'));
+  list.innerHTML = '';
+  list.insertAdjacentHTML('beforeend', textRow(uploadNotice('Bunny- kiss 1.mp4'), { id: '40' }));
+  await settle();
+  const frame = /** @type {HTMLElement} */ (p.frame());
+  assert.ok(frame, 'framed');
+  assert.equal(frame.dataset.share, A);
+  assert.deepEqual([...frame.children].map((c) => c.className), ['tdf-video', 'tdf-rx-like', 'tdf-rx-stack']);
+  assert.equal(frame.querySelector('.tdf-video-name')?.textContent, 'Bunny- kiss 1.mp4');
+  assert.equal(frame.querySelector('a'), null);
+  assert.deepEqual(p.reports, []);
+});
+
+test('quickview on: a notice video joins the roster as a video, in chat order', async () => {
+  const p = page({ quickview: { on: true } });
+  const list = /** @type {Element} */ (p.doc.querySelector('.tdf-list'));
+  for (const img of p.doc.querySelectorAll('img.tdf-posted')) {
+    Object.defineProperty(img, 'complete', { value: true });
+    Object.defineProperty(img, 'naturalWidth', { value: 100 });
+  }
+  list.insertAdjacentHTML('beforeend', textRow(uploadNotice('clip.mp4', C), { id: '41' }));
+  await settle();
+  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-msg[data-id="41"] .tdf-video-open')).click();
+  assert.deepEqual(p.opened, []);
+  assert.equal(p.doc.querySelector('.tdf-lb-count')?.textContent, '2 / 2');
+  assert.equal(p.doc.querySelector('.tdf-lb-stage video')?.getAttribute('src'), shareHref(C));
+  const cells = [...p.doc.querySelectorAll('.tdf-lb-thumb')];
+  assert.deepEqual(cells.map((c) => c.classList.contains('tdf-lb-thumb-video')), [false, true]);
+  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-close')).click();
+});

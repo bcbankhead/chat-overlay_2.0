@@ -96,7 +96,7 @@
   display: block;
 }
 
-/* An uploaded video embedded in place of its broken share image (video.js, TDF-0065), within the
+/* An uploaded video embedded in place of its upload notice or its broken share image (video.js, TDF-0065), within the
    posted image's 250 px bounds. Its open button sits top-left, clear of the like heart, on hover
    or focus (always on a device without hover). The like stack sits at the bottom-left, over the
    video's controls, so it lets the pointer through (pointer-events: none above). */
@@ -131,6 +131,23 @@
 #tdf-chat .tdf-video:hover > .tdf-video-open,
 #tdf-chat .tdf-video:focus-within > .tdf-video-open {
   display: block;
+}
+
+/* An upload notice's video (video.js) carries its filename above it: small, muted, one line within
+   the video's 250 px. The open button moves below the caption, onto the video. */
+#tdf-chat .tdf-video-name {
+  display: block;
+  max-width: 250px;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  opacity: 0.7;
+}
+
+#tdf-chat .tdf-video:has(> .tdf-video-name) > .tdf-video-open {
+  top: 20px;
 }
 
 #tdf-chat .tdf-video-open svg {
