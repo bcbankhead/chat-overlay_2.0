@@ -45,6 +45,7 @@
     "src/features/gallery/repost.js",
     "src/features/gallery/reposted.js",
     "src/features/gallery/order.js",
+    "src/features/gallery/loupe.js",
     "src/features/tagging/reactions.js",
     "src/features/tagging/infer.js",
     "src/features/tagging/queue.js",
