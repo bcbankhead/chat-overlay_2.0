@@ -50,6 +50,7 @@ test('a share image that fails in a public message becomes a paused video with c
   assert.equal(video.getAttribute('preload'), 'metadata');
   assert.ok(video.hasAttribute('playsinline'));
   assert.ok(!video.hasAttribute('autoplay'), 'paused');
+  assert.equal(video.volume, 0.3, 'starts at 30% volume');
   const button = wrapper.querySelector('button.tdf-video-open');
   assert.equal(button?.getAttribute('type'), 'button');
   assert.equal(button?.getAttribute('aria-label'), 'Open in quick view');
@@ -190,6 +191,7 @@ test('a public upload notice naming an mp4 becomes a filename caption and a paus
   assert.equal(video.controls, true);
   assert.equal(video.getAttribute('preload'), 'none', 'view.php ignores Range, so nothing loads until played');
   assert.ok(!video.hasAttribute('autoplay'), 'paused');
+  assert.equal(video.volume, 0.3, 'starts at 30% volume');
   assert.equal(body.querySelector('a'), null);
   assert.ok(!(body.textContent ?? '').includes('Click Here'));
   assert.deepEqual(p.reports, []);

@@ -139,6 +139,7 @@ test('an image that fails is retried as a video, which is remembered for the sha
   const video = /** @type {HTMLVideoElement} */ (s.media());
   assert.equal(video.tagName, 'VIDEO');
   assert.equal(video.controls, true);
+  assert.equal(video.volume, 0.3, 'starts at 30% volume, as the inline video does');
   assert.equal(video.src, 'https://chat.example.com/share/2');
   assert.equal(s.$('.tdf-lb-tab').hidden, false, 'a video shows the open-in-new-tab button');
   video.dispatchEvent(new s.win.Event('loadedmetadata'));

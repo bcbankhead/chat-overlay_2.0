@@ -11,6 +11,7 @@
 // remembered per share id, so a return visit and the filmstrip know it. Zoom is the entry
 // point's own new-tab open, called inside the click so the browser does not block it.
 
+import { INLINE_VOLUME } from '../tagging/video.js';
 import { dedupe, filmstripWindow, step } from './roster.js';
 
 /** Filmstrip thumbnails rendered at most; the strip scrolls within them. */
@@ -155,6 +156,7 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
     if (token !== shown) return;
     const video = el('video', 'tdf-lb-media tdf-lb-video');
     video.controls = true;
+    video.volume = INLINE_VOLUME;
     video.playsInline = true;
     video.preload = 'metadata';
     video.addEventListener(

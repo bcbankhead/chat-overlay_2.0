@@ -27,6 +27,8 @@ const UPLOAD = /^\s*File Uploaded:\s*\[([^\]]*\.(?:mp4|webm|mov|m4v))\]\s*-\s*$/
 /** An upload notice's text after its link. */
 const UPLOAD_TAIL = /^\s*to view the file\.?\s*$/i;
 const SVG = 'http://www.w3.org/2000/svg';
+/** An embedded video's starting volume, 30%, so an unexpected play does not deafen the member. */
+export const INLINE_VOLUME = 0.3;
 /** An expand glyph: four corners. */
 const OPEN_PATH = 'M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5';
 
@@ -83,6 +85,7 @@ function videoWrapper(doc, { src, href, shareId, caption, preload }) {
   }
   const video = doc.createElement('video');
   video.controls = true;
+  video.volume = INLINE_VOLUME;
   video.preload = preload;
   video.setAttribute('playsinline', '');
   video.src = src;
