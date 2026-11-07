@@ -81,15 +81,126 @@ test('a sender with no known forum id is looked up by name', async () => {
   t.db.close();
 });
 
-test('a stored answer is used across page loads for a day, then fetched again', async () => {
+/** Poll until `cond()` holds, so a background refresh can be awaited without a fixed delay. */
+async function until(cond, what = 'condition') {
+  for (let i = 0; i < 200; i += 1) {
+    if (cond()) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  assert.fail(`timed out waiting for ${what}`);
+}
+
+/** The stored record for `name`, read straight from the database. */
+const record = (db, name) =>
+  new Promise((resolve, reject) => {
+    const req = db.transaction('avatars').objectStore('avatars').get(name);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+
+test('a stored answer is used across page loads for a day, then answered at once and refreshed', async () => {
   const t = await setup();
   await t.make().resolve('Bob', '42');
   t.clock.t += AVATAR_TTL_MS - 1;
   assert.equal(await t.make().resolve('Bob', '42'), `${BASE}download/file.php?avatar=42.jpg`);
   assert.equal(t.fetched.length, 1);
   t.clock.t += 1;
+  t.gate();
+  const answer = await t.make().resolve('Bob', '42');
+  assert.equal(answer, `${BASE}download/file.php?avatar=42.jpg`, 'answered without waiting on the refresh');
+  await until(() => t.fetched.length === 2, 'the refresh');
+  t.release();
+  await new Promise((r) => setTimeout(r, 20));
+  t.db.close();
+});
+
+test('a failed refresh keeps the stored picture and its age across page loads', async () => {
+  let failing = false;
+  const t = await setup({ answer: () => (failing ? '<html><body>Login</body></html>' : withPicture('42')) });
   await t.make().resolve('Bob', '42');
+  const before = await record(t.db, 'Bob');
+  failing = true;
+  t.clock.t += AVATAR_TTL_MS;
+  for (const load of [1, 2]) {
+    const resolver = t.make();
+    assert.equal(await resolver.resolve('Bob', '42'), `${BASE}download/file.php?avatar=42.jpg`);
+    await until(() => t.fetched.length === 1 + load, `the refresh on load ${load}`);
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(resolver.peek('Bob'), `${BASE}download/file.php?avatar=42.jpg`, 'peek keeps the picture');
+    assert.deepEqual(await record(t.db, 'Bob'), before, 'nothing written over the stored picture');
+  }
+  assert.deepEqual(t.reported, [], 'an expected failure is not reported');
+  t.db.close();
+});
+
+test('a refresh that finds a new picture replaces the stored one and updates peek', async () => {
+  let who = 'old';
+  const t = await setup({ answer: () => withPicture(who) });
+  await t.make().resolve('Bob', '42');
+  who = 'new';
+  t.clock.t += AVATAR_TTL_MS;
+  const resolver = t.make();
+  assert.equal(await resolver.resolve('Bob', '42'), `${BASE}download/file.php?avatar=old.jpg`);
+  await until(() => resolver.peek('Bob') === `${BASE}download/file.php?avatar=new.jpg`, 'peek to update');
+  assert.equal(await resolver.resolve('Bob', '42'), `${BASE}download/file.php?avatar=new.jpg`, 'later rows get it');
+  await new Promise((r) => setTimeout(r, 20));
+  const stored = await record(t.db, 'Bob');
+  assert.equal(stored.url, `${BASE}download/file.php?avatar=new.jpg`);
+  assert.equal(stored.at, t.clock.t);
+  assert.equal(await t.make().resolve('Bob', '42'), `${BASE}download/file.php?avatar=new.jpg`);
+  assert.equal(t.fetched.length, 2, 'the new picture is fresh, so not fetched again');
+  t.db.close();
+});
+
+test('a refresh that finds no picture clears the stored one', async () => {
+  let picture = true;
+  const t = await setup({ answer: () => (picture ? withPicture('42') : page('<dt>Bob</dt>')) });
+  await t.make().resolve('Bob', '42');
+  picture = false;
+  t.clock.t += AVATAR_TTL_MS;
+  const resolver = t.make();
+  assert.equal(await resolver.resolve('Bob', '42'), `${BASE}download/file.php?avatar=42.jpg`);
+  await until(() => resolver.peek('Bob') === null, 'peek to clear');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal((await record(t.db, 'Bob')).url, null);
+  assert.equal(await t.make().resolve('Bob', '42'), null);
   assert.equal(t.fetched.length, 2);
+  t.db.close();
+});
+
+test("a stale 'no picture' is refreshed before answering, and a failed refresh leaves it stored", async () => {
+  let answer = () => page('<dt>Bob</dt>');
+  const t = await setup({ answer: (url) => answer(url) });
+  assert.equal(await t.make().resolve('Bob', '42'), null);
+  const before = await record(t.db, 'Bob');
+  t.clock.t += AVATAR_TTL_MS;
+  answer = () => 500;
+  assert.equal(await t.make().resolve('Bob', '42'), null);
+  assert.equal(t.fetched.length, 2, 'fetched before answering');
+  assert.deepEqual(await record(t.db, 'Bob'), before, 'the failure wrote nothing');
+  answer = () => withPicture('42');
+  assert.equal(await t.make().resolve('Bob', '42'), `${BASE}download/file.php?avatar=42.jpg`, 'the answer waits on the fetch');
+  assert.equal(t.fetched.length, 3);
+  t.db.close();
+});
+
+test(`refreshes share the ${MAX_CONCURRENT}-fetch limit, one per name per page load`, async () => {
+  const t = await setup();
+  const names = ['a', 'b', 'c', 'd', 'e'];
+  const first = t.make();
+  await Promise.all(names.map((name, i) => first.resolve(name, String(i + 1))));
+  t.clock.t += AVATAR_TTL_MS;
+  t.gate();
+  const resolver = t.make();
+  for (const _ of [1, 2]) await Promise.all(names.map((name, i) => resolver.resolve(name, String(i + 1))));
+  await until(() => t.fetched.length === names.length + MAX_CONCURRENT, 'the first refreshes');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(t.fetched.length, names.length + MAX_CONCURRENT, 'the rest wait for a slot');
+  t.release();
+  await until(() => t.fetched.length === names.length * 2, 'every refresh');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(t.fetched.length, names.length * 2, 'one refresh per name');
+  assert.equal(t.peak(), MAX_CONCURRENT);
   t.db.close();
 });
 
@@ -127,6 +238,48 @@ test(`at most ${MAX_CONCURRENT} profiles are fetched at once`, async () => {
   assert.equal(t.fetched.length, 5);
   assert.equal(t.peak(), MAX_CONCURRENT);
   assert.ok(answers.every((a) => typeof a === 'string'));
+  t.db.close();
+});
+
+test('with no profileUrl a stale stored answer is answered as stored, and nothing is fetched', async () => {
+  const t = await setup({ answer: (url) => (new URL(url).searchParams.get('u') === '1' ? withPicture('1') : page('<dt>Ann</dt>')) });
+  const first = t.make();
+  await first.resolve('Bob', '1');
+  await first.resolve('Ann', '2');
+  t.clock.t += AVATAR_TTL_MS;
+  const resolver = createAvatarResolver({
+    win: /** @type {any} */ ({ location: { href: BASE }, DOMParser: happy.DOMParser }),
+    db: t.db,
+    now: () => t.clock.t,
+    fetch: /** @type {any} */ (() => assert.fail('fetched')),
+    report: (err) => t.reported.push(err),
+  });
+  assert.equal(await resolver.resolve('Bob', '1'), `${BASE}download/file.php?avatar=1.jpg`);
+  assert.equal(await resolver.resolve('Ann', '2'), null);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(t.reported, []);
+  t.db.close();
+});
+
+test('a fault in a background refresh is reported, and the stored picture is kept', async () => {
+  let broken = false;
+  const t = await setup({
+    DOMParser: class {
+      parseFromString(html, type) {
+        if (broken) throw new TypeError('parser broke');
+        return new happy.DOMParser().parseFromString(html, type);
+      }
+    },
+  });
+  await t.make().resolve('Bob', '42');
+  broken = true;
+  t.clock.t += AVATAR_TTL_MS;
+  const resolver = t.make();
+  assert.equal(await resolver.resolve('Bob', '42'), `${BASE}download/file.php?avatar=42.jpg`);
+  await until(() => t.reported.length === 1, 'the fault to be reported');
+  assert.ok(t.reported[0] instanceof TypeError);
+  assert.equal(resolver.peek('Bob'), `${BASE}download/file.php?avatar=42.jpg`);
+  assert.equal((await record(t.db, 'Bob')).url, `${BASE}download/file.php?avatar=42.jpg`);
   t.db.close();
 });
 
