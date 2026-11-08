@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
-import { FILMSTRIP_SLOTS, MESSAGE_BOX_ID, openLightbox } from './lightbox.js';
+import { FILMSTRIP_SLOTS, MESSAGE_BOX_ID, WHEEL_QUIET_MS, openLightbox } from './lightbox.js';
 import { LOUPE_SIZE } from './loupe.js';
 
 /** @param {string} id @param {string | null} [thumb] */
@@ -17,6 +17,7 @@ const item = (id, thumb = `thumb-${id}`) => ({
  * @param {{ count?: number, index?: number, ids?: string[], zoomThrows?: boolean, host?: boolean, coarse?: boolean, known?: [string, import('./roster.js').MediaKind][] }} [opts]
  */
 function setup({ count = 5, index = 2, ids, zoomThrows = false, host = true, coarse = false, known = [] } = {}) {
+  const clock = { t: 1000 };
   const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   if (coarse) win.matchMedia = (/** @type {string} */ q) => ({ media: q, matches: false });
   const doc = win.document;
@@ -44,6 +45,7 @@ function setup({ count = 5, index = 2, ids, zoomThrows = false, host = true, coa
     },
     report: (err) => errors.push(err),
     kinds,
+    now: () => clock.t,
   });
   const $ = (/** @type {string} */ sel) => /** @type {HTMLElement} */ (doc.querySelector(sel));
   const stage = () => $('.tdf-lb-stage');
@@ -52,7 +54,15 @@ function setup({ count = 5, index = 2, ids, zoomThrows = false, host = true, coa
   const current = () => thumbs().find((t) => t.classList.contains('tdf-current'));
   const key = (/** @type {string} */ k, target = doc.body) =>
     target.dispatchEvent(new win.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
-  return { win, doc, chat, opener, box, $, stage, media, thumbs, current, key, zoomed, errors, kinds };
+  /** Dispatch a wheel event on `target` (the stage by default) and return it. */
+  const wheel = (/** @type {Record<string, number | boolean>} */ init, target = stage()) => {
+    const event = new win.WheelEvent('wheel', { bubbles: true, cancelable: true, ...init });
+    // happy-dom's WheelEvent drops the modifier keys from its init.
+    for (const k of ['ctrlKey', 'metaKey']) if (k in init) Object.defineProperty(event, k, { value: init[k] });
+    target.dispatchEvent(event);
+    return event;
+  };
+  return { win, doc, chat, opener, box, $, stage, media, thumbs, current, key, wheel, clock, zoomed, errors, kinds };
 }
 
 test('the popover is a fixed layer kept to the chat\'s rect, outside #tdf-chat so the rail cannot cover it', () => {
@@ -177,11 +187,8 @@ test('a late error from an item already stepped past changes nothing', () => {
   assert.equal(/** @type {HTMLImageElement} */ (s.media()).src, 'https://chat.example.com/share/3');
 });
 
-test('clicking the image does nothing; the new-tab button zooms an image or a video; a throwing zoom is reported', () => {
+test('the new-tab button zooms an image or a video; a throwing zoom is reported', () => {
   const s = setup();
-  s.media().click();
-  assert.deepEqual(s.zoomed, [], 'the image click is inert');
-  assert.equal(s.media().title, '', 'and does not advertise a click');
   s.$('.tdf-lb-tab').click();
   assert.deepEqual(s.zoomed, ['2']);
   s.media().dispatchEvent(new s.win.Event('error'));
@@ -194,28 +201,31 @@ test('clicking the image does nothing; the new-tab button zooms an image or a vi
   assert.equal(t.errors.length, 1);
 });
 
-test('the bar holds the counter, then new tab, magnify and close, in that order', () => {
+test('the bar holds the counter, then new tab and close, in that order, with no magnify button', () => {
   const s = setup();
   const classes = [...s.$('.tdf-lb-bar').children].map((c) => c.className);
-  assert.deepEqual(classes, ['tdf-lb-count', 'tdf-lb-tab', 'tdf-lb-magnify', 'tdf-lb-close']);
+  assert.deepEqual(classes, ['tdf-lb-count', 'tdf-lb-tab', 'tdf-lb-close']);
+  assert.equal(s.doc.querySelector('.tdf-lb-magnify'), null);
   const tab = s.$('.tdf-lb-tab');
   assert.equal(tab.getAttribute('aria-label'), 'Open in new tab');
   assert.match(tab.innerHTML, /M14 4h6v6/, 'the external-link glyph');
 });
 
-test('the magnify button has a 16px right margin and the close button is crimson with a lighter hover', () => {
+test('the close button is crimson with a lighter hover; no magnify rule or 16px margin is left in the CSS', () => {
   const css = readFileSync(new URL('./gallery.css', import.meta.url), 'utf8');
   /** @param {string} selector */
   const body = (selector) => {
     const at = css.indexOf(`\n${selector} {`);
     return at < 0 ? '' : css.slice(at, css.indexOf('}', at));
   };
-  assert.match(body('.tdf-lb .tdf-lb-magnify'), /margin-right: 16px;/);
   assert.match(body('.tdf-lb .tdf-lb-close'), /background: #DC143C;/);
   assert.match(body('.tdf-lb .tdf-lb-close'), /color: #ffffff;/);
   assert.match(body('.tdf-lb .tdf-lb-close:hover:not(:disabled)'), /background: #E8405F;/);
-  const shared = css.indexOf('.tdf-lb :is(.tdf-lb-close, .tdf-lb-tab, .tdf-lb-magnify, .tdf-lb-prev, .tdf-lb-next):hover');
+  const shared = css.indexOf('.tdf-lb :is(.tdf-lb-close, .tdf-lb-tab, .tdf-lb-prev, .tdf-lb-next):hover');
   assert.ok(shared >= 0 && shared < css.indexOf('\n.tdf-lb .tdf-lb-close {'), 'the crimson rules follow the shared ones');
+  assert.equal(/tdf-lb-magnify(?!ing)/.test(css), false, 'no magnify button CSS');
+  assert.equal(/margin-right: 16px/.test(css), false, 'no 16px margin');
+  assert.equal(body('.tdf-lb .tdf-lb-tab'), '', 'no margin moved onto the new-tab button');
 });
 
 test('Close, Escape and a backdrop click each dismiss it, return focus and remove the listeners', () => {
@@ -351,36 +361,73 @@ const pressM = (s, init = {}, target = s.doc.body) => {
   return event;
 };
 
-test('the magnifier toggle sits in the bar, starts on when opened on an image, and the button and M each flip it', () => {
+/** @param {ReturnType<typeof setup>} s */
+const magnifying = (s) => s.$('.tdf-lb').classList.contains('tdf-lb-magnifying');
+
+test('the magnifier starts off on an image open and on a video open', () => {
   const s = setup();
-  const button = s.$('.tdf-lb-magnify');
-  assert.equal(button.parentElement, s.$('.tdf-lb-bar'));
-  assert.equal(button.hidden, false, 'an image shows the toggle');
-  assert.equal(button.getAttribute('aria-pressed'), 'true');
-  assert.ok(s.$('.tdf-lb').classList.contains('tdf-lb-magnifying'));
-  assert.equal(button.getAttribute('aria-label'), 'Magnifier');
-  button.click();
-  assert.equal(button.getAttribute('aria-pressed'), 'false');
-  assert.equal(s.$('.tdf-lb').classList.contains('tdf-lb-magnifying'), false);
-  assert.ok(s.doc.querySelector('.tdf-lb'), 'the toggle is not a backdrop click');
-  assert.equal(pressM(s).defaultPrevented, true);
-  assert.equal(button.getAttribute('aria-pressed'), 'true');
-  assert.ok(s.$('.tdf-lb').classList.contains('tdf-lb-magnifying'));
-  pressM(s, { key: 'M' });
-  assert.equal(button.getAttribute('aria-pressed'), 'false', 'capital M toggles too');
+  assert.equal(s.media().tagName, 'IMG');
+  assert.equal(magnifying(s), false);
+  const v = setup({ known: [['2', 'video']] });
+  assert.equal(v.media().tagName, 'VIDEO');
+  assert.equal(magnifying(v), false);
+  v.key('ArrowRight');
+  assert.equal(v.media().tagName, 'IMG');
+  assert.equal(magnifying(v), false, 'still off on the next image');
 });
 
-test('an open on a video starts the magnifier off, and it stays off on the next image until toggled', () => {
-  const s = setup({ known: [['2', 'video']] });
-  assert.equal(s.media().tagName, 'VIDEO');
-  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'false');
+test('on a fine pointer a click on the image toggles the magnifier, which is not a backdrop click and zooms nothing', () => {
+  const s = setup();
+  assert.ok(s.$('.tdf-lb').classList.contains('tdf-lb-fine'));
+  s.media().click();
+  assert.equal(magnifying(s), true);
+  assert.ok(s.doc.querySelector('.tdf-lb'), 'the popover stays open');
+  s.media().click();
+  assert.equal(magnifying(s), false);
+  assert.deepEqual(s.zoomed, []);
+});
+
+test('on a touch-only device a tap on the image opens it in a new tab and does not magnify', () => {
+  const s = setup({ coarse: true });
+  assert.equal(s.$('.tdf-lb').classList.contains('tdf-lb-fine'), false);
+  s.media().click();
+  assert.deepEqual(s.zoomed, ['2']);
+  assert.equal(magnifying(s), false);
+  assert.ok(s.doc.querySelector('.tdf-lb'), 'the popover stays open');
+  const t = setup({ coarse: true, zoomThrows: true });
+  t.media().click();
+  assert.equal(t.errors.length, 1, 'a throwing zoom is reported');
+});
+
+test('a click on an image already stepped past does nothing', () => {
+  const s = setup();
+  const first = s.media();
   s.key('ArrowRight');
-  assert.equal(s.media().tagName, 'IMG');
-  assert.equal(s.$('.tdf-lb-magnify').hidden, false);
-  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'false');
-  assert.equal(s.$('.tdf-lb').classList.contains('tdf-lb-magnifying'), false);
-  pressM(s);
-  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'true');
+  first.click();
+  assert.equal(magnifying(s), false);
+  const c = setup({ coarse: true });
+  const old = c.media();
+  c.key('ArrowRight');
+  old.click();
+  assert.deepEqual(c.zoomed, []);
+});
+
+test('the image cursor is zoom-in, and zoom-out while magnifying, on a fine pointer only; the crosshair is gone', () => {
+  const css = readFileSync(new URL('./gallery.css', import.meta.url), 'utf8');
+  assert.match(css, /\n\.tdf-lb-fine \.tdf-lb-image \{\s*cursor: zoom-in;/);
+  assert.match(css, /\n\.tdf-lb-fine\.tdf-lb-magnifying \.tdf-lb-image \{\s*cursor: zoom-out;/);
+  assert.equal(css.includes('crosshair'), false);
+  assert.equal(/\n\.tdf-lb-magnifying \.tdf-lb-image/.test(css), false, 'no cursor rule without tdf-lb-fine');
+});
+
+test('M does nothing, with or without a fine pointer', () => {
+  for (const coarse of [false, true]) {
+    const s = setup({ coarse });
+    for (const k of ['m', 'M']) {
+      assert.equal(pressM(s, { key: k }).defaultPrevented, false, `${k} is left alone`);
+      assert.equal(magnifying(s), false);
+    }
+  }
 });
 
 test('while on, a move over the image places the loupe at natural size, centred on the cursor and capped to the layer', () => {
@@ -389,6 +436,7 @@ test('while on, a move over the image places the loupe at natural size, centred 
   const loupe = s.$('.tdf-lb-loupe');
   assert.equal(loupe.parentElement, s.$('.tdf-lb'));
   assert.equal(loupe.getAttribute('aria-hidden'), 'true');
+  img.click();
   assert.equal(loupe.hidden, true);
   move(s, 350, 250);
   assert.equal(loupe.hidden, false);
@@ -403,7 +451,7 @@ test('while on, a move over the image places the loupe at natural size, centred 
   move(s, 99, 250);
   assert.equal(loupe.hidden, true, 'a move outside the image rect draws nothing');
   move(s, 350, 250);
-  s.$('.tdf-lb-magnify').click();
+  img.click();
   assert.equal(loupe.hidden, true, 'turning it off hides the loupe');
   const css = readFileSync(new URL('./gallery.css', import.meta.url), 'utf8');
   const rule = /\.tdf-lb-loupe \{[^}]*\}/.exec(css)?.[0] ?? '';
@@ -415,23 +463,23 @@ test('while on, a move over the image places the loupe at natural size, centred 
 
 test('turning it on with the cursor resting on the image shows the loupe without another move', () => {
   const s = setup();
-  measure(s);
-  s.$('.tdf-lb-magnify').click();
+  const img = measure(s);
   move(s, 350, 250);
-  assert.equal(s.$('.tdf-lb-loupe').hidden, true);
-  s.$('.tdf-lb-magnify').click();
+  assert.equal(s.$('.tdf-lb-loupe').hidden, true, 'off: a move draws nothing');
+  img.click();
   const loupe = s.$('.tdf-lb-loupe');
   assert.equal(loupe.hidden, false);
   assert.deepEqual([loupe.style.left, loupe.style.top], ['130px', '40px']);
-  s.$('.tdf-lb-magnify').click();
-  s.media().dispatchEvent(new s.win.Event('mouseleave'));
-  pressM(s);
+  img.click();
+  img.dispatchEvent(new s.win.Event('mouseleave'));
+  img.click();
   assert.equal(loupe.hidden, true, 'a cursor that left the image is forgotten');
 });
 
 test('an image that loads under a still cursor shows the loupe without another move', () => {
   const s = setup();
   const img = measure(s);
+  img.click();
   Object.defineProperty(img, 'naturalWidth', { value: 0, configurable: true });
   Object.defineProperty(img, 'naturalHeight', { value: 0, configurable: true });
   move(s, 350, 250);
@@ -447,113 +495,213 @@ test('an image that loads under a still cursor shows the loupe without another m
   );
 });
 
-test('while off, a move over the image draws nothing and a click does nothing', () => {
+test('the magnifier stays on across steps, the filmstrip and a wheel step; a step hides the loupe; a reopen starts off', () => {
   const s = setup();
   measure(s);
-  s.$('.tdf-lb-magnify').click();
-  move(s, 350, 250);
-  assert.equal(s.$('.tdf-lb-loupe').hidden, true);
   s.media().click();
-  assert.deepEqual(s.zoomed, []);
-});
-
-test('the toggle stays on across steps and the filmstrip, a step hides the loupe, and a reopen on an image starts on', () => {
-  const s = setup();
-  measure(s);
   move(s, 350, 250);
   s.key('ArrowRight');
   assert.equal(s.$('.tdf-lb-loupe').hidden, true, 'the loupe waits for the next move');
-  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'true');
+  assert.equal(magnifying(s), true);
   assert.match(s.$('.tdf-lb-loupe').style.backgroundImage, /share\/3/, 'the loupe follows the item');
   s.$('.tdf-lb-prev').click();
   s.thumbs()[0].click();
-  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'true');
+  assert.equal(magnifying(s), true);
+  s.wheel({ deltaY: -100 });
+  assert.equal(s.$('.tdf-lb-count').textContent, '2 / 5');
+  assert.equal(magnifying(s), true, 'carried across a wheel step');
   measure(s);
   move(s, 350, 250);
   assert.equal(s.$('.tdf-lb-loupe').hidden, false);
   s.win.dispatchEvent(new s.win.Event('resize'));
   assert.equal(s.$('.tdf-lb-loupe').hidden, true, 'a resize hides it');
 
-  s.$('.tdf-lb-magnify').click();
-  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'false', 'turned off before closing');
   s.key('Escape');
   openLightbox({ doc: s.doc, win: s.win, host: s.chat, items: [item('z')], index: 0, zoom: () => {}, report: () => {} });
-  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'true');
-  assert.ok(s.$('.tdf-lb').classList.contains('tdf-lb-magnifying'));
+  assert.equal(magnifying(s), false, 'a reopen on an image starts off');
 });
 
-test('an open whose first image falls back to a video or the unavailable note starts the magnifier off', () => {
+test('a later item falling back to a video keeps a magnifier carried over the step', () => {
   const s = setup();
-  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'true', 'on while it reads as an image');
+  s.media().click();
+  s.key('ArrowRight');
   s.media().dispatchEvent(new s.win.Event('error'));
   assert.equal(s.media().tagName, 'VIDEO');
-  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'false');
-  assert.equal(s.$('.tdf-lb').classList.contains('tdf-lb-magnifying'), false);
+  assert.equal(magnifying(s), true);
   s.key('ArrowRight');
-  assert.equal(s.media().tagName, 'IMG');
-  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'false', 'the next image is not magnified');
+  assert.equal(magnifying(s), true, 'and on the image after it');
+});
+
+test('a video or unavailable item hides the loupe', () => {
+  const s = setup();
+  measure(s);
+  s.media().click();
+  move(s, 350, 250);
+  assert.equal(s.$('.tdf-lb-loupe').hidden, false);
+  s.media().dispatchEvent(new s.win.Event('error'));
+  assert.equal(s.media().tagName, 'VIDEO');
+  assert.equal(s.$('.tdf-lb-loupe').hidden, true);
 
   const u = setup();
   u.kinds.set('2', 'image');
   u.media().dispatchEvent(new u.win.Event('error'));
   assert.ok(u.media().classList.contains('tdf-lb-unavailable'));
-  assert.equal(u.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'false');
+  assert.equal(u.$('.tdf-lb-loupe').hidden, true);
 });
 
-test('a later item falling back to a video keeps a magnifier carried over the step', () => {
-  const s = setup();
-  s.key('ArrowRight');
+test('wheel up steps to the next item and wheel down to the previous, clamped at both ends', () => {
+  const s = setup({ count: 3, index: 1 });
+  const count = () => s.$('.tdf-lb-count').textContent;
+  assert.equal(s.wheel({ deltaY: -120 }).defaultPrevented, true);
+  assert.equal(count(), '3 / 3');
+  s.clock.t += WHEEL_QUIET_MS;
+  s.wheel({ deltaY: -120 });
+  assert.equal(count(), '3 / 3', 'clamped at the last');
+  s.clock.t += WHEEL_QUIET_MS;
+  s.wheel({ deltaY: 120 });
+  assert.equal(count(), '2 / 3');
+  s.clock.t += WHEEL_QUIET_MS;
+  s.wheel({ deltaY: 120 });
+  assert.equal(count(), '1 / 3');
+  s.clock.t += WHEEL_QUIET_MS;
+  assert.equal(s.wheel({ deltaY: 120 }).defaultPrevented, true, 'a clamped step is still consumed');
+  assert.equal(count(), '1 / 3', 'clamped at the first');
+});
+
+test('the wheel steps from anywhere on the popover: the image, the video, the bar and the backdrop', () => {
+  const s = setup({ count: 9, index: 2 });
+  const count = () => s.$('.tdf-lb-count').textContent;
+  for (const [target, expected] of /** @type {[() => Element, string][]} */ ([
+    [() => s.media(), '4 / 9'],
+    [() => s.$('.tdf-lb-bar'), '5 / 9'],
+    [() => s.$('.tdf-lb'), '6 / 9'],
+  ])) {
+    s.clock.t += WHEEL_QUIET_MS;
+    assert.equal(s.wheel({ deltaY: -50 }, target()).defaultPrevented, true);
+    assert.equal(count(), expected);
+  }
   s.media().dispatchEvent(new s.win.Event('error'));
   assert.equal(s.media().tagName, 'VIDEO');
-  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'true');
+  s.clock.t += WHEEL_QUIET_MS;
+  s.wheel({ deltaY: 50 }, s.media());
+  assert.equal(count(), '5 / 9', 'a video steps too');
 });
 
-test('a video item hides the toggle and the loupe, and M is left alone on it', () => {
-  const s = setup();
-  s.key('ArrowLeft');
-  measure(s);
-  move(s, 350, 250);
-  s.media().dispatchEvent(new s.win.Event('error'));
-  assert.equal(s.media().tagName, 'VIDEO');
-  assert.equal(s.$('.tdf-lb-magnify').hidden, true);
-  assert.equal(s.$('.tdf-lb-loupe').hidden, true);
-  assert.equal(pressM(s).defaultPrevented, false);
-  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'true', 'M changed nothing');
-  s.$('.tdf-lb-magnify').click();
-  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'true', 'a hidden toggle does nothing');
-  s.key('ArrowRight');
-  assert.equal(s.$('.tdf-lb-magnify').hidden, false, 'the next image shows it again');
-});
-
-test('an unavailable item hides the toggle', () => {
-  const s = setup();
-  s.kinds.set('2', 'image');
-  s.media().dispatchEvent(new s.win.Event('error'));
-  assert.ok(s.media().classList.contains('tdf-lb-unavailable'));
-  assert.equal(s.$('.tdf-lb-magnify').hidden, true);
-});
-
-test('M in the message box, in a text field, or with Ctrl, Meta or Alt held does not toggle', () => {
-  const s = setup();
-  const box = s.doc.createElement('textarea');
-  box.id = MESSAGE_BOX_ID;
-  const input = s.doc.createElement('input');
-  s.doc.body.append(box, input);
-  for (const target of [box, input]) {
-    target.focus();
-    assert.equal(pressM(s, {}, target).defaultPrevented, false, `${target.tagName} keeps the key`);
+test('one gesture steps once: events within the quiet period are ignored and each one extends it', () => {
+  const s = setup({ count: 9, index: 4 });
+  const count = () => s.$('.tdf-lb-count').textContent;
+  s.wheel({ deltaY: -3 });
+  assert.equal(count(), '6 / 9');
+  s.clock.t += WHEEL_QUIET_MS - 1;
+  assert.equal(s.wheel({ deltaY: -3 }).defaultPrevented, true, 'ignored events are still consumed');
+  assert.equal(count(), '6 / 9', 'within 250ms: ignored');
+  // A stream with gaps under 250ms, running well past 250ms in total, is one gesture.
+  for (let i = 0; i < 10; i++) {
+    s.clock.t += 100;
+    s.wheel({ deltaY: -3 });
   }
-  for (const mod of ['ctrlKey', 'metaKey', 'altKey']) {
-    assert.equal(pressM(s, { [mod]: true }).defaultPrevented, false, `${mod} keeps the key`);
-  }
-  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'true', 'still on as opened');
+  assert.equal(count(), '6 / 9', 'a long trackpad swipe still moves one item');
+  s.clock.t += WHEEL_QUIET_MS;
+  s.wheel({ deltaY: -3 });
+  assert.equal(count(), '7 / 9', 'the next event after 250ms of quiet steps');
 });
 
-test('without a fine pointer the toggle is hidden and M does nothing', () => {
-  const s = setup({ coarse: true });
-  assert.equal(s.$('.tdf-lb-magnify').hidden, true);
-  assert.equal(pressM(s).defaultPrevented, false);
-  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'false');
-  s.key('ArrowRight');
-  assert.equal(s.$('.tdf-lb-magnify').hidden, true, 'still hidden on the next image');
+test('a wheel event with no vertical delta neither steps nor extends the gesture', () => {
+  const s = setup();
+  const count = () => s.$('.tdf-lb-count').textContent;
+  s.wheel({ deltaY: -10 });
+  assert.equal(count(), '4 / 5');
+  s.clock.t += WHEEL_QUIET_MS - 10;
+  assert.equal(s.wheel({ deltaX: 30, deltaY: 0 }).defaultPrevented, true, 'still consumed off the strip');
+  assert.equal(count(), '4 / 5');
+  s.clock.t += 10;
+  s.wheel({ deltaY: -10 });
+  assert.equal(count(), '5 / 5', 'the zero-delta event did not reset the quiet period');
+});
+
+test('Ctrl+wheel, Cmd+wheel and trackpad pinch are left to the browser: no step, not consumed, no gesture', () => {
+  const s = setup();
+  const count = () => s.$('.tdf-lb-count').textContent;
+  assert.equal(s.wheel({ deltaY: -100, ctrlKey: true }).defaultPrevented, false, 'ctrl is left native');
+  assert.equal(s.wheel({ deltaY: -100, metaKey: true }).defaultPrevented, false, 'meta is left native');
+  assert.equal(s.wheel({ deltaY: -100, ctrlKey: true }, s.thumbs()[0]).defaultPrevented, false, 'also over the strip');
+  assert.equal(count(), '3 / 5');
+  s.wheel({ deltaY: -100 });
+  assert.equal(count(), '4 / 5', 'the zoom gesture did not start a quiet period');
+});
+
+test('off the filmstrip, a mostly sideways swipe is consumed without stepping on its vertical jitter', () => {
+  const s = setup();
+  const count = () => s.$('.tdf-lb-count').textContent;
+  s.wheel({ deltaY: -10 });
+  assert.equal(count(), '4 / 5');
+  s.clock.t += WHEEL_QUIET_MS - 10;
+  assert.equal(s.wheel({ deltaX: 40, deltaY: 2 }).defaultPrevented, true, 'consumed');
+  assert.equal(s.wheel({ deltaX: -40, deltaY: -2 }).defaultPrevented, true);
+  assert.equal(count(), '4 / 5', 'no step');
+  s.clock.t += 10;
+  s.wheel({ deltaY: -10 });
+  assert.equal(count(), '5 / 5', 'the sideways events did not extend the gesture');
+});
+
+test('over the filmstrip, sideways input scrolls it natively and vertical input neither steps nor scrolls', () => {
+  const s = setup();
+  const count = () => s.$('.tdf-lb-count').textContent;
+  const thumb = s.thumbs()[0];
+  assert.equal(s.wheel({ deltaX: 40, deltaY: 5 }, thumb).defaultPrevented, false, 'sideways is left native');
+  assert.equal(s.wheel({ deltaX: 40 }, s.$('.tdf-lb-strip')).defaultPrevented, false);
+  assert.equal(count(), '3 / 5');
+  assert.equal(s.wheel({ deltaX: 2, deltaY: -40 }, thumb).defaultPrevented, true, 'vertical is cancelled');
+  assert.equal(count(), '3 / 5', 'and does not step');
+  s.wheel({ deltaY: -40 });
+  assert.equal(count(), '4 / 5', 'the strip did not start a gesture');
+  const css = readFileSync(new URL('./gallery.css', import.meta.url), 'utf8');
+  assert.match(/\n\.tdf-lb-strip \{[^}]*\}/.exec(css)?.[0] ?? '', /overscroll-behavior: contain;/);
+});
+
+test('after a wheel step the filmstrip outlines the shown item and re-centres on it', () => {
+  const s = setup({ count: 60, index: 30 });
+  /** @type {unknown[]} */
+  const centred = [];
+  const proto = Object.getPrototypeOf(s.thumbs()[0]);
+  const original = proto.scrollIntoView;
+  proto.scrollIntoView = function (/** @type {unknown} */ opts) {
+    centred.push([this.dataset.index, opts]);
+  };
+  try {
+    s.wheel({ deltaY: -1 });
+    assert.equal(s.current()?.dataset.index, '31');
+    assert.deepEqual(centred.at(-1), ['31', { block: 'nearest', inline: 'center' }]);
+  } finally {
+    proto.scrollIntoView = original;
+  }
+});
+
+test('the wheel listener is removed on close', () => {
+  const s = setup();
+  const layer = s.$('.tdf-lb');
+  assert.equal(s.wheel({ deltaY: -100 }, layer).defaultPrevented, true, 'listening while open');
+  s.key('Escape');
+  s.clock.t += WHEEL_QUIET_MS;
+  const event = new s.win.WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true });
+  layer.dispatchEvent(event);
+  assert.equal(event.defaultPrevented, false, 'gone after close');
+});
+
+test('without a given clock the wheel is timed by the window\'s own performance clock', () => {
+  const s = setup();
+  s.key('Escape');
+  let t = 5000;
+  s.win.performance.now = () => t;
+  openLightbox({ doc: s.doc, win: s.win, host: s.chat, items: [item('a'), item('b'), item('c')], index: 0, zoom: () => {}, report: () => {} });
+  const count = () => s.$('.tdf-lb-count').textContent;
+  const wheel = () => s.$('.tdf-lb-stage').dispatchEvent(new s.win.WheelEvent('wheel', { deltaY: -1, bubbles: true, cancelable: true }));
+  wheel();
+  assert.equal(count(), '2 / 3');
+  t += WHEEL_QUIET_MS - 1;
+  wheel();
+  assert.equal(count(), '2 / 3', 'within the quiet period by that clock');
+  t += WHEEL_QUIET_MS;
+  wheel();
+  assert.equal(count(), '3 / 3');
 });
