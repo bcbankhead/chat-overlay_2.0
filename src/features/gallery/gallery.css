@@ -465,7 +465,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-.tdf-lb :is(.tdf-lb-close, .tdf-lb-tab, .tdf-lb-prev, .tdf-lb-next) {
+.tdf-lb :is(.tdf-lb-close, .tdf-lb-tab, .tdf-lb-magnify, .tdf-lb-prev, .tdf-lb-next) {
   display: inline-flex;
   flex: none;
   align-items: center;
@@ -478,7 +478,7 @@
   border-radius: 50%;
 }
 
-.tdf-lb :is(.tdf-lb-close, .tdf-lb-tab, .tdf-lb-prev, .tdf-lb-next):hover:not(:disabled) {
+.tdf-lb :is(.tdf-lb-close, .tdf-lb-tab, .tdf-lb-magnify, .tdf-lb-prev, .tdf-lb-next):hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.24);
 }
 
@@ -499,6 +499,41 @@
 
 .tdf-lb-tab[hidden] {
   display: none;
+}
+
+/* The magnifier (TDF-0071, loupe.js): a bar toggle, and a 200px loupe showing the image at
+   natural size. The fixed .tdf-lb layer is the loupe's containing block; it passes the pointer
+   through so the image keeps receiving the moves that place it. */
+.tdf-lb .tdf-lb-magnify[aria-pressed="true"],
+.tdf-lb .tdf-lb-magnify[aria-pressed="true"]:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.tdf-lb-magnify[hidden] {
+  display: none;
+}
+
+.tdf-lb-loupe {
+  position: absolute;
+  width: 200px;
+  height: 200px;
+  box-sizing: border-box;
+  pointer-events: none;
+  border: 2px solid #ffffff;
+  border-radius: 4px;
+  background-color: #0a0c10;
+  background-repeat: no-repeat;
+  /* Positioned from the outer edge, so loupeFrame's centre is the loupe's centre. */
+  background-origin: border-box;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+.tdf-lb-loupe[hidden] {
+  display: none;
+}
+
+.tdf-lb-magnifying .tdf-lb-image {
+  cursor: crosshair;
 }
 
 .tdf-lb-main {
