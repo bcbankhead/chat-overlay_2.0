@@ -38,7 +38,8 @@ body:has(#tdf-rail:not(.tdf-rail-failed)) :is(#roomIcon, #roomCreate, #roomSelec
   z-index: 10;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  /* One gap for every row, so the room chips and Logout stack at the chips' own 6px. */
+  gap: 6px;
   box-sizing: border-box;
   padding: 8px;
   /* --tdf-ui-font is set on #tdf-chat, which the sidebar is not inside; same stack. */
@@ -133,21 +134,31 @@ body:has(#tdf-rail:not(.tdf-rail-failed)) :is(#roomIcon, #roomCreate, #roomSelec
   cursor: pointer;
 }
 
-/* Rooms: the current one fills the height; the others sit at the bottom. */
+/* Rooms: the current one fills the height; the others sit at the bottom. In a rail too
+   short for everything the current room gives up the height first (its far larger shrink),
+   clipping rather than drawing over the rooms below it; the margin keeps its chip's focus
+   outline (TDF-0072). */
 #tdf-rail .tdf-rail-current {
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
+  flex: 1 1000 auto;
   min-height: 0;
+  overflow-y: clip;
+  overflow-clip-margin: 4px;
 }
 
+/* Only once the current room has no height left to give do the other rooms shrink, and
+   then they scroll, so Logout always stays inside the rail. The 4px padding, cancelled by
+   the margin, keeps the chips' focus outlines inside the scroller (TDF-0072). */
 #tdf-rail .tdf-rail-others {
   display: flex;
   flex-direction: column;
   gap: 6px;
   flex: 0 1 auto;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  padding: 4px;
+  margin: -4px;
 }
 
 #tdf-rail .tdf-rail-others:empty {

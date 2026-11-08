@@ -246,6 +246,28 @@ test('the engine list and room controls are hidden only while the rail works', (
   assert.match(failed[2], /display: none !important/);
 });
 
+test('the current room gives up height first; the other rooms scroll as a last resort, keeping Logout in the rail (TDF-0072)', () => {
+  const css = readFileSync(new URL('./rail.css', import.meta.url), 'utf8');
+  const rule = (selector) => {
+    const m = new RegExp(`${selector.replace(/[.#]/g, '\\$&')} \\{([^}]*)\\}`).exec(css);
+    assert.ok(m, `rail.css has a ${selector} rule`);
+    return m[1];
+  };
+  assert.match(rule('#tdf-rail'), /\bgap: 6px;/);
+  const others = rule('#tdf-rail .tdf-rail-others');
+  const current = rule('#tdf-rail .tdf-rail-current');
+  const shrink = (r) => Number(/\bflex: \d+ (\d+) auto;/.exec(r)?.[1]);
+  assert.match(current, /flex: 1 1000 auto;/);
+  assert.match(current, /min-height: 0;/);
+  assert.match(current, /overflow-y: clip;/);
+  assert.match(others, /flex: 0 1 auto;/);
+  assert.ok(shrink(current) >= 1000 * shrink(others), 'the current room gives up height long before the others');
+  assert.match(others, /min-height: 0;/);
+  assert.match(others, /overflow-y: auto;/);
+  assert.match(others, /padding: 4px;/);
+  assert.match(others, /margin: -4px;/);
+});
+
 test('the sidebar colours follow the design in both themes, and the flyout width is 418px', () => {
   const css = readFileSync(new URL('./rail.css', import.meta.url), 'utf8');
   const block = (theme) => new RegExp(`:root\\[data-tdf-theme="${theme}"\\] \\{([^}]*)\\}`).exec(css)[1];
