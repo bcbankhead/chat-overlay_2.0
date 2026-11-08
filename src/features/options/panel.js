@@ -6,10 +6,11 @@
 // Compress stored images (TDF-0036), Use media quickview (TDF-0035) and Gallery size limit (MB).
 // Every boolean setting is a checkbox drawn as a switch (tdf-opt-switch). Chat history (last
 // HISTORY_ON) is one too: on replays the newest HISTORY_ON lines on reload, and turning it off
-// deletes every saved line at once, its hint saying how many beforehand. A hint under the gallery field says what the typed value
-// would delete; the setting is written, and the deletion runs, only when the value is committed
-// (change: Enter or leaving the field). The two deletions ask first, inline. The rail gives the
-// flyout body its scrollbar.
+// deletes every saved line at once. A hint under the gallery field gives the usage, says the
+// oldest over-limit images are purged when the limit is set and on reload (favorites kept), and
+// what the typed value would delete; the setting is written, and the deletion runs, only when the
+// value is committed (change: Enter or leaving the field). The two deletions ask first, inline.
+// The rail gives the flyout body its scrollbar.
 
 import { describeError } from '../../core/errors.js';
 import { clearView } from '../../core/events.js';
@@ -461,16 +462,12 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   const valueOf = (input) => (input.validity?.badInput ? null : input.value);
 
   /**
-   * What the Chat history switch does in its state: on, how many saved lines turning it off
-   * would delete.
+   * What the Chat history switch does in its state. Async to match the other hint readers.
    * @param {boolean} on
    */
-  const historyText = async (on) => {
-    if (!on) return { text: 'No chat history is kept or replayed.' };
-    const base = `Replays the newest ${HISTORY_ON} lines on reload.`;
-    const n = await limits.countAll();
-    return { text: base + (n ? ` Turning it off deletes ${plural(n, 'saved line')}.` : '') };
-  };
+  const historyText = async (on) => ({
+    text: on ? `Replays the newest ${HISTORY_ON} lines on reload.` : 'No chat history is kept or replayed.',
+  });
 
   /** @param {string | null} input */
   const galleryText = async (input) => {
@@ -481,9 +478,12 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     const { preview } = usage;
     if (!preview) return { text: `No limit. ${used}.` };
     const removes = preview.count
-      ? ` This removes ${plural(preview.count, 'image')} (${megabytes(preview.bytes)}) now.`
+      ? ` Removes ${plural(preview.count, 'image')} (${megabytes(preview.bytes)}) now.`
       : '';
-    return { text: `${used}. Oldest images go first; favorites are kept.${removes}`, warn: preview.count > 0 };
+    return {
+      text: `${used}; favorites kept; oldest over-limit purged when set and on reload.${removes}`,
+      warn: preview.count > 0,
+    };
   };
 
   /** @param {string | null} input */

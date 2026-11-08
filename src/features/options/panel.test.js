@@ -159,7 +159,7 @@ function setup({ settings = stubSettings(), limits = stubLimits(), engine = true
 const ON_HINT = 'Replays the newest 25 lines on reload.';
 const OFF_HINT = 'No chat history is kept or replayed.';
 
-test('Chat history is a switch, on, saying how many saved lines turning it off deletes', async () => {
+test('Chat history is a switch, on, replaying the newest 25 with no deletion count, whatever is stored', async () => {
   const { history, gallery, hints } = setup({
     settings: stubSettings({ historyCount: 25, galleryLimitMB: 50 }),
     limits: stubLimits({ stored: { a: 2, b: 1 } }),
@@ -170,15 +170,9 @@ test('Chat history is a switch, on, saying how many saved lines turning it off d
   assert.equal(history.checked, true);
   assert.equal(gallery.value, '50');
   assert.deepEqual(hints(), [
-    `${ON_HINT} Turning it off deletes 3 saved lines.`,
-    '3.0 MB used. Oldest images go first; favorites are kept.',
+    ON_HINT,
+    '3.0 MB used; favorites kept; oldest over-limit purged when set and on reload.',
   ]);
-});
-
-test('Chat history on over no saved lines names no deletion', async () => {
-  const { hints } = setup();
-  await settle();
-  assert.equal(hints()[0], ON_HINT);
 });
 
 test('Chat history stored off shows the switch unticked: nothing is kept', async () => {
@@ -219,7 +213,7 @@ test('ticking Chat history writes 25 and deletes nothing', async () => {
   await settle();
   assert.deepEqual(settings.writes, [['historyCount', 25]]);
   assert.deepEqual(deletions(limits), []);
-  assert.equal(hints()[0], `${ON_HINT} Turning it off deletes 2 saved lines.`);
+  assert.equal(hints()[0], ON_HINT);
 });
 
 test('a refused Chat history write puts the switch back, deletes nothing and says so', async () => {
@@ -269,7 +263,8 @@ test('typing a gallery limit previews what would be deleted and writes nothing',
   await settle();
   type(gallery, '10');
   await settle();
-  assert.equal(hints()[1], '3.0 MB used. Oldest images go first; favorites are kept. This removes 2 images (2.0 MB) now.');
+  assert.equal(hints()[1], '3.0 MB used; favorites kept; oldest over-limit purged when set and on reload. Removes 2 images (2.0 MB) now.');
+  assert.ok(gallery.closest('label')?.nextElementSibling?.classList.contains('tdf-warn'));
   assert.deepEqual(settings.writes, []);
   assert.ok(!limits.calls.some(([name]) => String(name).startsWith('prune')));
 });

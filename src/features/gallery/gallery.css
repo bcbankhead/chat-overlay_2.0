@@ -97,28 +97,6 @@
   display: none;
 }
 
-/* Reset order (TDF-0060): shown only while an image has a manual place; the first press arms it. */
-:root[data-tdf-theme] #tdf-rail .tdf-gallery-reset {
-  height: 28px;
-  padding: 0 8px;
-  font: inherit;
-  font-size: 12px;
-  color: var(--tdf-muted);
-  background: var(--tdf-rail-chip-bg);
-  border: 1px solid var(--tdf-rail-chip-border);
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-:root[data-tdf-theme] #tdf-rail .tdf-gallery-reset.tdf-armed {
-  color: #cf222e;
-  border-color: #cf222e;
-}
-
-:root[data-tdf-theme] #tdf-rail .tdf-gallery-reset[hidden] {
-  display: none;
-}
-
 /* Failures recorded while the gallery was closed (errors.js); a click dismisses them. */
 :root[data-tdf-theme] #tdf-rail .tdf-gallery-error {
   margin: 0 0 8px;
