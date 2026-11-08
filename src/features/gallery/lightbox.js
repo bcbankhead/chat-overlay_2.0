@@ -11,11 +11,15 @@
 // remembered per share id, so a return visit and the filmstrip know it. Zoom is the entry
 // point's own new-tab open, called inside the click so the browser does not block it.
 //
-// Magnifier (TDF-0071): a bar toggle, and the M key, turn on a 500px loupe that follows the cursor
-// over an image and shows it at natural size (loupe.js), shrunk to the quick view's shorter side
-// when that is smaller. Images only, fine pointers only; it stays on across steps within one open.
-// An open that reaches the stage as an image starts with it on; any other open starts it off
-// (TDF-0076). The image itself takes no click: the bar's new-tab button opens it.
+// Magnifier (TDF-0071): a click on the shown image toggles a 500px loupe that follows the cursor
+// over it and shows it at natural size (loupe.js), shrunk to the quick view's shorter side when
+// that is smaller. Images only, fine pointers only; it starts off on every open and stays as set
+// across steps within one open (TDF-0077). On a touch-only device a tap on the image opens it in a
+// new tab instead; the bar's new-tab button does the same on any pointer.
+//
+// Wheel (TDF-0077): the wheel anywhere on the popover steps between items, up to the next and down
+// to the previous, one step per gesture: a step, then nothing until WHEEL_QUIET_MS pass with no
+// wheel event. Sideways input over the filmstrip scrolls it natively; the page behind never scrolls.
 
 import { loupeFrame } from './loupe.js';
 import { dedupe, filmstripWindow, step } from './roster.js';
@@ -24,6 +28,9 @@ import { dedupe, filmstripWindow, step } from './roster.js';
 export const FILMSTRIP_SLOTS = 41;
 
 const LAYER = 'tdf-lb';
+
+/** Quiet time, in ms, that ends one wheel gesture: the next wheel event after it steps again. */
+export const WHEEL_QUIET_MS = 250;
 
 /**
  * The message box's id — composer/index.js's BAR, copied rather than imported so the gallery does
@@ -43,8 +50,6 @@ const ICONS = {
   close:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   tab: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
-  magnify:
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5M10.5 8v5M8 10.5h5"/></svg>',
   play: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>',
   media:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/></svg>',
@@ -61,6 +66,7 @@ const ICONS = {
  * @property {(err: unknown) => void} report
  * @property {Element | null} [opener]  where focus returns on close; the focused element by default
  * @property {Map<string, import('./roster.js').MediaKind>} [kinds]  the kind cache; a test passes its own
+ * @property {() => number} [now]  the clock the wheel's quiet period is timed by, in ms; a test passes its own
  */
 
 /**
@@ -68,7 +74,7 @@ const ICONS = {
  * @param {LightboxDeps} deps
  * @returns {{ close: () => void, layer: HTMLElement }}
  */
-export function openLightbox({ doc, win, host, items: given, index: start, zoom, report, opener, kinds = knownKinds }) {
+export function openLightbox({ doc, win, host, items: given, index: start, zoom, report, opener, kinds = knownKinds, now = () => win.performance.now() }) {
   openNow?.();
   const items = dedupe(given);
   const returnTo = opener ?? doc.activeElement;
@@ -110,14 +116,12 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
   const closeButton = button('tdf-lb-close', 'Close', ICONS.close);
   const tabButton = button('tdf-lb-tab', 'Open in new tab', ICONS.tab);
   tabButton.hidden = true;
-  // A loupe needs a cursor to follow: without a fine pointer the toggle never shows.
+  // A loupe needs a cursor to follow: without a fine pointer an image tap opens a new tab instead.
   const fine = win.matchMedia?.('(any-pointer: fine)')?.matches ?? true;
-  const magnifyButton = button('tdf-lb-magnify', 'Magnifier', ICONS.magnify);
-  magnifyButton.setAttribute('aria-pressed', 'false');
-  magnifyButton.hidden = true;
+  layer.classList.toggle('tdf-lb-fine', fine);
   const counter = el('span', 'tdf-lb-count');
   const bar = el('div', 'tdf-lb-bar');
-  bar.append(counter, tabButton, magnifyButton, closeButton);
+  bar.append(counter, tabButton, closeButton);
   const prev = button('tdf-lb-prev', 'Previous', ICONS.prev);
   const next = button('tdf-lb-next', 'Next', ICONS.next);
   const stage = el('div', 'tdf-lb-stage');
@@ -129,17 +133,10 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
   loupe.hidden = true;
   layer.append(bar, main, strip, loupe);
 
-  /**
-   * the magnifier toggle's state; it carries over steps. It starts off and is turned on once
-   * after the open's first render when that render put an image on the stage (TDF-0076).
-   */
+  /** the magnifier's state, shown only by the layer's tdf-lb-magnifying class; off on open, it carries over steps */
   let magnifying = false;
-  /**
-   * the open's first render token while the start-on still stands, else 0: an unknown-kind first
-   * item renders as an image and may only then fall back to a video or the unavailable note, which
-   * takes the start-on back (TDF-0076). A step or a toggle clears it.
-   */
-  let autoOn = 0;
+  /** when the last counted wheel event arrived, by `now()`; a gesture ends WHEEL_QUIET_MS after it */
+  let lastWheel = -Infinity;
   /** whether the stage holds an image, the one kind the magnifier applies to */
   let imageOn = false;
   /** @type {{ img: HTMLImageElement, token: number, x: number, y: number } | null} the cursor's last place over the stage's image */
@@ -178,7 +175,6 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
   /** @param {boolean} on */
   const setMagnifying = (on) => {
     magnifying = on;
-    magnifyButton.setAttribute('aria-pressed', String(on));
     layer.classList.toggle('tdf-lb-magnifying', on);
     if (on) drawLoupe();
     else hideLoupe();
@@ -186,18 +182,12 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
 
   const toggleMagnifier = () => {
     if (!fine || !imageOn) return;
-    autoOn = 0;
     setMagnifying(!magnifying);
   };
 
   /** Leave the stage to a kind the magnifier does not apply to. */
   const noMagnifier = () => {
-    if (autoOn && autoOn === shown) {
-      autoOn = 0;
-      setMagnifying(false);
-    }
     imageOn = false;
-    magnifyButton.hidden = true;
     hideLoupe();
   };
 
@@ -296,11 +286,17 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
       if (cursor?.img === img) cursor = null;
       hideLoupe();
     });
+    // Fine pointer: the click toggles the magnifier. Touch only: it opens the image in a new tab,
+    // synchronously inside the click so the browser does not block it.
+    img.addEventListener('click', () => {
+      if (token !== shown) return;
+      if (fine) toggleMagnifier();
+      else doZoom(item);
+    });
     img.src = item.src;
     stage.replaceChildren(img);
     tabButton.hidden = false;
     imageOn = true;
-    magnifyButton.hidden = !fine;
     // The item's own src, so the loupe and the stage show the same image.
     loupe.style.backgroundImage = `url(${JSON.stringify(item.src)})`;
   };
@@ -351,7 +347,6 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
   const go = (to) => {
     if (closed || to < 0 || to >= items.length) return;
     index = to;
-    autoOn = 0;
     const token = ++shown;
     const item = items[index];
     for (const v of stage.querySelectorAll('video')) v.pause?.();
@@ -368,7 +363,6 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
   prev.addEventListener('click', () => go(step(index, -1, items.length)));
   next.addEventListener('click', () => go(step(index, 1, items.length)));
   tabButton.addEventListener('click', () => doZoom(items[index]));
-  magnifyButton.addEventListener('click', toggleMagnifier);
   closeButton.addEventListener('click', () => close());
   strip.addEventListener('click', (event) => {
     const cell = /** @type {HTMLElement | null} */ (/** @type {Element} */ (event.target).closest?.('.tdf-lb-thumb'));
@@ -403,13 +397,29 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
       go(step(index, event.key === 'ArrowLeft' ? -1 : 1, items.length));
       return;
     }
-    // M toggles the magnifier, unmodified, on an image only: a no-op leaves the key alone.
-    if ((event.key === 'm' || event.key === 'M') && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      if (!fine || !imageOn) return;
+  };
+
+  /**
+   * The wheel steps between items, one step per gesture. Ctrl/Cmd+wheel and trackpad pinch are
+   * left to the browser's zoom. Over the filmstrip, sideways input is left to scroll it natively
+   * and vertical input is cancelled without a step; elsewhere sideways input is cancelled without
+   * a step. The step's renderStrip() re-centres a strip that drifted.
+   * @param {WheelEvent} event
+   */
+  const onWheel = (event) => {
+    if (event.ctrlKey || event.metaKey) return;
+    const sideways = Math.abs(event.deltaX) > Math.abs(event.deltaY);
+    const target = /** @type {Element | null} */ (event.target);
+    if (target?.closest?.('.tdf-lb-strip')) {
+      if (sideways) return;
       event.preventDefault();
-      event.stopPropagation();
-      toggleMagnifier();
+      return;
     }
+    event.preventDefault();
+    if (sideways || event.deltaY === 0) return;
+    const t = now();
+    if (t - lastWheel >= WHEEL_QUIET_MS) go(step(index, event.deltaY < 0 ? 1 : -1, items.length));
+    lastWheel = t;
   };
 
   /** A resize moves the image under a still cursor: drop the loupe until the next move. */
@@ -425,6 +435,7 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
     if (openNow === close) openNow = null;
     doc.removeEventListener('keydown', onKey, true);
     win.removeEventListener('resize', onResize);
+    layer.removeEventListener('wheel', onWheel);
     for (const v of stage.querySelectorAll('video')) v.pause?.();
     layer.remove();
     if (returnTo && 'focus' in returnTo && typeof returnTo.focus === 'function') {
@@ -436,18 +447,13 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
   place();
   doc.addEventListener('keydown', onKey, true);
   win.addEventListener('resize', onResize);
+  layer.addEventListener('wheel', onWheel, { passive: false });
   doc.body.appendChild(layer);
   if (items.length === 0) {
     close();
     return { close, layer };
   }
   go(index);
-  // Opened on an image with a cursor to follow: the magnifier starts on (TDF-0076), until that
-  // first render falls back to a video or the unavailable note.
-  if (fine && imageOn) {
-    setMagnifying(true);
-    autoOn = shown;
-  }
   closeButton.focus();
   return { close, layer };
 }

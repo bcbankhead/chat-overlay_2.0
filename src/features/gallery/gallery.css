@@ -443,7 +443,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-.tdf-lb :is(.tdf-lb-close, .tdf-lb-tab, .tdf-lb-magnify, .tdf-lb-prev, .tdf-lb-next) {
+.tdf-lb :is(.tdf-lb-close, .tdf-lb-tab, .tdf-lb-prev, .tdf-lb-next) {
   display: inline-flex;
   flex: none;
   align-items: center;
@@ -456,14 +456,8 @@
   border-radius: 50%;
 }
 
-.tdf-lb :is(.tdf-lb-close, .tdf-lb-tab, .tdf-lb-magnify, .tdf-lb-prev, .tdf-lb-next):hover:not(:disabled) {
+.tdf-lb :is(.tdf-lb-close, .tdf-lb-tab, .tdf-lb-prev, .tdf-lb-next):hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.24);
-}
-
-/* The magnify button's right margin separates it from the close button (TDF-0076); the
-   .tdf-lb prefix matches the shared rule's specificity. */
-.tdf-lb .tdf-lb-magnify {
-  margin-right: 16px;
 }
 
 /* The close button is crimson, with a lighter crimson hover and a white glyph (TDF-0076). */
@@ -495,19 +489,10 @@
   display: none;
 }
 
-/* The magnifier (TDF-0071, loupe.js): a bar toggle, and a 500px loupe showing the image at
-   natural size. The fixed .tdf-lb layer is the loupe's containing block; it passes the pointer
-   through so the image keeps receiving the moves that place it. The 500px here is the largest
-   size; lightbox.js sets a smaller inline size when the layer's shorter side is smaller. */
-.tdf-lb .tdf-lb-magnify[aria-pressed="true"],
-.tdf-lb .tdf-lb-magnify[aria-pressed="true"]:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.4);
-}
-
-.tdf-lb-magnify[hidden] {
-  display: none;
-}
-
+/* The magnifier (TDF-0071, loupe.js): a click on the image toggles a 500px loupe showing it at
+   natural size (TDF-0077). The fixed .tdf-lb layer is the loupe's containing block; it passes the
+   pointer through so the image keeps receiving the moves that place it. The 500px here is the
+   largest size; lightbox.js sets a smaller inline size when the layer's shorter side is smaller. */
 .tdf-lb-loupe {
   position: absolute;
   width: 500px;
@@ -527,8 +512,14 @@
   display: none;
 }
 
-.tdf-lb-magnifying .tdf-lb-image {
-  cursor: crosshair;
+/* On a fine pointer the image's cursor says what a click does: zoom in while the magnifier is
+   off, zoom out while it is on. A touch-only layer has no tdf-lb-fine, and no cursor. */
+.tdf-lb-fine .tdf-lb-image {
+  cursor: zoom-in;
+}
+
+.tdf-lb-fine.tdf-lb-magnifying .tdf-lb-image {
+  cursor: zoom-out;
 }
 
 .tdf-lb-main {
@@ -564,7 +555,8 @@
   cursor: pointer;
 }
 
-/* The filmstrip fills the width and scrolls sideways; the current item is outlined white. */
+/* The filmstrip fills the width and scrolls sideways; the current item is outlined white. A
+   sideways scroll at its end does not chain to the page behind (TDF-0077). */
 .tdf-lb-strip {
   display: flex;
   flex: none;
@@ -572,6 +564,7 @@
   padding: 4px 2px;
   overflow-x: auto;
   overflow-y: hidden;
+  overscroll-behavior: contain;
   scrollbar-width: thin;
 }
 
