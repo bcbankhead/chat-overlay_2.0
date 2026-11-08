@@ -342,7 +342,7 @@ test('the magnifier toggle sits in the bar, starts off, and the button and M eac
   assert.equal(button.getAttribute('aria-pressed'), 'true', 'capital M toggles too');
 });
 
-test('while on, a move over the image places the 200px loupe at natural size, centred on the cursor', () => {
+test('while on, a move over the image places the loupe at natural size, centred on the cursor and capped to the layer', () => {
   const s = setup();
   const img = measure(s);
   const loupe = s.$('.tdf-lb-loupe');
@@ -354,8 +354,9 @@ test('while on, a move over the image places the 200px loupe at natural size, ce
   assert.equal(loupe.hidden, false);
   assert.deepEqual(
     [loupe.style.left, loupe.style.top, loupe.style.backgroundPosition, loupe.style.backgroundSize],
-    ['230px', '140px', '-400px -300px', '1000px 800px'],
+    ['130px', '40px', '-300px -200px', '1000px 800px'],
   );
+  assert.deepEqual([loupe.style.width, loupe.style.height], ['400px', '400px'], 'the 600x400 layer caps the 500px loupe to 400px');
   assert.match(loupe.style.backgroundImage, /share\/2/);
   img.dispatchEvent(new s.win.Event('mouseleave'));
   assert.equal(loupe.hidden, true, 'leaving the image hides it');
@@ -380,7 +381,7 @@ test('turning it on with the cursor resting on the image shows the loupe without
   s.$('.tdf-lb-magnify').click();
   const loupe = s.$('.tdf-lb-loupe');
   assert.equal(loupe.hidden, false);
-  assert.deepEqual([loupe.style.left, loupe.style.top], ['230px', '140px']);
+  assert.deepEqual([loupe.style.left, loupe.style.top], ['130px', '40px']);
   s.$('.tdf-lb-magnify').click();
   s.media().dispatchEvent(new s.win.Event('mouseleave'));
   pressM(s);
@@ -402,7 +403,7 @@ test('an image that loads under a still cursor shows the loupe without another m
   assert.equal(loupe.hidden, false);
   assert.deepEqual(
     [loupe.style.left, loupe.style.top, loupe.style.backgroundPosition, loupe.style.backgroundSize],
-    ['230px', '140px', '-400px -300px', '1000px 800px'],
+    ['130px', '40px', '-300px -200px', '1000px 800px'],
   );
 });
 
