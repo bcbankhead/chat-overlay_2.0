@@ -53,6 +53,14 @@
   border-top: 0;
 }
 
+/* A group inside a section (User options, TDF-0080): lighter than a section header, no rule. */
+#tdf-rail .tdf-opt-subsection {
+  margin: 14px 2px 4px;
+  font-size: 0.92em;
+  font-weight: 600;
+  opacity: 0.75;
+}
+
 #tdf-rail .tdf-opt-row,
 #tdf-rail .tdf-opt-field {
   display: flex;

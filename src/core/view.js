@@ -25,6 +25,9 @@ const NOTICE_KINDS = new Set(['entry', 'exit', 'system']);
 /** Images larger than this on either side are posted images; smaller ones are smilies. */
 const POSTED_MIN_PX = 48;
 
+/** The engine's Display User Avatars checkbox (TDF-0080), shared with the Settings row. */
+export const ENGINE_AVATARS_ID = 'userAvatarsON';
+
 /** How long a new row takes to slide into view at the bottom. */
 const SLIDE_MS = 150;
 
@@ -127,6 +130,21 @@ export function createView({
 
   container.insertAdjacentElement('afterend', root);
   container.style.visibility = 'hidden';
+
+  // The engine's Display User Avatars checkbox (TDF-0080): off hides every picture in the
+  // message view, leaving the initials tile (theme.css). Absent means pictures on. The engine
+  // sets the box from its cookie in initAll, run by window.onload, which can come after this
+  // view exists, so the class syncs at creation, one tick after load, and on any bubbling
+  // change of the box, delegated because the box may not exist yet.
+  const syncAvatars = () => {
+    const box = /** @type {HTMLInputElement | null} */ (doc.getElementById(ENGINE_AVATARS_ID));
+    root.classList.toggle('tdf-no-avatar-pics', Boolean(box) && !box?.checked);
+  };
+  syncAvatars();
+  win.addEventListener('load', () => win.setTimeout(syncAvatars, 0));
+  doc.addEventListener('change', (event) => {
+    if (/** @type {Element | null} */ (event.target)?.id === ENGINE_AVATARS_ID) syncAvatars();
+  });
 
   const track = () => {
     root.style.top = `${container.offsetTop}px`;

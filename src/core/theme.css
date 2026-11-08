@@ -320,6 +320,11 @@
   font-size: 18px;
 }
 
+/* Display User Avatars off (TDF-0080): the initials tile only, layout unchanged. */
+#tdf-chat.tdf-no-avatar-pics .tdf-avatar-img {
+  display: none;
+}
+
 #tdf-chat .tdf-head .tdf-user {
   display: inline-block;
   margin-bottom: 1px;

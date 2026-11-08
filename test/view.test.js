@@ -73,14 +73,15 @@ const NOW = new Date(2026, 0, 2, 12, 0).getTime() / 1000;
 // createView's own default.
 const CEILING = 150;
 
-async function setup({ autoScroll = true, reducedMotion = false, globals = {}, now = () => NOW, ceiling = CEILING, blocks, autoCollapse } = {}) {
+async function setup({ autoScroll = true, reducedMotion = false, globals = {}, now = () => NOW, ceiling = CEILING, blocks, autoCollapse, avatarsBox = null } = {}) {
   const win = new Window({ url: 'https://example.test/chat/' });
   const frames = stubFrames(win);
   const resizes = stubResize(win);
   win.matchMedia = (query) => ({ matches: reducedMotion && query.includes('prefers-reduced-motion: reduce') });
   Object.assign(win, globals);
   const doc = win.document;
-  doc.body.innerHTML = `<div id="chatContainer"></div><input type="checkbox" id="autoScrollID" ${autoScroll ? 'checked' : ''}>`;
+  doc.body.innerHTML = `<div id="chatContainer"></div><input type="checkbox" id="autoScrollID" ${autoScroll ? 'checked' : ''}>` +
+    (avatarsBox === null ? '' : `<input type="checkbox" id="userAvatarsON" ${avatarsBox ? 'checked' : ''}>`);
   win.addSmilie = (t) => t.split(':h').join('<img src="smilies/heart.gif">');
   const whispered = [];
   win.whisperUser = (name) => whispered.push(name);
@@ -1491,4 +1492,46 @@ test('collapseAll with no blocks open stores nothing', async () => {
   view.replay([blockRec({ id: 'b1', mTime: '50' })]);
   view.collapseAll();
   assert.deepEqual(blocks.toggles, []);
+});
+
+// TDF-0080: the engine's Display User Avatars box hides the pictures in the message view.
+
+test('with no engine avatars box the view shows pictures', async () => {
+  const { root } = await setup();
+  assert.equal(root.classList.contains('tdf-no-avatar-pics'), false);
+});
+
+test('the avatar class follows the engine box at creation', async () => {
+  const off = await setup({ avatarsBox: false });
+  assert.equal(off.root.classList.contains('tdf-no-avatar-pics'), true);
+  const on = await setup({ avatarsBox: true });
+  assert.equal(on.root.classList.contains('tdf-no-avatar-pics'), false);
+});
+
+test('the avatar class syncs one tick after load, once the engine has set its box', async () => {
+  const { win, doc, root } = await setup({ avatarsBox: true });
+  const box = /** @type {HTMLInputElement} */ (doc.getElementById('userAvatarsON'));
+  // initAll, run by window.onload, sets the box from the cookie without a change event.
+  box.checked = false;
+  win.dispatchEvent(new win.Event('load'));
+  assert.equal(root.classList.contains('tdf-no-avatar-pics'), false, 'not before the tick');
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(root.classList.contains('tdf-no-avatar-pics'), true);
+});
+
+test('the avatar class follows a bubbling change of the box, even one added after the view', async () => {
+  const { win, doc, root } = await setup();
+  doc.body.insertAdjacentHTML('beforeend', '<div id="editDiv"><input type="checkbox" id="userAvatarsON" checked></div>');
+  const box = /** @type {HTMLInputElement} */ (doc.getElementById('userAvatarsON'));
+  box.checked = false;
+  box.dispatchEvent(new win.Event('change', { bubbles: true }));
+  assert.equal(root.classList.contains('tdf-no-avatar-pics'), true);
+  box.checked = true;
+  box.dispatchEvent(new win.Event('change', { bubbles: true }));
+  assert.equal(root.classList.contains('tdf-no-avatar-pics'), false);
+});
+
+test('theme.css hides avatar pictures under the class, leaving the initials tile', () => {
+  const css = readFileSync(new URL('../src/core/theme.css', import.meta.url), 'utf8');
+  assert.match(css, /#tdf-chat\.tdf-no-avatar-pics \.tdf-avatar-img\s*\{\s*display: none;\s*\}/);
 });
