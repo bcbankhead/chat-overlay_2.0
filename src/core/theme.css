@@ -457,3 +457,43 @@
 #tdf-chat .tdf-block-hidden {
   display: none;
 }
+
+/* Narrow layout (TDF-0068): rail.js sets tdf-narrow on <html> at or under its NARROW_MAX, and
+   every rule here keys on that class, never on a width of its own. The engine's resizeDivs
+   writes inline px sizes on load and every resize, clamped to at least 640 x 480, so these
+   override them with !important. The page's box follows the visual viewport (--tdf-vvh and
+   --tdf-vvtop, written by rail.js), keeping the composer at its bottom above the on-screen
+   keyboard. The message view tracks #chatContainer's box (view.js), and the list keeps its
+   16px bottom padding (TDF-0042), so the last row stays clear of the composer. */
+:root.tdf-narrow #mainContainer {
+  top: var(--tdf-vvtop, 0px) !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: var(--tdf-vvh, 100dvh) !important;
+}
+
+:root.tdf-narrow #topContainer {
+  display: none !important;
+}
+
+/* From 8px below the top to 6px above the composer block (120px, its border, 5px offset). */
+:root.tdf-narrow #chatContainer {
+  top: 8px !important;
+  left: 5px !important;
+  box-sizing: border-box !important;
+  width: calc(100% - 10px) !important;
+  height: calc(100% - 141px) !important;
+}
+
+:root.tdf-narrow #optionsContainer {
+  width: calc(100% - 12px) !important;
+}
+
+:root.tdf-narrow #optionsIcons {
+  width: calc(100% - 80px) !important;
+}
+
+:root.tdf-narrow,
+:root.tdf-narrow body {
+  overflow-x: hidden;
+}

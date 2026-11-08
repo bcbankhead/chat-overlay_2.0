@@ -452,3 +452,151 @@ body:has(#tdf-rail:not(.tdf-rail-failed)) :is(#roomIcon, #roomCreate, #roomSelec
     transition: none !important;
   }
 }
+
+/* Narrow layout (TDF-0068). rail.js sets tdf-narrow on <html> at or under its NARROW_MAX;
+   every rule here keys on that class, never on a width of its own. A failed rail keeps its
+   desktop geometry over the engine's list, so none of this applies to one. */
+
+/* The drawer: fixed to the right edge, full height, off-screen until opened. Open, it has no
+   transform at all, so the full-screen flyout inside it is placed against the viewport. */
+:root.tdf-narrow #tdf-rail:not(.tdf-rail-failed) {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: auto;
+  width: min(300px, 85vw);
+  height: auto;
+  /* Above the open button (8), under the media popover (gallery.css, 20). */
+  z-index: 12;
+  border-radius: 10px 0 0 10px;
+  border-right: 0;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.25);
+  transform: translateX(calc(100% + 24px));
+  visibility: hidden;
+  transition:
+    transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    visibility 0s linear 220ms;
+}
+
+:root.tdf-narrow #tdf-rail.tdf-drawer-open:not(.tdf-rail-failed) {
+  transform: none;
+  visibility: visible;
+  transition:
+    transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    visibility 0s;
+}
+
+/* Under the drawer: a tap here closes it (rail.js). */
+#tdf-rail-scrim {
+  display: none;
+}
+
+:root.tdf-narrow #tdf-rail-scrim.tdf-open {
+  position: fixed;
+  inset: 0;
+  z-index: 11;
+  display: block;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+/* The open button: over the message view's top-right corner, clear of the composer and of
+   the newest message at the bottom. The current room's online count follows the glyph. */
+#tdf-rail-open {
+  display: none;
+}
+
+:root.tdf-narrow body:has(#tdf-rail:not(.tdf-rail-failed)) #tdf-rail-open {
+  position: fixed;
+  top: 14px;
+  right: 18px;
+  z-index: 8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  color: var(--tdf-fg);
+  background: var(--tdf-rail-chip-bg);
+  border: 1px solid var(--tdf-rail-chip-border);
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  font: 600 13px/1 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  cursor: pointer;
+}
+
+#tdf-rail-open .tdf-rail-glyph {
+  display: inline-flex;
+  line-height: 1;
+}
+
+#tdf-rail-open svg {
+  width: 20px;
+  height: 20px;
+}
+
+#tdf-rail-open [hidden] {
+  display: none;
+}
+
+/* Touch targets: at least 44px for every control in the drawer. TDF-0059's Recently online
+   rule spacing is left as built. */
+:root.tdf-narrow #tdf-rail .tdf-rail-icon-btn {
+  min-width: 44px;
+  height: 44px;
+}
+
+:root.tdf-narrow #tdf-rail :is(.tdf-rail-room-chip, .tdf-rail-join, .tdf-rail-logout, .tdf-rail-user, .tdf-rail-menu-item) {
+  min-height: 44px;
+}
+
+/* Full-screen flyouts, with their own close button; no slide, no corner radius. */
+:root.tdf-narrow #tdf-rail:not(.tdf-rail-failed) .tdf-rail-flyout {
+  position: fixed;
+  inset: 0;
+  width: auto;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  transform: none;
+}
+
+#tdf-rail .tdf-rail-flyout-close {
+  display: none;
+}
+
+:root.tdf-narrow #tdf-rail:not(.tdf-rail-failed) .tdf-rail-flyout-close {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-end;
+  width: 44px;
+  height: 44px;
+  margin: 6px 6px 0 0;
+  padding: 0;
+  color: var(--tdf-fg);
+  background: var(--tdf-rail-chip-bg);
+  border: 1px solid var(--tdf-rail-chip-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+#tdf-rail .tdf-rail-flyout-close svg {
+  width: 20px;
+  height: 20px;
+}
+
+:root.tdf-narrow #tdf-rail .tdf-rail-flyout .tdf-rail-body {
+  flex: 1 1 auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root.tdf-narrow #tdf-rail:not(.tdf-rail-failed),
+  :root.tdf-narrow #tdf-rail.tdf-drawer-open:not(.tdf-rail-failed) {
+    transition: none !important;
+  }
+}

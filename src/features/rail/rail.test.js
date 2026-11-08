@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { Window } from 'happy-dom';
 import { listPanels, registerRailPanel, registerUserMenuAction } from './api.js';
 import { ICONS } from './icons.js';
-import { startRail } from './rail.js';
+import { NARROW_MAX, NARROW_QUERY, ensureViewport, mountRail, startRail } from './rail.js';
 import { createPresence, presence as pagePresence } from '../../core/presence.js';
 import { LIST_CAP, createUserStore } from './userList.js';
 
@@ -1343,4 +1343,340 @@ test('without an injected store the rail reads the page presence store the engin
   const t = setup({ flags: { roomID: 3 } });
   assert.deepEqual(offlineNames(t.doc, '3'), ['Paged']);
   await t.teardown();
+});
+
+// Narrow layout (TDF-0068).
+
+/** A matchMedia whose NARROW_QUERY answer the test sets, telling its change listeners. */
+function stubNarrow(win, matches = false) {
+  const listeners = new Set();
+  const query = {
+    matches,
+    media: NARROW_QUERY,
+    addEventListener: (type, fn) => type === 'change' && listeners.add(fn),
+    removeEventListener: (type, fn) => type === 'change' && listeners.delete(fn),
+  };
+  const base = win.matchMedia.bind(win);
+  win.matchMedia = (q) => (q === NARROW_QUERY ? query : base(q));
+  return {
+    listeners,
+    set(on) {
+      query.matches = on;
+      for (const fn of [...listeners]) fn({ matches: on, media: NARROW_QUERY });
+    },
+  };
+}
+
+/** setup() with the narrow query stubbed before the rail mounts. */
+function narrowSetup({ narrow = true, visualViewport = null, ...rest } = {}) {
+  let mq;
+  const t = setup({
+    ...rest,
+    prepare: (doc) => {
+      const win = doc.defaultView;
+      mq = stubNarrow(win, narrow);
+      if (visualViewport) Object.defineProperty(win, 'visualViewport', { value: visualViewport, configurable: true });
+      rest.prepare?.(doc);
+    },
+  });
+  const html = t.doc.documentElement;
+  const rail = t.doc.getElementById('tdf-rail');
+  const opener = t.doc.getElementById('tdf-rail-open');
+  const scrim = t.doc.getElementById('tdf-rail-scrim');
+  const drawerOpen = () => rail.classList.contains('tdf-drawer-open');
+  const esc = () => t.doc.dispatchEvent(new t.win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  return { ...t, mq, html, rail, opener, scrim, drawerOpen, esc };
+}
+
+const testPanel = (id = 'narrow-test') =>
+  registerRailPanel({ id, title: 'Narrow test', icon: 'N', render: (body) => body.append('panel body') });
+
+test('the breakpoint is NARROW_MAX, 640px, and the tdf-narrow class follows the query live', async () => {
+  assert.equal(NARROW_MAX, 640);
+  assert.equal(NARROW_QUERY, '(max-width: 640px)');
+  const t = narrowSetup({ narrow: false });
+  assert.equal(t.html.classList.contains('tdf-narrow'), false);
+  t.mq.set(true);
+  assert.equal(t.html.classList.contains('tdf-narrow'), true);
+  t.mq.set(false);
+  assert.equal(t.html.classList.contains('tdf-narrow'), false);
+  await t.teardown();
+  assert.equal(t.mq.listeners.size, 0, 'the change listener is removed on teardown');
+});
+
+test('crossing the breakpoint either way closes an open flyout and the drawer', async () => {
+  const off = testPanel();
+  const t = narrowSetup({ narrow: true });
+  t.opener.click();
+  t.icon('narrow-test').click();
+  assert.ok(t.isOpen() && t.drawerOpen());
+  t.mq.set(false);
+  assert.equal(t.isOpen(), false, 'the flyout closed');
+  assert.equal(t.drawerOpen(), false, 'the drawer closed');
+  t.icon('narrow-test').click();
+  assert.ok(t.isOpen());
+  t.mq.set(true);
+  assert.equal(t.isOpen(), false, 'a desktop flyout closes on entering narrow');
+  off();
+  await t.teardown();
+});
+
+test('the open button toggles the drawer; a scrim tap and Esc close it, and the tap is swallowed', async () => {
+  const t = narrowSetup();
+  assert.equal(t.opener.parentElement, t.doc.body);
+  assert.equal(t.opener.getAttribute('aria-controls'), 'tdf-rail');
+  assert.equal(t.opener.getAttribute('aria-expanded'), 'false');
+  t.opener.click();
+  assert.ok(t.drawerOpen());
+  assert.ok(t.scrim.classList.contains('tdf-open'));
+  assert.equal(t.opener.getAttribute('aria-expanded'), 'true');
+  let reached = false;
+  t.doc.body.addEventListener('click', () => (reached = true));
+  const click = new t.win.MouseEvent('click', { bubbles: true, cancelable: true });
+  t.scrim.dispatchEvent(click);
+  assert.equal(t.drawerOpen(), false);
+  assert.equal(t.scrim.classList.contains('tdf-open'), false);
+  assert.ok(click.defaultPrevented && !reached, 'the scrim tap reaches nothing under it');
+  t.opener.click();
+  t.esc();
+  assert.equal(t.drawerOpen(), false, 'Esc closes the drawer');
+  t.opener.click();
+  t.opener.click();
+  assert.equal(t.drawerOpen(), false, 'the button toggles');
+  await t.teardown();
+  assert.equal(t.doc.getElementById('tdf-rail-open'), null, 'the button is removed on teardown');
+  assert.equal(t.doc.getElementById('tdf-rail-scrim'), null, 'the scrim is removed on teardown');
+  assert.equal(t.html.classList.contains('tdf-narrow'), false, 'the class is removed on teardown');
+});
+
+test('Esc closes the flyout first, back to the open drawer, then the drawer', async () => {
+  const off = testPanel();
+  const t = narrowSetup();
+  t.opener.click();
+  t.icon('narrow-test').click();
+  t.esc();
+  assert.equal(t.isOpen(), false);
+  assert.ok(t.drawerOpen(), 'closing the flyout returns to the open drawer');
+  t.esc();
+  assert.equal(t.drawerOpen(), false);
+  off();
+  await t.teardown();
+});
+
+test('the flyout close button closes it, back to the drawer, and survives a panel switch', async () => {
+  const offA = testPanel('narrow-a');
+  const offB = testPanel('narrow-b');
+  const t = narrowSetup();
+  t.opener.click();
+  t.icon('narrow-a').click();
+  const closeBtn = t.flyout().querySelector('.tdf-rail-flyout-close');
+  assert.ok(closeBtn, 'the flyout has a close button');
+  assert.equal(closeBtn.getAttribute('aria-label'), 'Close');
+  assert.ok(t.flyout().querySelector('.tdf-rail-body'), 'the body sits beside it');
+  t.icon('narrow-b').click();
+  assert.equal(t.flyout().querySelector('.tdf-rail-flyout-close'), closeBtn, 'the same button after a switch');
+  assert.equal(t.flyout().querySelectorAll('.tdf-rail-body').length, 1);
+  closeBtn.click();
+  assert.equal(t.isOpen(), false);
+  assert.ok(t.drawerOpen(), 'the drawer stays open');
+  offA();
+  offB();
+  await t.teardown();
+});
+
+test('a flyout opened by its handle under narrow opens the drawer it lives in', async () => {
+  const handle = testPanel();
+  const t = narrowSetup();
+  handle.open();
+  assert.ok(t.isOpen() && t.drawerOpen());
+  handle();
+  await t.teardown();
+});
+
+test('under narrow the copied rect is cleared, and restored on leaving', async () => {
+  const rect = { top: 80, left: 900, width: 236, height: 500 };
+  const t = narrowSetup({
+    narrow: false,
+    prepare: (doc) => (doc.getElementById('userContainer').getBoundingClientRect = () => rect),
+  });
+  const style = () => {
+    const s = t.rail.style;
+    return [s.top, s.left, s.width, s.height];
+  };
+  assert.deepEqual(style(), ['80px', '900px', '236px', '500px']);
+  t.mq.set(true);
+  assert.deepEqual(style(), ['', '', '', '']);
+  t.win.dispatchEvent(new t.win.Event('resize'));
+  await nextFrame();
+  assert.deepEqual(style(), ['', '', '', ''], 'a resize under narrow writes no rect');
+  t.mq.set(false);
+  assert.deepEqual(style(), ['80px', '900px', '236px', '500px']);
+  await t.teardown();
+});
+
+test("the open button shows the current room's online count and follows the list", async () => {
+  const t = narrowSetup();
+  const count = t.opener.querySelector('.tdf-rail-open-count');
+  assert.equal(count.hidden, false);
+  assert.equal(count.textContent, '2');
+  assert.equal(t.opener.getAttribute('aria-label'), 'Users and rooms, 2 online');
+  t.doc.getElementById('room_1').insertAdjacentHTML('beforeend', row('20', 'Carol', '1'));
+  t.doc.getElementById('userCount_1').textContent = '3';
+  await nextFrame();
+  assert.equal(count.textContent, '3');
+  await t.teardown();
+});
+
+test('the open button hides its count when the current room is not in the list', async () => {
+  const t = narrowSetup({ flags: { roomID: 99 } });
+  const count = t.opener.querySelector('.tdf-rail-open-count');
+  assert.equal(count.hidden, true);
+  assert.equal(count.textContent, '');
+  assert.equal(t.opener.getAttribute('aria-label'), 'Users and rooms');
+  await t.teardown();
+});
+
+/**
+ * mountRail itself under the narrow query, for the API startRail keeps to itself (fail). The
+ * narrow wrapper (narrowSetup) goes through startRail, which calls fail only while mounting.
+ */
+function narrowMount(rect = { top: 80, left: 900, width: 236, height: 500 }) {
+  const win = new Window();
+  const doc = win.document;
+  doc.body.innerHTML = '<div id="userContainer"></div>';
+  const target = doc.getElementById('userContainer');
+  target.getBoundingClientRect = () => rect;
+  stubNarrow(win, true);
+  const rail = mountRail({ doc, win, target, raise: 30, shell: stubShell() });
+  const root = doc.getElementById('tdf-rail');
+  const opener = doc.getElementById('tdf-rail-open');
+  const scrim = doc.getElementById('tdf-rail-scrim');
+  const drawerOpen = () => root.classList.contains('tdf-drawer-open');
+  return { win, doc, rail, root, opener, scrim, drawerOpen };
+}
+
+test('a rail that fails under narrow closes its drawer and scrim, and nothing reopens them', () => {
+  const off = testPanel();
+  const t = narrowMount();
+  t.opener.click();
+  assert.ok(t.drawerOpen() && t.scrim.classList.contains('tdf-open'));
+  t.rail.fail(new Error('x'));
+  assert.equal(t.drawerOpen(), false, 'the drawer closed');
+  assert.equal(t.scrim.classList.contains('tdf-open'), false, 'the scrim closed');
+  assert.equal(t.opener.getAttribute('aria-expanded'), 'false');
+  off.open();
+  assert.equal(t.drawerOpen(), false, 'show() after fail does not open the drawer');
+  assert.equal(t.scrim.classList.contains('tdf-open'), false);
+  t.opener.click();
+  assert.equal(t.drawerOpen(), false, 'nor does the open button');
+  off();
+  t.rail.destroy();
+});
+
+test('a failed rail under narrow falls back to the copied rect, without the raise, and has no open button', () => {
+  const t = narrowMount();
+  const style = () => {
+    const s = t.root.style;
+    return [s.top, s.left, s.width, s.height];
+  };
+  assert.deepEqual(style(), ['', '', '', ''], 'a working narrow rail copies no rect');
+  t.rail.fail(new Error('x'));
+  assert.ok(t.root.classList.contains('tdf-rail-failed'));
+  assert.deepEqual(style(), ['80px', '900px', '236px', '500px'], "it covers #userContainer's box again");
+  // The open button shows only beside a working rail (rail.css); a press does nothing.
+  const css = readFileSync(new URL('./rail.css', import.meta.url), 'utf8');
+  assert.match(css, /#tdf-rail-open \{\s*display: none;\s*\}/);
+  assert.match(css, /:root\.tdf-narrow body:has\(#tdf-rail:not\(\.tdf-rail-failed\)\) #tdf-rail-open \{[^}]*display: inline-flex/);
+  t.opener.click();
+  assert.equal(t.drawerOpen(), false);
+  assert.equal(t.opener.getAttribute('aria-expanded'), 'false');
+  t.rail.destroy();
+});
+
+test('the visual viewport writes --tdf-vvh and --tdf-vvtop while narrow, and they go on leaving', async () => {
+  const listeners = new Map();
+  const vv = {
+    height: 400,
+    offsetTop: 0,
+    addEventListener: (type, fn) => listeners.set(type, fn),
+    removeEventListener: (type, fn) => listeners.get(type) === fn && listeners.delete(type),
+  };
+  const t = narrowSetup({ visualViewport: vv });
+  const prop = (name) => t.html.style.getPropertyValue(name);
+  assert.equal(prop('--tdf-vvh'), '400px');
+  assert.equal(prop('--tdf-vvtop'), '0px');
+  vv.height = 250;
+  vv.offsetTop = 30;
+  listeners.get('resize')();
+  assert.equal(prop('--tdf-vvh'), '250px');
+  assert.equal(prop('--tdf-vvtop'), '30px');
+  t.mq.set(false);
+  assert.equal(prop('--tdf-vvh'), '');
+  assert.equal(listeners.size, 0, 'the viewport listeners are removed on leaving narrow');
+  t.mq.set(true);
+  assert.equal(listeners.size, 2);
+  await t.teardown();
+  assert.equal(listeners.size, 0, 'and on teardown');
+  assert.equal(prop('--tdf-vvh'), '');
+});
+
+test('a viewport meta is injected only when the page has none; an existing one is kept as it is', () => {
+  const bare = new Window().document;
+  ensureViewport(bare);
+  const metas = bare.querySelectorAll('meta[name="viewport"]');
+  assert.equal(metas.length, 1);
+  assert.equal(metas[0].getAttribute('content'), 'width=device-width, initial-scale=1');
+  ensureViewport(bare);
+  assert.equal(bare.querySelectorAll('meta[name="viewport"]').length, 1, 'idempotent');
+
+  const engine = new Window().document;
+  engine.head.innerHTML = '<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=yes">';
+  ensureViewport(engine);
+  const kept = engine.querySelectorAll('meta[name="viewport"]');
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].getAttribute('content'), 'width=device-width, initial-scale=1, user-scalable=yes');
+});
+
+test('startRail injects a viewport meta when the page has none', async () => {
+  const t = setup();
+  assert.equal(t.doc.querySelectorAll('meta[name="viewport"]').length, 1);
+  await t.teardown();
+});
+
+test('narrow CSS keys on :root.tdf-narrow and never on a width media query', () => {
+  const files = [
+    './rail.css',
+    '../../core/theme.css',
+    '../composer/composer.css',
+    '../gallery/gallery.css',
+    '../options/options.css',
+    '../profile/profile.css',
+  ];
+  for (const file of files) {
+    const css = readFileSync(new URL(file, import.meta.url), 'utf8');
+    assert.doesNotMatch(css, /@media[^{]*(max|min)-width/, `${file} has no width media query`);
+  }
+  const rail = readFileSync(new URL('./rail.css', import.meta.url), 'utf8');
+  assert.match(rail, /:root\.tdf-narrow #tdf-rail:not\(\.tdf-rail-failed\) \{[^}]*width: min\(300px, 85vw\)/);
+  assert.match(rail, /:root\.tdf-narrow #tdf-rail\.tdf-drawer-open:not\(\.tdf-rail-failed\) \{[^}]*transform: none/);
+  assert.match(rail, /:root\.tdf-narrow #tdf-rail:not\(\.tdf-rail-failed\) \.tdf-rail-flyout \{[^}]*position: fixed;[^}]*inset: 0/);
+  const theme = readFileSync(new URL('../../core/theme.css', import.meta.url), 'utf8');
+  assert.match(theme, /:root\.tdf-narrow #mainContainer \{[^}]*height: var\(--tdf-vvh, 100dvh\) !important/);
+  assert.match(theme, /:root\.tdf-narrow #chatContainer \{[^}]*width: calc\(100% - 10px\) !important/);
+  assert.match(theme, /#tdf-chat \.tdf-list \{[^}]*padding: 4px 0 16px/, 'the TDF-0042 bottom padding is kept');
+  const gallery = readFileSync(new URL('../gallery/gallery.css', import.meta.url), 'utf8');
+  assert.match(gallery, /:root\.tdf-narrow\[data-tdf-theme\] #tdf-rail \.tdf-gallery-grid \{[^}]*repeat\(3, minmax\(0, 1fr\)\)/);
+});
+
+test('narrow touch targets are at least 44px: icon buttons, rows, Logout, menu items, the open and close buttons', () => {
+  const css = readFileSync(new URL('./rail.css', import.meta.url), 'utf8');
+  assert.match(css, /:root\.tdf-narrow #tdf-rail \.tdf-rail-icon-btn \{[^}]*min-width: 44px;[^}]*height: 44px/);
+  const rows = /:root\.tdf-narrow #tdf-rail :is\(([^)]*)\) \{([^}]*)\}/.exec(css);
+  assert.ok(rows);
+  assert.deepEqual(rows[1].split(',').map((s) => s.trim()),
+    ['.tdf-rail-room-chip', '.tdf-rail-join', '.tdf-rail-logout', '.tdf-rail-user', '.tdf-rail-menu-item']);
+  assert.match(rows[2], /min-height: 44px/);
+  assert.match(css, /#tdf-rail-open \{[^}]*min-width: 44px;[^}]*height: 44px/);
+  assert.match(css, /\.tdf-rail-flyout-close \{[^}]*width: 44px;[^}]*height: 44px/);
+  assert.match(css, /#tdf-rail \.tdf-rail-rule \{[^}]*margin: 36px 8px 2px/, 'the TDF-0059 spacing is unchanged');
 });

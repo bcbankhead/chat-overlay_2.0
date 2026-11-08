@@ -614,3 +614,20 @@
   height: 24px;
   opacity: 0.85;
 }
+
+/* Narrow layout (TDF-0068, keyed on rail.js's tdf-narrow class): the full-screen flyout's grid
+   is three fluid columns of square tiles, so it never scrolls sideways. */
+:root.tdf-narrow[data-tdf-theme] #tdf-rail .tdf-gallery-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+:root.tdf-narrow[data-tdf-theme] #tdf-rail :is(.tdf-gallery-tile, .tdf-gallery-slot, .tdf-gallery-thumb) {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+}
+
+/* A lifted tile is out of the grid's flow, so it takes one column's width explicitly. */
+:root.tdf-narrow[data-tdf-theme] #tdf-rail .tdf-gallery-tile.tdf-dragging {
+  width: calc((100% - 12px) / 3);
+}

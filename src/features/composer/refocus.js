@@ -1,29 +1,34 @@
 // The message box is where focus belongs. It takes focus when the chat loads, when the last open
-// menu, picker, flyout or media popover closes, after a plain click outside every other field,
-// after a middle click or a right press, when a focused control is removed from the page, when a
-// printable key is pressed with nothing editable focused (the key lands in the box), and when the
-// window regains focus. Clicks are watched in the capture phase, so a control that stops a click's
-// propagation (gallery buttons, a drag release swallowed on its root) still hands focus back
-// (TDF-0061). It never takes focus from another text field, from a text selection the user has
-// made, or while a menu or the media popover (TDF-0035) is open — the popover's arrow keys reach it
-// only while focus is off the box (TDF-0040). A press that closes a menu leaves the decision to
-// its click, so a drag that starts outside a menu still selects text; a press that removes the
-// focused control is settled when it ends, click or no click. Clicks, removals, load and window focus are mouse-only: on a touch screen each would open
+// menu, picker, flyout, narrow-layout drawer (TDF-0068) or media popover closes, after a plain
+// click outside every other field, after a middle click or a right press, when a focused control
+// is removed from the page, when a printable key is pressed with nothing editable focused (the key
+// lands in the box), and when the window regains focus. Clicks are watched in the capture phase, so
+// a control that stops a click's propagation (gallery buttons, a drag release swallowed on its
+// root) still hands focus back (TDF-0061). It never takes focus from another text field, from a
+// text selection the user has made, or while a menu, the drawer or the media popover (TDF-0035) is
+// open — the popover's arrow keys reach it only while focus is off the box (TDF-0040). A press that
+// closes a menu leaves the decision to its click, so a drag that starts outside a menu still
+// selects text; a press that removes the focused control is settled when it ends, click or no
+// click. Clicks, removals, load and window focus are mouse-only: on a touch screen each would open
 // the keyboard. A keyboard-activated click (Enter or Space on a focused control) or context menu
 // leaves focus on that control, and a popover closed from the keyboard or on a touch screen leaves
-// focus where the popover returned it (its opener). The menus belong to other slices, so they are
-// watched, not wired (TDF-0009 Shared Contract, Extension points).
+// focus where the popover returned it (its opener); a drawer closed from the keyboard or on a touch
+// screen leaves focus where it is, so closing it never raises the on-screen keyboard. The menus
+// belong to other slices, so they are watched, not wired (TDF-0009 Shared Contract, Extension
+// points).
 
 const POPOVER = '.tdf-lb';
+const DRAWER = '#tdf-rail.tdf-drawer-open';
 /** The mouse events after which the box takes focus back. */
 const PRESSES = /** @type {const} */ (['click', 'auxclick', 'contextmenu']);
 
 /**
- * A menu, picker, flyout or media popover that is open, by the markup its owner gives it. The
- * popover's layer (`.tdf-lb`, gallery/lightbox.js) exists only while it is open.
+ * A menu, picker, flyout, the narrow-layout drawer (TDF-0068) or media popover that is open, by
+ * the markup its owner gives it. The popover's layer (`.tdf-lb`, gallery/lightbox.js) exists
+ * only while it is open.
  */
 export const OPEN_MENU =
-  `.tdf-rail-menu:not([hidden]), .tdf-sm-picker:not([hidden]), .tdf-rail-flyout.tdf-open, ${POPOVER}`;
+  `.tdf-rail-menu:not([hidden]), .tdf-sm-picker:not([hidden]), .tdf-rail-flyout.tdf-open, ${DRAWER}, ${POPOVER}`;
 
 /**
  * Whether `el` takes typing of its own, so focus must stay with it.
@@ -62,6 +67,8 @@ export function installRefocus(bar, doc = bar.ownerDocument) {
   const popoverOpen = () => doc.querySelector(POPOVER) !== null;
   let wasOpen = menuOpen();
   let popoverWasOpen = popoverOpen();
+  const drawerOpen = () => doc.querySelector(DRAWER) !== null;
+  let drawerWasOpen = drawerOpen();
   let pressing = false;
   let touch = false;
   /** whether the last input was a key rather than a pointer press */
@@ -96,9 +103,10 @@ export function installRefocus(bar, doc = bar.ownerDocument) {
   const check = () => {
     const isOpen = menuOpen();
     // A close during a press is settled by that press's click. The popover returns focus to its
-    // opener itself; a keyboard or touch close keeps it there.
-    const popoverKept = popoverWasOpen && (keyed || coarse());
-    if (wasOpen && !isOpen && !pressing && !popoverKept) take();
+    // opener itself; a keyboard or touch close keeps it there. A keyboard or touch drawer close
+    // leaves focus where it is too.
+    const kept = (popoverWasOpen || drawerWasOpen) && (keyed || coarse());
+    if (wasOpen && !isOpen && !pressing && !kept) take();
     // A focused control removed from the page (a trashed tile, a re-rendered rail row) drops focus
     // to the body. During a press it waits for the press's end; not on a touch screen.
     if (!pressing && dropped()) {
@@ -107,6 +115,7 @@ export function installRefocus(bar, doc = bar.ownerDocument) {
     }
     wasOpen = isOpen;
     popoverWasOpen = popoverOpen();
+    drawerWasOpen = drawerOpen();
   };
   /**
    * A mouse click, middle click or right press, seen in the capture phase so a target that stops

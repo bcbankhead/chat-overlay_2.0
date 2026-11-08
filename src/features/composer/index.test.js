@@ -1681,3 +1681,56 @@ test('a file chooser closed with no file attaches nothing and says nothing', () 
   assert.equal(/** @type {any} */ (document.querySelector('.tdf-attach-thumb')).hidden, true);
   assert.equal(document.querySelector('.tdf-attach-hint')?.classList.contains('tdf-attach-refused'), false);
 });
+
+test('a click inside the open narrow-layout drawer does not refocus the box (TDF-0068)', async () => {
+  const { window, document, bar } = page();
+  await settle();
+  const drawer = document.createElement('div');
+  drawer.id = 'tdf-rail';
+  drawer.className = 'tdf-drawer-open';
+  const row = document.createElement('button');
+  drawer.appendChild(row);
+  document.body.appendChild(drawer);
+  assert.ok(drawer.matches(OPEN_MENU), 'the open drawer matches OPEN_MENU');
+  await settle();
+  bar.blur();
+  await press(window, row);
+  await settle();
+  assert.ok(document.activeElement !== bar, 'a click in the drawer leaves focus off the box');
+  drawer.classList.remove('tdf-drawer-open');
+  assert.equal(drawer.matches(OPEN_MENU), false, 'a closed drawer is not an open menu');
+});
+
+/**
+ * Opens the narrow-layout drawer on `document`, as the rail marks it.
+ * @param {Document} document
+ */
+function openDrawer(document) {
+  const drawer = document.createElement('div');
+  drawer.id = 'tdf-rail';
+  drawer.className = 'tdf-drawer-open';
+  document.body.appendChild(drawer);
+  return drawer;
+}
+
+test('closing the narrow-layout drawer on a touch screen does not refocus the box (TDF-0068)', async () => {
+  const { document, bar } = page({ coarse: true });
+  await settle();
+  const drawer = openDrawer(document);
+  await settle();
+  bar.blur();
+  drawer.classList.remove('tdf-drawer-open');
+  await settle();
+  assert.ok(document.activeElement !== bar, 'the box stays unfocused, so no keyboard opens');
+});
+
+test('closing the narrow-layout drawer with a mouse refocuses the box (TDF-0068)', async () => {
+  const { document, bar } = page();
+  await settle();
+  const drawer = openDrawer(document);
+  await settle();
+  bar.blur();
+  drawer.classList.remove('tdf-drawer-open');
+  await settle();
+  assert.equal(document.activeElement, bar, 'the box takes focus back once the drawer closes');
+});

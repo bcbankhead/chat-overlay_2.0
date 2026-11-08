@@ -299,3 +299,13 @@
   font: 13px/1 system-ui, sans-serif;
   cursor: pointer;
 }
+
+/* Narrow layout (TDF-0068, keyed on rail.js's tdf-narrow class): the box takes the width and a
+   narrower Send stays on screen at the right. */
+:root.tdf-narrow[data-tdf-theme] #optionsBar {
+  width: calc(100% - 80px) !important;
+}
+
+:root.tdf-narrow[data-tdf-theme] #optionsSend {
+  width: 64px !important;
+}
