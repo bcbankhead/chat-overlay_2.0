@@ -120,13 +120,72 @@ function stubLimits({ images = 0, failPrune = false, stored = {}, failDelete = f
   };
 }
 
-function setup({ settings = stubSettings(), limits = stubLimits(), engine = true, loadFailure = undefined, prepare = (/** @type {any} */ _win) => {} } = {}) {
+// The engine's User Options (TDF-0080): its seven editDiv checkboxes and globals, and a replica of
+// functions.js.php's updateUserSettings, which reads all seven boxes into the globals and writes
+// the myOptions cookie string, recorded in `win.cookies`.
+const ENGINE_OPTIONS = /** @type {const} */ ([
+  ['allowPM', 'userRPM'],
+  ['viewMyCamID', 'userRWebcam'],
+  ['entryExitID', 'userEntryExitSFX'],
+  ['soundsID', 'userNewMessageSFX'],
+  ['sfxID', 'userSFX'],
+  ['userAvatarsON', 'userAvatarsON'],
+  ['userMessStyle', 'userMessStyle'],
+]);
+// The engine defaults: PM, sounds and avatars on; webcam off. Modern Message Style is on here so
+// a test can see it written back unchanged.
+/** @type {Record<string, boolean>} */
+const ENGINE_DEFAULTS = { allowPM: true, viewMyCamID: false, entryExitID: true, soundsID: true, sfxID: true, userAvatarsON: true, userMessStyle: true };
+
+/**
+ * @param {any} win
+ * @param {{ values?: Record<string, boolean>, omit?: string[], update?: 'ok' | 'missing' | 'throws' | 'throwsAfterGlobals' }} opts
+ */
+function installEngineOptions(win, { values = {}, omit = [], update = 'ok' }) {
+  const doc = win.document;
+  const div = doc.createElement('div');
+  div.id = 'editDiv';
+  div.hidden = true;
+  const state = { ...ENGINE_DEFAULTS, ...values };
+  for (const [id, global] of ENGINE_OPTIONS) {
+    win[global] = state[id];
+    if (omit.includes(id)) continue;
+    const box = doc.createElement('input');
+    box.type = 'checkbox';
+    box.id = id;
+    box.checked = win[global];
+    div.append(box);
+  }
+  doc.body.prepend(div);
+  win.cookies = [];
+  if (update === 'missing') return;
+  win.updateUserSettings = () => {
+    if (update === 'throws') throw new Error('cookie refused');
+    for (const [id, global] of ENGINE_OPTIONS) win[global] = doc.getElementById(id).checked;
+    // The real engine writes the cookie last, so a cookie failure lands after the globals.
+    if (update === 'throwsAfterGlobals') throw new Error('cookie refused');
+    const parts = ENGINE_OPTIONS.map(([, global]) => win[global]);
+    win.cookies.push(`myOptions=${encodeURI(parts.join('|'))}`);
+  };
+}
+
+const USER_OPTION_ROWS = [
+  ['allowPM', 'Allow private chat'],
+  ['viewMyCamID', 'Allow webcam access'],
+  ['entryExitID', 'Play entry/exit sounds'],
+  ['soundsID', 'Play new message sound'],
+  ['sfxID', 'Play SFX'],
+  ['userAvatarsON', 'Display user avatars'],
+];
+
+function setup({ settings = stubSettings(), limits = stubLimits(), engine = true, userOptions = /** @type {any} */ (null), loadFailure = undefined, prepare = (/** @type {any} */ _win) => {} } = {}) {
   const win = /** @type {any} */ (new Window());
   prepare(win);
   const doc = win.document;
   doc.body.innerHTML =
     (engine ? '<input type="checkbox" id="autoScrollID" checked>' : '') +
     '<div id="tdf-chat"><div class="tdf-list"><div class="tdf-msg" data-id="a"></div><div class="tdf-msg" data-id="b"></div></div></div>';
+  if (userOptions) installEngineOptions(win, userOptions);
   const container = doc.createElement('div');
   doc.body.appendChild(container);
   const cleanup = renderSettings(container, {
@@ -539,10 +598,11 @@ test('Clear history now and Hide messages by user sit after the Chat history swi
   assert.match(String(historyHint.previousElementSibling?.textContent), /Chat history/);
   const { remove, hint } = senderControl(container);
   assert.match(String(remove.previousElementSibling?.textContent), /^Hide messages by user/);
-  // Hide messages by user closes the Chat section (TDF-0044).
+  // Hide messages by user closes the history rows (TDF-0044); the User options group follows it
+  // (TDF-0080).
   const next = hint.nextElementSibling;
-  assert.ok(next?.classList.contains('tdf-opt-section'));
-  assert.equal(next?.textContent, 'Media and Gallery Settings');
+  assert.ok(next?.classList.contains('tdf-opt-subsection'));
+  assert.equal(next?.textContent, 'User options');
 });
 
 test('Clear history now asks with the count first; Cancel deletes nothing', async () => {
@@ -1091,6 +1151,7 @@ test('the Chat section holds its rows in fixed order, history rows last', () => 
     HISTORY,
     'Clear history now',
     'Hide messages by user',
+    ...USER_OPTION_ROWS.map(([, label]) => label),
   ]);
 });
 
@@ -1183,3 +1244,128 @@ test('with no engine profileUrl the version is a focusable span with the credit 
   assert.equal(version.querySelector('.tdf-opt-version-by')?.textContent, ' · By SoloBang76');
   assert.match(version.getAttribute('aria-label') ?? '', /by SoloBang76$/);
 });
+
+// TDF-0080: the engine's User Options as native rows.
+
+test('User options is a subheading in the Chat section after Hide messages by user, six rows in engine order, no Modern Message Style', () => {
+  const { container } = setup({ userOptions: {} });
+  const sub = container.querySelector('.tdf-opt-subsection');
+  assert.equal(sub?.textContent, 'User options');
+  assert.equal(sub?.classList.contains('tdf-opt-section'), false, 'not a third section');
+  const [, media] = [...container.querySelectorAll('.tdf-opt-section')];
+  /** @type {string[]} */
+  const labels = [];
+  for (let node = sub?.nextElementSibling; node && node !== media; node = node.nextElementSibling) {
+    if (node.matches('label.tdf-opt-row')) labels.push(String(node.querySelector('span')?.textContent));
+  }
+  assert.deepEqual(labels, USER_OPTION_ROWS.map(([, label]) => label));
+  assert.ok(![...container.querySelectorAll('label')].some((l) => /message style/i.test(l.textContent ?? '')));
+  for (const [, label] of USER_OPTION_ROWS) assert.ok(boxFor(container, label).matches('input.tdf-opt-switch'));
+});
+
+test('each User options row opens showing the engine checkbox: the defaults, and a stored cookie value', () => {
+  const defaults = setup({ userOptions: {} });
+  for (const [id, label] of USER_OPTION_ROWS) {
+    assert.equal(boxFor(defaults.container, label).checked, ENGINE_DEFAULTS[id], label);
+  }
+  /** @type {Record<string, boolean>} */
+  const flipped = Object.fromEntries(USER_OPTION_ROWS.map(([id]) => [id, !ENGINE_DEFAULTS[id]]));
+  const stored = setup({ userOptions: { values: flipped } });
+  for (const [id, label] of USER_OPTION_ROWS) assert.equal(boxFor(stored.container, label).checked, flipped[id], label);
+});
+
+test('toggling each User options row sets the engine checkbox, its global and the myOptions cookie, keeping userMessStyle', () => {
+  for (const [index, [id, label]] of USER_OPTION_ROWS.entries()) {
+    const { win, doc, container } = setup({ userOptions: {} });
+    const global = ENGINE_OPTIONS[index][1];
+    const box = boxFor(container, label);
+    const before = box.checked;
+    /** @type {string[]} */
+    const seen = [];
+    doc.addEventListener('change', (e) => seen.push(/** @type {Element} */ (e.target).id));
+    box.checked = !before;
+    box.dispatchEvent(new win.Event('change'));
+    const engine = /** @type {HTMLInputElement} */ (doc.getElementById(id));
+    assert.equal(engine.checked, !before, `${label}: engine checkbox`);
+    assert.equal(win[global], !before, `${label}: engine global`);
+    const parts = ENGINE_OPTIONS.map(([oid]) => (oid === id ? !before : ENGINE_DEFAULTS[oid]));
+    assert.deepEqual(win.cookies, [`myOptions=${encodeURI(parts.join('|'))}`], `${label}: cookie`);
+    assert.equal(win.userMessStyle, true, `${label}: userMessStyle kept`);
+    assert.ok(seen.includes(id), `${label}: a bubbling change on the engine box`);
+  }
+});
+
+test('userMessStyle off is written back off', () => {
+  const { win, container } = setup({ userOptions: { values: { userMessStyle: false } } });
+  const box = boxFor(container, 'Play SFX');
+  box.checked = false;
+  box.dispatchEvent(new win.Event('change'));
+  assert.equal(win.userMessStyle, false);
+  assert.match(win.cookies[0], /%7Cfalse$/);
+});
+
+test('a User options row whose engine checkbox is absent is disabled and says why', () => {
+  const { container } = setup({ userOptions: { omit: ['viewMyCamID'] } });
+  const webcam = boxFor(container, 'Allow webcam access');
+  assert.equal(webcam.disabled, true);
+  assert.equal(webcam.closest('label')?.nextElementSibling?.textContent, 'Not available: the chat has no #viewMyCamID');
+  const pm = boxFor(container, 'Allow private chat');
+  assert.equal(pm.disabled, false);
+  assert.equal(pm.closest('label')?.nextElementSibling?.textContent, '');
+});
+
+test('a User options row follows its engine checkbox while open, and stops after cleanup', () => {
+  const { win, doc, container, cleanup } = setup({ userOptions: {} });
+  const box = boxFor(container, 'Play SFX');
+  const engine = /** @type {HTMLInputElement} */ (doc.getElementById('sfxID'));
+  engine.checked = false;
+  engine.dispatchEvent(new win.Event('change', { bubbles: true }));
+  assert.equal(box.checked, false);
+  cleanup();
+  engine.checked = true;
+  engine.dispatchEvent(new win.Event('change', { bubbles: true }));
+  assert.equal(box.checked, false, 'no longer followed');
+});
+
+test('an updateUserSettings that throws after writing the globals has them put back', () => {
+  const { win, doc, container } = setup({ userOptions: { update: 'throwsAfterGlobals' } });
+  const box = boxFor(container, 'Play new message sound');
+  box.checked = false;
+  box.dispatchEvent(new win.Event('change'));
+  assert.equal(box.checked, true);
+  assert.equal(/** @type {HTMLInputElement} */ (doc.getElementById('soundsID')).checked, true);
+  assert.equal(win.userNewMessageSFX, true, 'global restored by the second call');
+  assert.match(String(box.closest('label')?.nextElementSibling?.textContent), /^Could not apply: .*the chat may still use the new setting/);
+});
+
+test('without the engine options every User options row is disabled and says why', () => {
+  const { container } = setup();
+  for (const [id, label] of USER_OPTION_ROWS) {
+    const box = boxFor(container, label);
+    assert.equal(box.disabled, true, label);
+    assert.equal(box.closest('label')?.nextElementSibling?.textContent, `Not available: the chat has no #${id}`, label);
+  }
+});
+
+for (const update of /** @type {const} */ (['missing', 'throws'])) {
+  test(`an updateUserSettings that is ${update} reverts both checkboxes and says so`, () => {
+    const { win, doc, container } = setup({ userOptions: { update } });
+    let changes = 0;
+    doc.getElementById('soundsID')?.addEventListener('change', () => changes++);
+    const box = boxFor(container, 'Play new message sound');
+    box.checked = false;
+    box.dispatchEvent(new win.Event('change'));
+    assert.equal(box.checked, true);
+    assert.equal(/** @type {HTMLInputElement} */ (doc.getElementById('soundsID')).checked, true);
+    assert.equal(win.userNewMessageSFX, true);
+    assert.deepEqual(win.cookies, []);
+    assert.equal(changes, 0, 'no change announced');
+    const hint = box.closest('label')?.nextElementSibling;
+    assert.match(String(hint?.textContent), /^Could not apply: /);
+    // A later write that succeeds clears the warning.
+    win.updateUserSettings = () => {};
+    box.checked = false;
+    box.dispatchEvent(new win.Event('change'));
+    assert.equal(hint?.textContent, '');
+  });
+}

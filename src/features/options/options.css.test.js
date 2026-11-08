@@ -26,3 +26,11 @@ test('the version credit is hidden at rest and shown on hover or keyboard focus,
     assert.doesNotMatch(r.body, /display: none|visibility: hidden|opacity: 0(;|$)/, `${r.selectors.join(', ')} hides the version number`);
   }
 });
+
+test('the User options subheading is its own rule, with no border, unlike a section header', () => {
+  const sub = rules.find((r) => r.selectors.length === 1 && r.selectors[0] === '#tdf-rail .tdf-opt-subsection');
+  assert.ok(sub, 'a rule targets the subheading');
+  assert.doesNotMatch(sub.body, /border/, 'no rule line');
+  const section = rules.find((r) => r.selectors.length === 1 && r.selectors[0] === '#tdf-rail .tdf-opt-section');
+  assert.match(String(section?.body), /border-top:/, 'a section header keeps its rule');
+});

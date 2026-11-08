@@ -1,7 +1,8 @@
 // The Settings flyout (UI design 2026-10-27, Flyouts → Settings), in two sections (TDF-0039).
 // Chat: Use Chat 2.0 (TDF-0037), Auto-scroll over the engine's #autoScrollID, Clear chat buffer,
 // Collapse server history automatically (TDF-0033.3), Chat history (last HISTORY_ON,
-// TDF-0033.5), Clear history now and Hide messages by user (TDF-0010, TDF-0044). Media and
+// TDF-0033.5), Clear history now and Hide messages by user (TDF-0010, TDF-0044), then a User
+// options group over the engine's own myOptions checkboxes (TDF-0080). Media and
 // Gallery Settings, one flat list: Include my images (TDF-0009.13), Store images offline,
 // Compress stored images (TDF-0036), Use media quickview (TDF-0035) and Gallery size limit (MB).
 // Every boolean setting is a checkbox drawn as a switch (tdf-opt-switch). Chat history (last
@@ -16,6 +17,7 @@ import { describeError } from '../../core/errors.js';
 import { clearView } from '../../core/events.js';
 import { profileUrlFor } from '../../core/forumAvatar.js';
 import { chat2Off, setChat2Off } from '../../core/optOut.js';
+import { ENGINE_AVATARS_ID } from '../../core/view.js';
 import { parseHistoryCount } from '../../core/retention.js';
 import { HISTORY_ON, MB_BYTES, parseMegabytes, senderLabel } from './selectors.js';
 
@@ -368,6 +370,76 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     },
   });
   root.append(senderRow, byUser.button, byUser.ask, byUser.hint);
+
+  /**
+   * A switch over one of the engine's User Options checkboxes (TDF-0080). The engine checkbox is
+   * the source: read when the flyout opens and followed on its change events while open, set on
+   * change, then `updateUserSettings()` refreshes the engine's globals and its `myOptions` cookie
+   * together. A bubbling change follows on the engine box so 2.0 listeners (the avatar class,
+   * view.js) see it. A missing or throwing `updateUserSettings` reverts both boxes, calls it once
+   * more so globals it wrote before throwing match the restored box, and says so; an absent
+   * engine box disables the row and says why.
+   * The engine's `#userMessStyle` is never touched, so `updateUserSettings` writes it back as it was.
+   * @param {string} id
+   * @param {string} label
+   */
+  const engineOption = (id, label) => {
+    const row = el('label', 'tdf-opt-row');
+    const box = el('input', 'tdf-opt-switch');
+    box.type = 'checkbox';
+    row.append(el('span', '', label), box);
+    const hint = el('div', 'tdf-opt-hint tdf-warn');
+    hint.setAttribute('aria-live', 'polite');
+    root.append(row, hint);
+    const engineBox = doc.getElementById(id);
+    if (!(engineBox instanceof win.HTMLInputElement)) {
+      box.disabled = true;
+      hint.textContent = `Not available: the chat has no #${id}`;
+      return;
+    }
+    box.checked = engineBox.checked;
+    box.addEventListener('change', () => {
+      hint.textContent = '';
+      const was = engineBox.checked;
+      engineBox.checked = box.checked;
+      const update = /** @type {any} */ (win).updateUserSettings;
+      try {
+        if (typeof update !== 'function') throw new Error('the chat has no updateUserSettings');
+        update();
+      } catch (err) {
+        engineBox.checked = was;
+        box.checked = was;
+        // The engine writes its globals before the cookie, so a throw can land after the globals
+        // took the new value: one more call, over the restored box, puts them back.
+        let resync = '';
+        if (typeof update === 'function') {
+          try {
+            update();
+          } catch (again) {
+            resync = ` (the chat may still use the new setting: ${describeError(again)})`;
+          }
+        }
+        hint.textContent = `Could not apply: ${describeError(err)}${resync}`;
+        return;
+      }
+      engineBox.dispatchEvent(new win.Event('change', { bubbles: true }));
+    });
+    const follow = () => {
+      box.checked = engineBox.checked;
+    };
+    engineBox.addEventListener('change', follow);
+    undo.push(() => engineBox.removeEventListener('change', follow));
+  };
+
+  // The engine's User Options (TDF-0080), in the order its own window shows them. Modern Message
+  // Style is deliberately not offered.
+  root.append(el('div', 'tdf-opt-subsection', 'User options'));
+  engineOption('allowPM', 'Allow private chat');
+  engineOption('viewMyCamID', 'Allow webcam access');
+  engineOption('entryExitID', 'Play entry/exit sounds');
+  engineOption('soundsID', 'Play new message sound');
+  engineOption('sfxID', 'Play SFX');
+  engineOption(ENGINE_AVATARS_ID, 'Display user avatars');
 
   root.append(el('div', 'tdf-opt-section', 'Media and Gallery Settings'));
 
