@@ -3,7 +3,9 @@
 // row — registered panels, the theme toggle, then the end-aligned panels (the Settings gear)
 // at the right; the current room; the other rooms; Logout. A panel icon opens its flyout,
 // one at a time, growing leftward from the sidebar's left edge; Esc closes it, and the
-// first press outside it only closes it.
+// first press outside it only closes it. At or under NARROW_MAX px wide (TDF-0068) the
+// sidebar is a drawer from the right, opened by a button over the message view, and a
+// flyout fills the screen with a close button of its own.
 
 import { describeError } from '../../core/errors.js';
 import { installRailHost, listPanels, onRegistryChange } from './api.js';
@@ -15,6 +17,21 @@ import { createRoomList, createUserStore } from './userList.js';
 const MAX_ERRORS = 20;
 /** The flyout's slide (rail.css); `settled` follows it, or this, whichever comes first. */
 const SLIDE_MS = 220;
+
+/**
+ * The widest viewport, in CSS px, that gets the narrow (mobile) layout. The only copy of the
+ * number: every narrow rule keys on the `tdf-narrow` class this sets on <html>, never on a
+ * width of its own, so no copy can drift (TDF-0068).
+ */
+export const NARROW_MAX = 640;
+export const NARROW_QUERY = `(max-width: ${NARROW_MAX}px)`;
+
+/** The open button's people glyph and the full-screen flyout's close glyph. */
+const PEOPLE_GLYPH =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.3c2.1.7 3.5 2.8 3.5 5.7"/></svg>';
+const CLOSE_GLYPH =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
 
 /**
  * The parts of src/core/shell.js the rail uses; injected so tests can stub them.
@@ -66,12 +83,49 @@ export function mountRail({ doc, win, target, raise = 0, shell }) {
   const flyout = doc.createElement('div');
   flyout.className = 'tdf-rail-flyout';
   flyout.setAttribute('role', 'dialog');
+  // Shown only under narrow (rail.css), where the flyout fills the screen; kept across show().
+  const flyoutClose = doc.createElement('button');
+  flyoutClose.type = 'button';
+  flyoutClose.className = 'tdf-rail-flyout-close';
+  flyoutClose.title = 'Close';
+  flyoutClose.setAttribute('aria-label', 'Close');
+  renderIcon(flyoutClose, CLOSE_GLYPH);
   root.append(icons, errors, current, others, logout, flyout);
   doc.body.appendChild(root);
 
-  // #tdf-rail is position:fixed, so the viewport rect is the one to copy (B1).
+  // Narrow only (rail.css): the button that opens the drawer, and the scrim under it.
+  const opener = doc.createElement('button');
+  opener.type = 'button';
+  opener.id = 'tdf-rail-open';
+  opener.title = 'Users and rooms';
+  opener.setAttribute('aria-label', 'Users and rooms');
+  opener.setAttribute('aria-controls', 'tdf-rail');
+  opener.setAttribute('aria-expanded', 'false');
+  const openerGlyph = doc.createElement('span');
+  openerGlyph.className = 'tdf-rail-glyph';
+  renderIcon(openerGlyph, PEOPLE_GLYPH);
+  const openerCount = doc.createElement('span');
+  openerCount.className = 'tdf-rail-open-count';
+  openerCount.hidden = true;
+  opener.append(openerGlyph, openerCount);
+  const scrim = doc.createElement('div');
+  scrim.id = 'tdf-rail-scrim';
+  doc.body.append(scrim, opener);
+
+  const html = doc.documentElement;
+  const narrowQuery = win.matchMedia?.(NARROW_QUERY) ?? null;
+  const isNarrow = () => html.classList.contains('tdf-narrow');
+
+  // #tdf-rail is position:fixed, so the viewport rect is the one to copy (B1). Under narrow
+  // (and a working rail) rail.css owns the drawer's geometry, so the copied rect is cleared.
   let placed = '';
   const place = () => {
+    if (isNarrow() && !root.classList.contains('tdf-rail-failed')) {
+      if (placed === 'narrow') return;
+      placed = 'narrow';
+      for (const prop of /** @type {const} */ (['top', 'left', 'width', 'height'])) root.style[prop] = '';
+      return;
+    }
     const { top, left, width, height } = target.getBoundingClientRect();
     const next = `${top},${left},${width},${height}`;
     if (next === placed) return;
@@ -176,6 +230,67 @@ export function mountRail({ doc, win, target, raise = 0, shell }) {
     for (const b of iconButtons()) b.setAttribute('aria-expanded', 'false');
   }
 
+  // The drawer (narrow only): the sidebar slid in from the right, over the chat. Closing it
+  // closes its flyout too, which would otherwise slide away with it.
+  const drawerOpen = () => root.classList.contains('tdf-drawer-open');
+  /** @param {boolean} on */
+  function setDrawer(on) {
+    // A failed rail is no drawer (rail.css), so nothing opens one.
+    if (on && root.classList.contains('tdf-rail-failed')) return;
+    if (!on) close();
+    root.classList.toggle('tdf-drawer-open', on);
+    scrim.classList.toggle('tdf-open', on);
+    opener.setAttribute('aria-expanded', String(on));
+  }
+  opener.addEventListener('click', () => setDrawer(!drawerOpen()));
+  // A tap on the scrim only closes the drawer; nothing under it sees the tap.
+  /** @param {Event} event */
+  const onScrim = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setDrawer(false);
+  };
+  scrim.addEventListener('click', onScrim);
+  flyoutClose.addEventListener('click', () => close());
+
+  // The on-screen keyboard: under narrow, the page's box follows the visual viewport, so the
+  // composer at its bottom stays above the keyboard (theme.css reads the two properties).
+  const vv = /** @type {VisualViewport | null | undefined} */ (win.visualViewport);
+  const fitViewport = () => {
+    if (!vv) return;
+    html.style.setProperty('--tdf-vvh', `${vv.height}px`);
+    html.style.setProperty('--tdf-vvtop', `${vv.offsetTop}px`);
+  };
+  /** @param {boolean} on */
+  const trackViewport = (on) => {
+    if (!vv) return;
+    vv.removeEventListener('resize', fitViewport);
+    vv.removeEventListener('scroll', fitViewport);
+    if (on) {
+      vv.addEventListener('resize', fitViewport);
+      vv.addEventListener('scroll', fitViewport);
+      fitViewport();
+    } else {
+      html.style.removeProperty('--tdf-vvh');
+      html.style.removeProperty('--tdf-vvtop');
+    }
+  };
+
+  // Crossing the breakpoint (resize, rotation) switches layouts live: anything open closes, so
+  // nothing is left stuck in the other layout's geometry.
+  const applyNarrow = () => {
+    const narrow = Boolean(narrowQuery?.matches);
+    const changed = narrow !== isNarrow();
+    html.classList.toggle('tdf-narrow', narrow);
+    if (changed) {
+      setDrawer(false);
+      trackViewport(narrow);
+    }
+    placed = '';
+    place();
+  };
+  narrowQuery?.addEventListener?.('change', applyNarrow);
+
   /**
    * @param {import('./api.js').RailPanel} panel
    * @param {unknown} [arg]
@@ -183,9 +298,11 @@ export function mountRail({ doc, win, target, raise = 0, shell }) {
   function show(panel, arg) {
     const sliding = !open;
     close();
+    // Under narrow the flyout lives in the drawer, so one opened by the API opens it too.
+    if (isNarrow() && !drawerOpen()) setDrawer(true);
     const body = doc.createElement('div');
     body.className = 'tdf-rail-body';
-    flyout.replaceChildren(body);
+    flyout.replaceChildren(flyoutClose, body);
     flyout.setAttribute('aria-label', panel.title);
     flyout.classList.add('tdf-open');
     // Contents fade in once the slide ends; switching panels has no slide to wait for.
@@ -282,7 +399,10 @@ export function mountRail({ doc, win, target, raise = 0, shell }) {
   };
   /** @param {KeyboardEvent} event */
   const onKey = (event) => {
-    if (event.key === 'Escape' && open) close();
+    if (event.key !== 'Escape') return;
+    // The flyout first, then the drawer it opened from.
+    if (open) close();
+    else if (drawerOpen()) setDrawer(false);
   };
   doc.addEventListener('mousedown', onPress, true);
   doc.addEventListener('click', onClick, true);
@@ -291,6 +411,7 @@ export function mountRail({ doc, win, target, raise = 0, shell }) {
   const unsubscribe = onRegistryChange(renderIcons, report);
   const uninstall = installRailHost({ open: show, report });
   renderIcons();
+  applyNarrow();
 
   return {
     report,
@@ -299,12 +420,22 @@ export function mountRail({ doc, win, target, raise = 0, shell }) {
     /** The element the name menu is placed in. */
     root,
     /**
+     * The current room's online count on the open button; null hides it.
+     * @param {number | null} count
+     */
+    setCount(count) {
+      openerCount.hidden = count === null;
+      openerCount.textContent = count === null ? '' : String(count);
+      opener.setAttribute('aria-label', count === null ? 'Users and rooms' : `Users and rooms, ${count} online`);
+    },
+    /**
      * Report a failure that leaves the rail without its user list, and stop hiding the
      * engine's own controls (rail.css), so the user list is never lost.
      * @param {unknown} err
      */
     fail(err) {
       report(err);
+      if (drawerOpen()) setDrawer(false);
       root.classList.add('tdf-rail-failed');
       placed = '';
       place();
@@ -312,6 +443,12 @@ export function mountRail({ doc, win, target, raise = 0, shell }) {
     /** Remove the rail and everything it attached. */
     destroy() {
       close();
+      narrowQuery?.removeEventListener?.('change', applyNarrow);
+      trackViewport(false);
+      html.classList.remove('tdf-narrow');
+      scrim.removeEventListener('click', onScrim);
+      opener.remove();
+      scrim.remove();
       for (const fn of slotCleanups) guarded(fn);
       slotCleanups = [];
       uninstall();
@@ -344,6 +481,20 @@ export function readRaise(doc, target) {
   const edge = row.getBoundingClientRect().top;
   const top = target.getBoundingClientRect().top;
   return edge > 0 && edge < top ? top - edge : 0;
+}
+
+/**
+ * Give the page a device-width viewport when it has none, so a phone lays it out at its own
+ * width and the narrow layout can apply. The engine's page carries one already, and an
+ * existing tag is never changed.
+ * @param {Document} doc
+ */
+export function ensureViewport(doc) {
+  if (doc.querySelector('meta[name="viewport"]')) return;
+  const meta = doc.createElement('meta');
+  meta.name = 'viewport';
+  meta.content = 'width=device-width, initial-scale=1';
+  doc.head.appendChild(meta);
 }
 
 /**
@@ -384,6 +535,7 @@ export function startRail({ doc, win, css, shell, onReady, presence }) {
     return false;
   }
   w.__tdfChat2Rail = true;
+  ensureViewport(doc);
   const raise = readRaise(doc, userContainer);
 
   /** @type {(() => void) | null} */
@@ -431,6 +583,14 @@ export function startRail({ doc, win, css, shell, onReady, presence }) {
         ...(presence ? { presence } : {}),
       });
       undo.push(rooms(rail.slots));
+      // The open button's count: the current room's, as the engine's header states it.
+      const live = rail;
+      const count = () => {
+        const here = store.rooms().find((r) => r.roomID === engine.roomID());
+        live.setCount(here ? here.count : null);
+      };
+      undo.push(store.subscribe(count));
+      count();
     } catch (err) {
       if (rail) rail.fail(err);
       else {
