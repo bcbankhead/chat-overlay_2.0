@@ -11,7 +11,7 @@
 // A caller that knows the forum user id passes it (the rail, the flyout); otherwise the profile
 // is looked up by name.
 
-import { STORES, done, request } from './db.js';
+import { STORES, done, isClosing, request } from './db.js';
 import { parseProfileAvatar, profileUrlFor } from './forumAvatar.js';
 
 /** How old a stored answer is before it is refreshed; it is never discarded for its age. */
@@ -38,9 +38,6 @@ export class AvatarLookupFailed extends Error {
     this.name = 'AvatarLookupFailed';
   }
 }
-
-/** @param {unknown} err */
-const isClosing = (err) => /** @type {{ name?: unknown } | null} */ (err)?.name === 'InvalidStateError';
 
 /**
  * @param {{

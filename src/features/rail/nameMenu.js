@@ -1,14 +1,18 @@
 // The name menu: a left or right click on a user's name opens it leftward from the pointer,
 // clamped to the viewport. Whisper (or Stop whispering, for the user already whispered to)
 // comes first and replaces the engine's Whisper To field; then the rest of userPanel's
-// engine-gated actions, then registered ones. Esc, a press outside it or a scroll inside the
-// rail closes it.
+// engine-gated actions, then registered ones. A ghosted Recently online row opens a shorter
+// one in the same place (TDF-0075): a 'Last seen …' line and View Profile, disabled when no
+// profile id is known. Esc, a press outside it or a scroll inside the rail closes it.
 
 import { listUserMenuActions } from './api.js';
 import { renderIcon } from './icons.js';
-import { builtInActions } from './menuModel.js';
+import { builtInActions, offlineProfileCall, profileLabel } from './menuModel.js';
 
 const EDGE = 8;
+
+/** The ghosted menu's note when the user's line had no usable time. */
+const SEEN_UNKNOWN = 'Last seen time unknown';
 
 /**
  * @param {{
@@ -66,6 +70,28 @@ export function createNameMenu({ doc, win, engine, parent, onError }) {
   }
 
   /**
+   * Show `title` then `items` and place the menu leftward from the pointer.
+   * @param {string} name
+   * @param {HTMLElement[]} rows
+   * @param {number} x
+   * @param {number} y
+   */
+  function show(name, rows, x, y) {
+    const title = doc.createElement('div');
+    title.className = 'tdf-rail-menu-title';
+    title.textContent = name;
+    menu.replaceChildren(title, ...rows);
+    menu.hidden = false;
+
+    // Leftward from the pointer, toward the message view, kept inside the viewport.
+    const { width, height } = menu.getBoundingClientRect();
+    const left = Math.max(EDGE, x - width);
+    const top = Math.max(EDGE, Math.min(y, win.innerHeight - height - EDGE));
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+  }
+
+  /**
    * @param {import('./rowParse.js').RailUser} user
    * @param {number} x  pointer clientX
    * @param {number} y  pointer clientY
@@ -89,25 +115,41 @@ export function createNameMenu({ doc, win, engine, parent, onError }) {
       ...listUserMenuActions(user, onError).map((a) => ({ id: a.id, label: a.label, icon: a.icon, run: () => a.run(user) })),
     ];
 
-    const title = doc.createElement('div');
-    title.className = 'tdf-rail-menu-title';
-    title.textContent = user.name;
-    menu.replaceChildren(title);
+    /** @type {HTMLElement[]} */
+    const rows = [];
     for (const item of items) {
       try {
-        menu.appendChild(renderItem(item));
+        rows.push(renderItem(item));
       } catch (err) {
         onError(err);
       }
     }
-    menu.hidden = false;
+    show(user.name, rows, x, y);
+  }
 
-    // Leftward from the pointer, toward the message view, kept inside the viewport.
-    const { width, height } = menu.getBoundingClientRect();
-    const left = Math.max(EDGE, x - width);
-    const top = Math.max(EDGE, Math.min(y, win.innerHeight - height - EDGE));
-    menu.style.left = `${left}px`;
-    menu.style.top = `${top}px`;
+  /**
+   * The ghosted row's menu: exactly a 'Last seen …' line and View Profile (TDF-0075).
+   * @param {import('./menuModel.js').OfflineUser} user
+   * @param {string | null} seenText  'Last seen …', or null when the line had no usable time
+   * @param {number} x  pointer clientX
+   * @param {number} y  pointer clientY
+   */
+  function openOffline(user, seenText, x, y) {
+    const flags = engine.flags();
+    const call = offlineProfileCall(user, flags);
+    const note = doc.createElement('div');
+    note.className = 'tdf-rail-menu-note';
+    note.setAttribute('role', 'presentation');
+    note.textContent = seenText ?? SEEN_UNKNOWN;
+    const profile = renderItem({
+      id: 'profile',
+      label: profileLabel(flags),
+      disabled: !call,
+      run: () => {
+        if (call) engine.call([call]);
+      },
+    });
+    show(user.name, [note, profile], x, y);
   }
 
   /** @param {Event} event */
@@ -133,6 +175,7 @@ export function createNameMenu({ doc, win, engine, parent, onError }) {
 
   return {
     open,
+    openOffline,
     close,
     destroy() {
       close();

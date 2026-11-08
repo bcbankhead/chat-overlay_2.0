@@ -8,15 +8,25 @@
 // migration. Version 5 (TDF-0031) orders history by message time: every `messages` record
 // gains `orderKey` (group.js), backfilled, under the new `roomID_orderKey` index
 // `[roomID, orderKey, receivedAt]`; `roomID_receivedAt` is removed. Nothing is deleted.
+// Version 6 (TDF-0075) adds the `seenUsers` store, `{ uuID, userID, rawName, at }` keyed by
+// `uuID` with an `at` index, so a Recently online row can open a profile after a reload. No data
+// migration; the existing stores are untouched.
 
 import { orderKey } from './group.js';
 import { MAIN_DIV, isWhisper } from './parse.js';
 
 export const DB_NAME = 'tdf-chat-2';
-export const DB_VERSION = 5;
+export const DB_VERSION = 6;
 
 /** Why storage stops after another tab opened a newer version of the database. */
 export const SUPERSEDED = 'a newer version opened in another tab; reload this page';
+
+/**
+ * Whether a storage failure is the connection closing, which callers do not report.
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+export const isClosing = (err) => /** @type {{ name?: unknown } | null} */ (err)?.name === 'InvalidStateError';
 
 export const STORES = Object.freeze({
   messages: 'messages',
@@ -24,6 +34,7 @@ export const STORES = Object.freeze({
   images: 'images',
   tags: 'tags',
   avatars: 'avatars',
+  seenUsers: 'seenUsers',
 });
 
 /** @param {IDBDatabase} db */
@@ -47,6 +58,7 @@ function createSchema(db) {
   tags.createIndex('sourceMessageId', 'sourceMessageId');
 
   createAvatars(db);
+  createSeenUsers(db);
 }
 
 /** @param {IDBObjectStore} messages */
@@ -65,6 +77,12 @@ function withOrderKey(record) {
 /** @param {IDBDatabase} db */
 function createAvatars(db) {
   db.createObjectStore(STORES.avatars, { keyPath: 'name' });
+}
+
+/** @param {IDBDatabase} db */
+function createSeenUsers(db) {
+  const seen = db.createObjectStore(STORES.seenUsers, { keyPath: 'uuID' });
+  seen.createIndex('at', 'at');
 }
 
 /**
@@ -124,6 +142,7 @@ export function openDb({ indexedDB = globalThis.indexedDB, name = DB_NAME, onVer
       if (!tx) return;
       if (oldVersion < 2) tx.objectStore(STORES.images).createIndex('hash', 'hash');
       if (oldVersion < 4) createAvatars(req.result);
+      if (oldVersion < 6) createSeenUsers(req.result);
       const messages = tx.objectStore(STORES.messages);
       /** @type {Array<(record: any) => any>} */
       const migrations = [];

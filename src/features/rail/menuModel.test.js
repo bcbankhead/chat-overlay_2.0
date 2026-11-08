@@ -142,12 +142,12 @@ test('labels come from the engine lang strings when present', () => {
   assert.equal(find(actions, 'profile').label, 'View Profile');
 });
 
-// A ghosted, recently online user's row opens the profile only (TDF-0058).
+// A ghosted, recently online user's menu opens the profile by this call (TDF-0058, TDF-0075).
 test('offlineProfileCall: profileRef 0 passes the uuID, 1 the name, 2 the remembered forum id', () => {
   const away = { uuID: '40', name: 'Dan B' };
   assert.deepEqual(offlineProfileCall(away, flags({ profileRef: 0 })), ['viewProfile', '40', 'Dan B']);
   assert.deepEqual(offlineProfileCall(away, flags({ profileRef: 1 })), ['viewProfile', 'Dan B', 'Dan B']);
-  assert.equal(offlineProfileCall(away, flags({ profileRef: 2 })), null, 'no forum id seen this load');
+  assert.equal(offlineProfileCall(away, flags({ profileRef: 2 })), null, 'no forum id seen online, this load or saved');
   const known = { ...away, rawName: 'Dan%20B', userID: '573' };
   assert.deepEqual(offlineProfileCall(known, flags({ profileRef: 2 })), ['viewProfile', '573', 'Dan%20B']);
   assert.deepEqual(offlineProfileCall(known, flags({ profileRef: 1 })), ['viewProfile', 'Dan%20B', 'Dan%20B'], 'the engine form of the name when an online row gave it');

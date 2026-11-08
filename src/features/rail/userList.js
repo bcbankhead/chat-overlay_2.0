@@ -2,14 +2,15 @@
 // current room is open by default and fills the height; the others sit collapsed at the
 // bottom, and an expanded one offers Join room. A name opens the name menu. Below the current
 // room's online users, under a rule and a `Recently online` header, the users its entry and exit
-// lines name who are not online show ghosted; a ghosted row opens the profile only (TDF-0058).
+// lines name who are not online show ghosted (TDF-0058). A ghosted row opens a short menu, its
+// 'Last seen …' line and View Profile (TDF-0075); the forum userID that View Profile needs comes
+// from the user's online rows, this load or saved by an earlier one (core/seenUsers.js).
 
 import { renderAvatar } from '../../core/avatar.js';
 import { lastSeenText } from '../../core/lastSeen.js';
 import { safeDecodeURIComponent } from '../../core/parse.js';
 import { presence as pagePresence } from '../../core/presence.js';
 import { ICONS, renderIcon } from './icons.js';
-import { offlineProfileCall } from './menuModel.js';
 import { readRooms } from './rowParse.js';
 
 /**
@@ -80,12 +81,6 @@ export function createUserStore(win, container, onError) {
 export const LIST_CAP = 20;
 
 /**
- * An inert ghosted row's tooltip when its line has no usable time (TDF-0059); otherwise every
- * ghosted row reads 'Last seen …' instead (TDF-0066).
- */
-const OFFLINE_FALLBACK = 'User offline';
-
-/**
  * @typedef {object} RoomView
  * @property {HTMLElement} section
  * @property {HTMLButtonElement} chip
@@ -106,10 +101,13 @@ const OFFLINE_FALLBACK = 'User offline';
  *   store: UserStore,
  *   attachScrollbar: (el: HTMLElement) => () => void,
  *   onUser: (user: import('./rowParse.js').RailUser, x: number, y: number) => void,
+ *   onOffline?: (user: import('./menuModel.js').OfflineUser, seenText: string | null, x: number, y: number) => void,
  *   onError: (err: unknown) => void,
  *   avatars?: () => import('../../core/avatarResolver.js').AvatarResolver | null,
+ *   seen?: () => import('../../core/seenUsers.js').SeenUsers | null,
  *   presence?: import('../../core/presence.js').Presence,
- * }} deps `avatars` is read per render: the bootstrap publishes it after the rail may mount.
+ * }} deps `avatars` and `seen` are read per render: the bootstrap publishes them after the rail
+ *   may mount.
  *   `presence` defaults to the page's store, which the engine hook writes
  * @returns {(slots: { current: HTMLElement, others: HTMLElement }) => () => void} mount, returning unmount
  */
@@ -119,8 +117,10 @@ export function createRoomList({
   store,
   attachScrollbar,
   onUser,
+  onOffline = () => {},
   onError,
   avatars = () => null,
+  seen = () => null,
   presence = pagePresence,
 }) {
   return (slots) => {
@@ -130,14 +130,20 @@ export function createRoomList({
     const views = new Map();
     /** @type {Map<string, import('./rowParse.js').RailUser>} by `uuID|roomID`, for the name menu */
     let users = new Map();
-    /** @type {Map<string, import('./menuModel.js').OfflineUser>} ghosted rows by `uuID|roomID` */
+    /**
+     * Ghosted rows by `uuID|roomID`, with their line's time for the menu's 'Last seen …'.
+     * @type {Map<string, { user: import('./menuModel.js').OfflineUser, mTime: string }>}
+     */
     let offline = new Map();
     /**
      * What each user's online rows told this page load, by uuID: a ghosted row needs the forum
-     * userID under profileRef 2, and the engine's own form of the name.
+     * userID under profileRef 2, and the engine's own form of the name. Earlier loads' answers
+     * come from `seen()`.
      * @type {Map<string, { userID: string, rawName: string }>}
      */
     const remembered = new Map();
+    /** @type {(() => void) | null} the saved users' load notice, once they are published */
+    let offSeen = null;
 
     const empty = doc.createElement('div');
     empty.className = 'tdf-rail-empty';
@@ -239,23 +245,19 @@ export function createRoomList({
       head.textContent = 'Recently online';
       /** @type {HTMLElement[]} */
       const rows = [rule, head];
-      const flags = engine.flags();
+      const seenUsers = seen();
       for (const line of away) {
-        const known = remembered.get(line.uuID);
+        const known = remembered.get(line.uuID) ?? seenUsers?.get(line.uuID);
         /** @type {import('./menuModel.js').OfflineUser} */
         const user = { uuID: line.uuID, name: line.name, ...(line.rawName ? { rawName: line.rawName } : {}), ...(known ?? {}) };
-        offline.set(`${user.uuID}|${room.roomID}`, user);
+        offline.set(`${user.uuID}|${room.roomID}`, { user, mTime: line.mTime });
         const li = doc.createElement('li');
         li.className = 'tdf-rail-user tdf-rail-offline';
         li.dataset.uuid = user.uuID;
         li.dataset.room = room.roomID;
-        const inert = !offlineProfileCall(user, flags);
-        if (inert) li.classList.add('tdf-rail-inert');
-        // Every ghosted row says when its user was last seen, on the server's clock (TDF-0066);
-        // without a usable time an inert row still says why it does nothing.
-        const seen = lastSeenText(line.mTime, presence.serverNow());
-        if (seen !== null) li.title = seen;
-        else if (inert) li.title = OFFLINE_FALLBACK;
+        // Every ghosted row says when its user was last seen, on the server's clock (TDF-0066).
+        const lastSeen = lastSeenText(line.mTime, presence.serverNow());
+        if (lastSeen !== null) li.title = lastSeen;
         // The list re-renders only on store changes, so a quiet room would let the age go stale.
         const refreshSeen = () => {
           const now = lastSeenText(line.mTime, presence.serverNow());
@@ -294,6 +296,10 @@ export function createRoomList({
     }
 
     function render() {
+      const saved = seen();
+      // Published by the bootstrap, possibly after the first render: its load re-renders, so a
+      // ghosted row seen before this page load gets its profile id.
+      if (saved && !offSeen) offSeen = saved.subscribe(safeRender);
       const rooms = store.rooms();
       const current = engine.roomID();
       const live = new Set(rooms.map((r) => r.roomID));
@@ -309,6 +315,7 @@ export function createRoomList({
       for (const room of rooms) {
         for (const user of room.users) {
           remembered.set(user.uuID, { userID: user.userID, rawName: user.rawName });
+          saved?.remember({ uuID: user.uuID, userID: user.userID, rawName: user.rawName });
           online.add(user.uuID);
         }
       }
@@ -356,9 +363,8 @@ export function createRoomList({
         event.preventDefault();
         try {
           // Built in the same render as the row, so a ghosted row always has its user.
-          const away = /** @type {import('./menuModel.js').OfflineUser} */ (offline.get(key));
-          const call = offlineProfileCall(away, engine.flags());
-          if (call) engine.call([call]);
+          const away = /** @type {{ user: import('./menuModel.js').OfflineUser, mTime: string }} */ (offline.get(key));
+          onOffline(away.user, lastSeenText(away.mTime, presence.serverNow()), event.clientX, event.clientY);
         } catch (err) {
           onError(err);
         }
@@ -391,6 +397,8 @@ export function createRoomList({
     return () => {
       offStore();
       offPresence();
+      offSeen?.();
+      offSeen = null;
       for (const slot of [slots.current, slots.others]) {
         slot.removeEventListener('click', onName);
         slot.removeEventListener('contextmenu', onName);

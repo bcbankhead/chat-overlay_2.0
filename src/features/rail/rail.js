@@ -424,8 +424,10 @@ export function startRail({ doc, win, css, shell, onReady, presence }) {
         store,
         attachScrollbar: shell.attachScrollbar,
         onUser: menu.open,
+        onOffline: menu.openOffline,
         onError: rail.report,
         avatars: () => w.__tdfChat2Avatars ?? null,
+        seen: () => w.__tdfChat2Seen ?? null,
         ...(presence ? { presence } : {}),
       });
       undo.push(rooms(rail.slots));

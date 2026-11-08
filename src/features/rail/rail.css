@@ -308,15 +308,6 @@ body:has(#tdf-rail:not(.tdf-rail-failed)) :is(#roomIcon, #roomCreate, #roomSelec
   opacity: 0.75;
 }
 
-#tdf-rail .tdf-rail-offline.tdf-rail-inert {
-  cursor: default;
-}
-
-#tdf-rail .tdf-rail-offline.tdf-rail-inert:hover {
-  background: none;
-  opacity: 0.5;
-}
-
 #tdf-rail .tdf-rail-empty {
   padding: 4px 8px;
   color: var(--tdf-muted);
@@ -416,6 +407,13 @@ body:has(#tdf-rail:not(.tdf-rail-failed)) :is(#roomIcon, #roomCreate, #roomSelec
   padding: 4px 8px 6px;
   color: var(--tdf-muted);
   font-size: 12px;
+}
+
+#tdf-rail .tdf-rail-menu-note {
+  padding: 2px 8px 6px;
+  color: var(--tdf-muted);
+  font-size: 12px;
+  cursor: default;
 }
 
 #tdf-rail .tdf-rail-menu-item {
