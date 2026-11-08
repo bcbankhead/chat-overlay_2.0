@@ -206,9 +206,10 @@ test('by default a Gallery tile opens the media popover, whose zoom opens the sh
     assert.ok(tile);
     tile.click();
     assert.deepEqual(calls, [], 'no tab opens on the tile click');
-    const stageImg = /** @type {HTMLElement | null} */ (doc.querySelector('.tdf-lb .tdf-lb-image'));
-    assert.ok(stageImg, 'the popover shows the image');
-    stageImg.click();
+    assert.ok(doc.querySelector('.tdf-lb .tdf-lb-image'), 'the popover shows the image');
+    const tabButton = /** @type {HTMLElement | null} */ (doc.querySelector('.tdf-lb .tdf-lb-tab'));
+    assert.ok(tabButton, 'the popover has a new-tab button');
+    tabButton.click();
     assert.deepEqual(calls, [[shareUrl(ID, win.location.href), '_blank']]);
     await settle();
     assert.deepEqual(fetched, [shareUrl(ID, win.location.href)], 'the background probe goes through win.fetch');

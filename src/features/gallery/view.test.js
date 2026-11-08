@@ -709,7 +709,7 @@ test('quickview on: a tile opens the media popover over the shown tiles in displ
   const thumbs = [...doc.querySelectorAll('.tdf-lb-thumb')];
   assert.match(String(thumbs[0].querySelector('img')?.getAttribute('src')), /^blob:/, 'thumbnails are the tiles\' object URLs');
   assert.match(String(doc.querySelector('.tdf-lb-stage img')?.getAttribute('src')), /view\.php\?id=b$/);
-  /** @type {HTMLElement} */ (doc.querySelector('.tdf-lb-stage img')).click();
+  /** @type {HTMLElement} */ (doc.querySelector('.tdf-lb-tab')).click();
   assert.deepEqual(g.opened, ['b'], 'zoom calls the existing open, inside the click');
   /** @type {HTMLElement} */ (doc.querySelector('.tdf-lb-close')).click();
 
@@ -799,7 +799,7 @@ test('quickview: a tile dropped while the popover is open keeps its thumbnail un
   assert.deepEqual(revoked, [], 'the filmstrip still shows b');
   /** @type {HTMLElement} */ (doc.querySelector('.tdf-lb-thumb[data-index="1"]')).click();
   assert.equal(doc.querySelector('.tdf-lb-thumb[data-index="1"] img')?.getAttribute('src'), 'blob:image/webp-1');
-  /** @type {HTMLElement} */ (doc.querySelector('.tdf-lb-stage img')).click();
+  /** @type {HTMLElement} */ (doc.querySelector('.tdf-lb-tab')).click();
   assert.deepEqual(g.opened, ['b'], 'zoom falls back to the record as it was when the popover opened');
 
   /** @type {HTMLElement} */ (doc.querySelector('.tdf-lb-close')).click();

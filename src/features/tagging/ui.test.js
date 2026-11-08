@@ -501,7 +501,7 @@ test('quickview on: a posted image opens the media popover over the chat\'s shar
   assert.equal(p.doc.querySelector('.tdf-lb-count')?.textContent, '3 / 3', 'A, B, C: the repeat of A is not listed twice');
   assert.equal(p.doc.querySelector('.tdf-lb-stage img')?.getAttribute('src'), shareHref(C));
   // Zoom opens the share in a new tab inside the click, as the off path does.
-  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-stage img')).click();
+  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-tab')).click();
   assert.deepEqual(p.opened, [[shareHref(C), '_blank', 'noopener']]);
   p.run();
   assert.deepEqual(p.sent, [], 'opening likes nothing');
@@ -560,7 +560,7 @@ test('quickview on: the corner heart still likes and opens nothing', () => {
 test('quickview on: a zoom the browser blocks is reported, not dropped', () => {
   const p = page({ quickview: { on: true }, blocked: true });
   p.click(p.posted());
-  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-stage img')).click();
+  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-tab')).click();
   assert.equal(p.opened.length, 1, 'the tab was attempted');
   assert.equal(p.reports.length, 1);
   assert.ok(p.reports[0] instanceof Error);
@@ -571,7 +571,7 @@ test('quickview on: a zoom the browser blocks is reported, not dropped', () => {
 test('quickview on: a zoom that opens its tab reports nothing', () => {
   const p = page({ quickview: { on: true } });
   p.click(p.posted());
-  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-stage img')).click();
+  /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-tab')).click();
   assert.equal(p.opened.length, 1);
   assert.deepEqual(p.reports, []);
   /** @type {HTMLElement} */ (p.doc.querySelector('.tdf-lb-close')).click();
