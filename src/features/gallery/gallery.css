@@ -501,9 +501,10 @@
   display: none;
 }
 
-/* The magnifier (TDF-0071, loupe.js): a bar toggle, and a 200px loupe showing the image at
+/* The magnifier (TDF-0071, loupe.js): a bar toggle, and a 500px loupe showing the image at
    natural size. The fixed .tdf-lb layer is the loupe's containing block; it passes the pointer
-   through so the image keeps receiving the moves that place it. */
+   through so the image keeps receiving the moves that place it. The 500px here is the largest
+   size; lightbox.js sets a smaller inline size when the layer's shorter side is smaller. */
 .tdf-lb .tdf-lb-magnify[aria-pressed="true"],
 .tdf-lb .tdf-lb-magnify[aria-pressed="true"]:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.4);
@@ -515,8 +516,8 @@
 
 .tdf-lb-loupe {
   position: absolute;
-  width: 200px;
-  height: 200px;
+  width: 500px;
+  height: 500px;
   box-sizing: border-box;
   pointer-events: none;
   border: 2px solid #ffffff;

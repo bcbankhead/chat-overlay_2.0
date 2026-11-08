@@ -11,8 +11,9 @@
 // remembered per share id, so a return visit and the filmstrip know it. Zoom is the entry
 // point's own new-tab open, called inside the click so the browser does not block it.
 //
-// Magnifier (TDF-0071): a bar toggle, and the M key, turn on a 200px loupe that follows the cursor
-// over an image and shows it at natural size (loupe.js). Images only, fine pointers only; it stays
+// Magnifier (TDF-0071): a bar toggle, and the M key, turn on a 500px loupe that follows the cursor
+// over an image and shows it at natural size (loupe.js), shrunk to the quick view's shorter side
+// when that is smaller. Images only, fine pointers only; it stays
 // on across steps within one open, and every open starts with it off.
 
 import { loupeFrame } from './loupe.js';
@@ -142,17 +143,21 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
   const drawLoupe = () => {
     if (!magnifying || !cursor || cursor.token !== shown) return;
     const { img } = cursor;
+    const box = layer.getBoundingClientRect();
     const frame = loupeFrame({
       clientX: cursor.x,
       clientY: cursor.y,
       rect: img.getBoundingClientRect(),
       natural: { width: img.naturalWidth, height: img.naturalHeight },
-      origin: layer.getBoundingClientRect(),
+      origin: box,
+      bound: box,
     });
     if (!frame) {
       hideLoupe();
       return;
     }
+    loupe.style.width = `${frame.size}px`;
+    loupe.style.height = `${frame.size}px`;
     loupe.style.left = `${frame.left}px`;
     loupe.style.top = `${frame.top}px`;
     loupe.style.backgroundPosition = `${frame.bgX}px ${frame.bgY}px`;
