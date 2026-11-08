@@ -1,8 +1,9 @@
 // Composer modifications on the engine's own textarea#optionsBar: Shift+Enter inserts a
 // newline, a URL pasted over a selection becomes a labelled link, and the composer is restyled
-// in place (composer.css, from data-tdf-theme on <html>) with a smiley picker, image and video
-// attach and a whisper chip. Text still goes out through the engine — the inline submitenter calls
-// addMessage — so whisper, silence, the length limit and the repeat filter keep applying.
+// in place (composer.css, from data-tdf-theme on <html>) with a smiley picker, a sound board of the
+// engine's sound effects (sfx.js), image and video attach and a whisper chip. Text still goes out
+// through the engine — the inline submitenter calls addMessage — so whisper, silence, the length
+// limit and the repeat filter keep applying.
 
 import { MAIN_DIV } from '../../core/parse.js';
 import { chat2Off } from '../../core/optOut.js';
@@ -13,6 +14,7 @@ import { installBox } from './box.js';
 import css from './composer.css';
 import { buildLabelledLink, isSingleHttpUrl } from './link.js';
 import { installRefocus } from './refocus.js';
+import { installSoundButton } from './sfx.js';
 import { installSmileyButton } from './smilies.js';
 import { installWhisper } from './whisper.js';
 
@@ -56,6 +58,7 @@ function install() {
   if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
   installBox(bar);
   installSmileyButton(bar);
+  installSoundButton(bar);
   installWhisper(bar, host);
   installAttach(bar, host);
   installRefocus(bar);

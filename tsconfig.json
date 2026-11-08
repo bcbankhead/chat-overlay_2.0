@@ -35,6 +35,7 @@
     "src/features/composer/link.js",
     "src/features/composer/sharetext.js",
     "src/features/composer/refocus.js",
+    "src/features/composer/popup.js",
     "src/features/composer/api.js",
     "src/features/profile/textStyle.js",
     "src/features/gallery/shareParse.js",
