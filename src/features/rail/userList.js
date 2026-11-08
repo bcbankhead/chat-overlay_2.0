@@ -2,8 +2,9 @@
 // current room is open by default and fills the height; the others sit collapsed at the
 // bottom, and an expanded one offers Join room. A name opens the name menu. Below the current
 // room's online users, under a rule and a `Recently online` header, the users its entry and exit
-// lines name who are not online show ghosted (TDF-0058). A ghosted row opens a short menu, its
-// 'Last seen …' line and View Profile (TDF-0075); the forum userID that View Profile needs comes
+// lines name who are not online show ghosted (TDF-0058). A ghosted row opens the name menu's
+// offline form: its 'Last seen …' line, View Profile, then the registered actions (TDF-0075,
+// TDF-0075.2); the forum userID that View Profile needs comes
 // from the user's online rows, this load or saved by an earlier one (core/seenUsers.js).
 
 import { renderAvatar } from '../../core/avatar.js';

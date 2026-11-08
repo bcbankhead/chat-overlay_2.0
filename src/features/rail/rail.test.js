@@ -1069,7 +1069,7 @@ test('a ghosted row re-ages its last-seen tooltip on hover and focus, without a 
   await t.teardown();
 });
 
-test("a ghosted row opens a menu of its 'Last seen …' line and View Profile, by the forum id from its online row", async () => {
+test("a ghosted row opens the own-name menu's shape: its 'Last seen …' line in Whisper's row, then View Profile, by the forum id from its online row", async () => {
   const presence = atServerTime(createPresence(), 500 + 3 * HOUR_S);
   const t = setup({ presence }); // profileRef 2
   presence.ingest('1', [seenLine('12', 'Alice', 'exit', 500)]);
@@ -1084,7 +1084,12 @@ test("a ghosted row opens a menu of its 'Last seen …' line and View Profile, b
     assert.equal(menu.querySelector('.tdf-rail-menu-title').textContent, 'Alice');
     assert.equal(note, 'Last seen 3 hours ago');
     assert.equal(menu.querySelectorAll('.tdf-rail-menu-note').length, 1);
-    assert.deepEqual(t.items(), ['profile'], 'exactly one item');
+    assert.deepEqual(
+      [...menu.children].map((el) => el.className),
+      ['tdf-rail-menu-title', 'tdf-rail-menu-note', 'tdf-rail-menu-item'],
+      'title, then the note where Whisper sits, then View Profile',
+    );
+    assert.deepEqual(t.items(), ['profile'], 'no engine action beyond View Profile');
     assert.equal(profile.textContent, 'View Profile');
     assert.equal(profile.disabled, false);
     assert.deepEqual(t.calls, [], 'opening the menu calls nothing');
@@ -1094,6 +1099,58 @@ test("a ghosted row opens a menu of its 'Last seen …' line and View Profile, b
   profile.click();
   assert.deepEqual(t.calls, [['viewProfile', '912', 'Alice']]);
   assert.equal(menu.hidden, true, 'the item closes the menu');
+  await t.teardown();
+});
+
+test("a ghosted row's menu lists the registered actions after View Profile, each given the narrowed MenuUser", async () => {
+  const presence = atServerTime(createPresence(), 500 + HOUR_S);
+  const t = setup({ presence }); // profileRef 2
+  presence.ingest('1', [seenLine('12', 'Alice', 'exit', 500), seenLine('77', 'Stranger', 'exit', 500)]);
+  t.doc.getElementById('userlist_121').remove();
+  await nextFrame();
+  /** @type {unknown[]} */
+  const ran = [];
+  /** @type {unknown[]} */
+  const asked = [];
+  const offTag = registerUserMenuAction({ id: 'tag', label: 'Tag images', icon: ICONS.caret, run: (u) => ran.push(u) });
+  const offHidden = registerUserMenuAction({
+    id: 'only-alice',
+    label: 'Only Alice',
+    isVisible: (u) => {
+      asked.push(u.uuID);
+      return u.uuID === '12';
+    },
+    run() {},
+  });
+  const { menu } = ghostMenu(t, '12');
+  assert.deepEqual(t.items(), ['profile', 'tag', 'only-alice']);
+  assert.deepEqual(
+    [...menu.children].map((el) => el.className),
+    ['tdf-rail-menu-title', 'tdf-rail-menu-note', 'tdf-rail-menu-item', 'tdf-rail-menu-item', 'tdf-rail-menu-item'],
+  );
+  assert.ok(menu.querySelector('[data-action="tag"] svg'), 'with its icon, as on the online menu');
+  menu.querySelector('[data-action="tag"]').click();
+  assert.deepEqual(ran, [{ uuID: '12', name: 'Alice', rawName: 'Alice', userID: '912' }]);
+  assert.equal(menu.hidden, true, 'the action closes the menu');
+  ghostMenu(t, '77');
+  assert.deepEqual(t.items(), ['profile', 'tag'], 'an isVisible false hides it on the ghosted menu');
+  menu.querySelector('[data-action="tag"]').click();
+  assert.deepEqual(ran.at(-1), { uuID: '77', name: 'Stranger', rawName: 'Stranger', userID: '' }, 'blank userID, rawName from the name');
+  assert.deepEqual(asked, ['12', '77'], 'read at each open');
+  offTag();
+  offHidden();
+  await t.teardown();
+});
+
+test('a registered action whose isVisible throws is hidden and reported on the ghosted menu too', async () => {
+  const presence = createPresence();
+  presence.ingest('1', [seenLine('77', 'Stranger', 'exit', 100)]);
+  const t = setup({ presence });
+  const off = registerUserMenuAction({ id: 'odd', label: 'Odd', isVisible: () => { throw new Error('no idea'); }, run() {} });
+  ghostMenu(t, '77');
+  assert.deepEqual(t.items(), ['profile']);
+  assert.deepEqual(t.errors(), ['Rail: user menu action odd: no idea']);
+  off();
   await t.teardown();
 });
 

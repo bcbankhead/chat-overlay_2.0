@@ -181,6 +181,26 @@ export function createImageStore(db) {
     },
 
     /**
+     * Every sender with at least one stored image, each once (TDF-0075.2): one walk of the
+     * `user` index's keys, loading no records.
+     * @returns {Promise<Set<string>>}
+     */
+    senders() {
+      return new Promise((resolve, reject) => {
+        /** @type {Set<string>} */
+        const users = new Set();
+        const req = tx('readonly').objectStore(STORES.images).index('user').openKeyCursor(null, 'nextunique');
+        req.onerror = () => reject(req.error);
+        req.onsuccess = () => {
+          const cursor = req.result;
+          if (!cursor) return resolve(users);
+          users.add(String(cursor.key));
+          cursor.continue();
+        };
+      });
+    },
+
+    /**
      * @param {string} id
      * @param {boolean} favorite
      */

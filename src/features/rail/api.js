@@ -34,13 +34,19 @@ import { describeError } from '../../core/errors.js';
  */
 
 /**
+ * What a user-menu action is given: the fields both the online and the ghosted Recently online
+ * menu can supply (TDF-0075.2). A RailUser satisfies it.
+ * @typedef {Pick<import('./rowParse.js').RailUser, 'uuID' | 'name' | 'rawName' | 'userID'>} MenuUser
+ */
+
+/**
  * @typedef {object} UserMenuAction
  * @property {string} id                 a duplicate id replaces the earlier registration
  * @property {string} label
  * @property {string} [icon]
  * @property {number} [order]            lower first, after the built-in actions; default 100
- * @property {(user: import('./rowParse.js').RailUser) => boolean} [isVisible]
- * @property {(user: import('./rowParse.js').RailUser) => void} run
+ * @property {(user: MenuUser) => boolean} [isVisible]  read at each menu open
+ * @property {(user: MenuUser) => void} run
  */
 
 const DEFAULT_ORDER = 100;
@@ -136,7 +142,7 @@ export function installRailHost(rail) {
 }
 
 /**
- * Add an action to every user's menu, after the built-in ones.
+ * Add an action to every user's menu, online or ghosted, after the built-in ones.
  * @param {UserMenuAction} action
  * @returns {() => void} unregister
  */
@@ -153,7 +159,7 @@ export function listPanels() {
 /**
  * Registered actions visible for this user, in menu order. An `isVisible` that throws hides
  * its action, not the whole menu, and is reported.
- * @param {import('./rowParse.js').RailUser} user
+ * @param {MenuUser} user
  * @param {(err: unknown) => void} onError
  */
 export function listUserMenuActions(user, onError) {

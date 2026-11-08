@@ -1,7 +1,8 @@
 // The gallery's wiring, apart from index.js's double-load guard so a test can drive it.
 // Capture subscribes at once, so no live share or like is missed while the database opens; the
 // Gallery button joins the sidebar's icon row through registerRailPanel, and "View images"
-// joins every user's menu, opening the flyout filtered to that sender. With Compress stored
+// joins a user's menu, online or ghosted, only while the gallery holds an image from them
+// (TDF-0075.2), opening the flyout filtered to that sender. With Compress stored
 // images on, originals stored before are compressed in the background once the database opens,
 // and again from the moment the setting is switched on (TDF-0036). Each tile carries Re-post
 // (TDF-0038, TDF-0062), which posts its image at once through the composer's upload route and
@@ -23,7 +24,8 @@ import { compressOriginal } from './reencode.js';
 import { sha256Hex } from './hash.js';
 import { createRepostAction } from './repost.js';
 import { createRepostLedger } from './reposted.js';
-import { createImageStore } from './store.js';
+import { createSenderSet } from './senders.js';
+import { createImageStore, onImagesChange } from './store.js';
 import { makeThumb } from './thumb.js';
 import { renderGallery } from './view.js';
 
@@ -125,10 +127,21 @@ export function startGallery({ win, doc, css, indexedDB = win.indexedDB }) {
     }),
   );
 
+  // Who the gallery holds images from, for View images' synchronous gate: read once the store
+  // opens and again after every write; hidden until the first read lands. A failed open is
+  // reported once, above, and reads as no senders; only a failed walk reaches report here.
+  const senders = createSenderSet({
+    read: () => storeReady.then((s) => s.senders(), () => new Set()),
+    report,
+  });
+  senders.refresh();
+  onImagesChange(() => void senders.refresh());
+
   registerUserMenuAction({
     id: 'gallery-view-images',
     label: 'View images',
     icon: GALLERY_ICON,
+    isVisible: (user) => senders.has(user.rawName),
     run: (user) => panel.open({ user: user.rawName, label: user.name }),
   });
 }

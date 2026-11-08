@@ -1,15 +1,19 @@
 // The name menu: a left or right click on a user's name opens it leftward from the pointer,
 // clamped to the viewport. Whisper (or Stop whispering, for the user already whispered to)
 // comes first and replaces the engine's Whisper To field; then the rest of userPanel's
-// engine-gated actions, then registered ones. A ghosted Recently online row opens a shorter
-// one in the same place (TDF-0075): a 'Last seen …' line and View Profile, disabled when no
-// profile id is known. Esc, a press outside it or a scroll inside the rail closes it.
+// engine-gated actions, then registered ones. A ghosted Recently online row opens the same
+// menu in the same place (TDF-0075, TDF-0075.2), with its 'Last seen …' line where Whisper
+// sits, then View Profile, disabled when no profile id is known, then the registered actions;
+// the engine's other actions need an online user and are left out. Esc, a press outside it or
+// a scroll inside the rail closes it.
 
 import { listUserMenuActions } from './api.js';
 import { renderIcon } from './icons.js';
 import { builtInActions, offlineProfileCall, profileLabel } from './menuModel.js';
 
 const EDGE = 8;
+
+/** @typedef {{ id: string, label: string, icon?: string, disabled?: boolean, run: () => void }} MenuItem */
 
 /** The ghosted menu's note when the user's line had no usable time. */
 const SEEN_UNKNOWN = 'Last seen time unknown';
@@ -46,7 +50,7 @@ export function createNameMenu({ doc, win, engine, parent, onError }) {
   }
 
   /**
-   * @param {{ id: string, label: string, icon?: string, disabled?: boolean, run: () => void }} item
+   * @param {MenuItem} item
    */
   function renderItem(item) {
     const button = doc.createElement('button');
@@ -68,6 +72,31 @@ export function createNameMenu({ doc, win, engine, parent, onError }) {
     });
     return button;
   }
+
+  /**
+   * Each item as a row; one that fails to render is reported and left out.
+   * @param {MenuItem[]} items
+   */
+  function renderItems(items) {
+    /** @type {HTMLElement[]} */
+    const rows = [];
+    for (const item of items) {
+      try {
+        rows.push(renderItem(item));
+      } catch (err) {
+        onError(err);
+      }
+    }
+    return rows;
+  }
+
+  /**
+   * The registered actions visible for `user`, after the built-in ones in either menu.
+   * @param {import('./api.js').MenuUser} user
+   * @returns {MenuItem[]}
+   */
+  const registeredItems = (user) =>
+    listUserMenuActions(user, onError).map((a) => ({ id: a.id, label: a.label, icon: a.icon, run: () => a.run(user) }));
 
   /**
    * Show `title` then `items` and place the menu leftward from the pointer.
@@ -104,7 +133,7 @@ export function createNameMenu({ doc, win, engine, parent, onError }) {
     const self = engine.uID() === user.uuID;
     const whispering = !self && target !== '' && target === user.name;
 
-    /** @type {{ id: string, label: string, icon?: string, disabled?: boolean, run: () => void }[]} */
+    /** @type {MenuItem[]} */
     const items = [
       whispering
         ? { id: 'stop-whisper', label: 'Stop whispering', run: () => engine.call([['clearWhisper']]) }
@@ -112,23 +141,15 @@ export function createNameMenu({ doc, win, engine, parent, onError }) {
           // calls whisperUser as that field's use did, not userPanel's gated whisper.
           { id: 'whisper', label: 'Whisper', disabled: self, run: () => engine.call([['whisperUser', user.rawName]]) },
       ...builtIn.map((a) => ({ id: a.id, label: a.label, run: () => engine.call(a.calls) })),
-      ...listUserMenuActions(user, onError).map((a) => ({ id: a.id, label: a.label, icon: a.icon, run: () => a.run(user) })),
+      ...registeredItems(user),
     ];
 
-    /** @type {HTMLElement[]} */
-    const rows = [];
-    for (const item of items) {
-      try {
-        rows.push(renderItem(item));
-      } catch (err) {
-        onError(err);
-      }
-    }
-    show(user.name, rows, x, y);
+    show(user.name, renderItems(items), x, y);
   }
 
   /**
-   * The ghosted row's menu: exactly a 'Last seen …' line and View Profile (TDF-0075).
+   * The ghosted row's menu: the own-name menu's shape, with the 'Last seen …' line in Whisper's
+   * row, View Profile, then the registered actions (TDF-0075.2).
    * @param {import('./menuModel.js').OfflineUser} user
    * @param {string | null} seenText  'Last seen …', or null when the line had no usable time
    * @param {number} x  pointer clientX
@@ -137,19 +158,27 @@ export function createNameMenu({ doc, win, engine, parent, onError }) {
   function openOffline(user, seenText, x, y) {
     const flags = engine.flags();
     const call = offlineProfileCall(user, flags);
+    /** @type {import('./api.js').MenuUser} */
+    const menuUser = { uuID: user.uuID, name: user.name, rawName: user.rawName || user.name, userID: user.userID ?? '' };
     const note = doc.createElement('div');
     note.className = 'tdf-rail-menu-note';
     note.setAttribute('role', 'presentation');
     note.textContent = seenText ?? SEEN_UNKNOWN;
-    const profile = renderItem({
-      id: 'profile',
-      label: profileLabel(flags),
-      disabled: !call,
-      run: () => {
-        if (call) engine.call([call]);
+
+    /** @type {MenuItem[]} */
+    const items = [
+      {
+        id: 'profile',
+        label: profileLabel(flags),
+        disabled: !call,
+        run: () => {
+          if (call) engine.call([call]);
+        },
       },
-    });
-    show(user.name, [note, profile], x, y);
+      ...registeredItems(menuUser),
+    ];
+
+    show(user.name, [note, ...renderItems(items)], x, y);
   }
 
   /** @param {Event} event */

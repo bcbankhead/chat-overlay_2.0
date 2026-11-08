@@ -9,15 +9,16 @@ import { createSettings } from '../../core/settings.js';
 import { COMPOSER_NOT_READY, installUploader } from '../composer/api.js';
 import { installRailHost, listPanels, listUserMenuActions } from '../rail/api.js';
 import { listGalleryItemActions } from './api.js';
-import { clearGalleryErrors } from './errors.js';
+import { clearGalleryErrors, listGalleryErrors } from './errors.js';
 import { shareUrl } from './shareParse.js';
 import { startGallery } from './start.js';
 import { createImageStore } from './store.js';
 
 const settle = () => new Promise((r) => setTimeout(r, 50));
 const ID = '123456789012345';
+const BOB_IMAGE = { messageId: '1', user: 'bob%20b', mTime: '100', roomID: '1', receivedAt: 1, contentType: 'image/png', thumb: null, bytes: 1, favorite: false, broken: false };
 
-test('start wires capture, the Gallery panel and the "View images" menu action', async () => {
+test('start wires capture, the Gallery panel and the "View images" menu action, shown only for a sender the gallery holds', async () => {
   const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   const doc = win.document;
   /** @type {string[]} */
@@ -57,11 +58,56 @@ test('start wires capture, the Gallery panel and the "View images" menu action',
     const opened = [];
     const uninstall = installRailHost({ open: (p, arg) => opened.push([p.id, arg]), report: () => {} });
     const user = { uuID: '9', name: 'bob b', rawName: 'bob%20b', roomID: '1', userID: '2', avatar: '', block: '1', ip: '', statusText: '' };
-    const action = listUserMenuActions(user, () => {}).find((a) => a.id === 'gallery-view-images');
-    assert.equal(action?.label, 'View images');
+    const viewImages = () => listUserMenuActions(user, () => {}).find((a) => a.id === 'gallery-view-images');
+    assert.equal(viewImages(), undefined, 'hidden: the gallery holds nothing from bob');
+    const store = createImageStore(await openDb({ indexedDB }));
+    await store.put(/** @type {any} */ ({ ...BOB_IMAGE, id: '1' }));
+    await store.put(/** @type {any} */ ({ ...BOB_IMAGE, id: '2' }));
+    await settle();
+    const action = viewImages();
+    assert.equal(action?.label, 'View images', 'shown once an image from bob is stored');
+    assert.equal(listUserMenuActions({ ...user, rawName: 'alice' }, () => {}).find((a) => a.id === 'gallery-view-images')?.label, 'View images');
     action?.run(user);
-    uninstall();
     assert.deepEqual(opened, [['gallery', { user: 'bob%20b', label: 'bob b' }]]);
+    await store.remove('1');
+    await settle();
+    assert.ok(viewImages(), 'one image from bob remains');
+    await store.remove('2');
+    await settle();
+    assert.equal(viewImages(), undefined, 'hidden again once the last is removed');
+    // The ghosted menu's narrowed user is enough.
+    await store.put(/** @type {any} */ ({ ...BOB_IMAGE, id: '3' }));
+    await settle();
+    assert.ok(listUserMenuActions({ uuID: '9', name: 'bob b', rawName: 'bob%20b', userID: '' }, () => {}).find((a) => a.id === 'gallery-view-images'));
+    uninstall();
+  } finally {
+    console.error = logged;
+    clearGalleryErrors();
+  }
+});
+
+test('a failed database open is reported once, not again by the View images sender read, which stays hidden', async () => {
+  const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
+  const failing = /** @type {any} */ ({
+    open() {
+      /** @type {any} */
+      const req = {};
+      setTimeout(() => {
+        req.error = new Error('no database');
+        req.onerror();
+      });
+      return req;
+    },
+  });
+  const logged = console.error;
+  console.error = () => {};
+  clearGalleryErrors();
+  try {
+    startGallery({ win, doc: win.document, css: '', indexedDB: failing });
+    await settle();
+    assert.deepEqual(listGalleryErrors(), ['no database']);
+    const user = { uuID: '9', name: 'bob b', rawName: 'bob%20b', userID: '' };
+    assert.equal(listUserMenuActions(user, () => {}).find((a) => a.id === 'gallery-view-images'), undefined);
   } finally {
     console.error = logged;
     clearGalleryErrors();

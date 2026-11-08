@@ -57,6 +57,17 @@ test('list is newest first; listByUser filters to the sender', async () => {
   assert.deepEqual((await store.listByUser('alice')).map((r) => r.id), ['c', 'a']);
 });
 
+test('senders lists each sender once, and is empty on an empty store (TDF-0075.2)', async () => {
+  const store = await fresh();
+  assert.deepEqual([...(await store.senders())], []);
+  await store.put(image({ id: 'a' }));
+  await store.put(image({ id: 'b', user: 'bob%20b' }));
+  await store.put(image({ id: 'c' }));
+  assert.deepEqual([...(await store.senders())].sort(), ['alice', 'bob%20b']);
+  await store.remove('b');
+  assert.deepEqual([...(await store.senders())], ['alice']);
+});
+
 test('the size limit never deletes a favourite; enforceLimit resolves to the removed ids', async () => {
   const store = await fresh();
   await store.put(image({ id: 'fav', receivedAt: 1, favorite: true }));
