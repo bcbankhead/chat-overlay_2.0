@@ -36,6 +36,8 @@ export function createEngine(win, doc) {
       webcamsOn: w.webcamsOn,
       profileOn: w.profileOn,
       profileRef: w.profileRef,
+      profileUrl: w.profileUrl,
+      pageUrl: String(w.location?.href ?? ''),
       groupPChat: w.groupPChat,
       groupWatch: w.groupWatch,
       eCredits: w.eCredits,

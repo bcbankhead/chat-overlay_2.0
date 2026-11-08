@@ -6,7 +6,8 @@
 // when it has loaded, or, subscribing after that, once on a microtask. A user is written when new, when their userID or rawName changed, or once
 // their stored `at` is `SEEN_REFRESH_MS` old, so a poll that re-renders the rail writes nothing.
 // `at` is when they were last seen online, which the age prune reads. A failed read or write is
-// reported and leaves the lookup empty: the row's View Profile stays disabled.
+// reported and leaves the lookup empty: the row's View Profile falls back to opening by name
+// (TDF-0078).
 
 import { STORES, done, isClosing, request } from './db.js';
 

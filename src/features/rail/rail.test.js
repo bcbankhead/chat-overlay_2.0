@@ -56,7 +56,7 @@ function setup({ host = true, extra = '', flags = {}, shell = stubShell(), prepa
     userStatusMes: ['select', 'Here', 'BRB', 'Away'],
     ...flags,
   });
-  for (const fn of ['clearWhisper', 'blockUsers', 'viewProfile', 'createPChatDiv', 'showInfoBox', 'changeRooms']) {
+  for (const fn of ['clearWhisper', 'blockUsers', 'viewProfile', 'createPChatDiv', 'showInfoBox', 'changeRooms', 'newWin']) {
     win[fn] = (...args) => calls.push([fn, ...args]);
   }
   win.whisperUser = (name) => {
@@ -1271,6 +1271,17 @@ test("profiles off, or an unsupported profileRef, disable View Profile; the row 
     assert.deepEqual(t.calls, []);
     await t.teardown();
   }
+});
+
+test('under profileRef 2 a never-online ghosted row opens the forum profile by name (TDF-0078)', async () => {
+  const presence = createPresence();
+  presence.ingest('1', [{ ...seenLine('77', 'Dan B', 'exit', 100), rawName: 'Dan%20B' }]);
+  const t = setup({ presence, flags: { profileUrl: 'https://example.test/forum/memberlist.php?mode=viewprofile&u=' } });
+  const { profile } = ghostMenu(t, '77');
+  assert.equal(profile.disabled, false);
+  profile.click();
+  assert.deepEqual(t.calls, [['newWin', 'https://example.test/forum/memberlist.php?mode=viewprofile&un=Dan+B']]);
+  await t.teardown();
 });
 
 test("under profileRef 1 a never-online ghosted row passes the line's encoded name", async () => {

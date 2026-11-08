@@ -174,8 +174,9 @@ async function start(lift, coreReady) {
     win.__tdfChat2Avatars = avatars;
     // Published for the rail: who has been seen online, so a Recently online row can open the
     // profile after a reload (TDF-0075). It loads itself and tells the rail when it has.
-    // A failed read or write is not worth failing the start over: View Profile stays disabled on
-    // those rows, and a notice says why (the view shows each distinct text once). One raised
+    // A failed read or write is not worth failing the start over: under profileRef 2 those rows
+    // open the profile by name when the engine has a profileUrl, else View Profile is disabled
+    // (TDF-0078), and a notice says why (the view shows each distinct text once). One raised
     // before the view exists is held until it does.
     /** @type {import('./view.js').View | null} */
     let seenView = null;

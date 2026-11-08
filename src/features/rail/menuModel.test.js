@@ -22,6 +22,8 @@ const flags = (over = {}) => ({
   webcamsOn: 0,
   profileOn: 1,
   profileRef: 2,
+  profileUrl: undefined,
+  pageUrl: 'https://example.test/chat/index.php',
   groupPChat: 1,
   groupWatch: 1,
   eCredits: 0,
@@ -153,6 +155,39 @@ test('offlineProfileCall: profileRef 0 passes the uuID, 1 the name, 2 the rememb
   assert.deepEqual(offlineProfileCall(known, flags({ profileRef: 1 })), ['viewProfile', 'Dan%20B', 'Dan%20B'], 'the engine form of the name when an online row gave it');
   const fromLine = { ...away, rawName: 'Dan%20B' };
   assert.deepEqual(offlineProfileCall(fromLine, flags({ profileRef: 1 })), ['viewProfile', 'Dan%20B', 'Dan%20B'], "the line's encoded name for a user never online this load");
+});
+
+// A user never seen online has no forum id: under profileRef 2 the profile opens by name (TDF-0078).
+const PROFILE = 'https://example.test/forum/memberlist.php?mode=viewprofile&u=';
+
+test('offlineProfileCall under profileRef 2 with no forum id opens the profile page by name', () => {
+  const away = { uuID: '40', name: 'Dan B', rawName: 'Dan%20B' };
+  assert.deepEqual(offlineProfileCall(away, flags({ profileUrl: PROFILE })), [
+    'newWin',
+    'https://example.test/forum/memberlist.php?mode=viewprofile&un=Dan+B',
+  ]);
+  const relative = offlineProfileCall(away, flags({ profileUrl: '../forum/memberlist.php?mode=viewprofile&u=' }));
+  assert.deepEqual(relative, ['newWin', 'https://example.test/forum/memberlist.php?mode=viewprofile&un=Dan+B'], 'resolved against the page URL');
+});
+
+test('offlineProfileCall prefers a known forum id over the name', () => {
+  const known = { uuID: '40', name: 'Dan B', rawName: 'Dan%20B', userID: '573' };
+  assert.deepEqual(offlineProfileCall(known, flags({ profileUrl: PROFILE })), ['viewProfile', '573', 'Dan%20B']);
+});
+
+test('offlineProfileCall by name is null without a usable profileUrl', () => {
+  const away = { uuID: '40', name: 'Dan B' };
+  for (const profileUrl of [undefined, '', 42, 'http://[bad']) {
+    assert.equal(offlineProfileCall(away, flags({ profileUrl })), null, String(profileUrl));
+  }
+  assert.equal(offlineProfileCall(away, flags({ profileUrl: PROFILE, profileOn: 0 })), null, 'profiles off');
+});
+
+test('offlineProfileCall under profileRef 0 and 1 ignores profileUrl', () => {
+  const away = { uuID: '40', name: 'Dan B' };
+  assert.deepEqual(offlineProfileCall(away, flags({ profileRef: 0, profileUrl: PROFILE })), ['viewProfile', '40', 'Dan B']);
+  assert.deepEqual(offlineProfileCall(away, flags({ profileRef: 1, profileUrl: PROFILE })), ['viewProfile', 'Dan B', 'Dan B']);
+  assert.equal(offlineProfileCall(away, flags({ profileRef: 9, profileUrl: PROFILE })), null);
 });
 
 test('offlineProfileCall is null with profiles off, or an unknown profileRef', () => {
