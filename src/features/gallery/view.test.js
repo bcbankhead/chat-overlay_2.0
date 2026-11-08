@@ -9,6 +9,9 @@ import { clearGalleryErrors, reportGalleryError } from './errors.js';
 import { createImageStore } from './store.js';
 import { renderGallery, resetGalleryActionStates } from './view.js';
 
+/** How many stored records carry a manual position. @param {{ list: () => Promise<{ position?: unknown }[]> }} store */
+const positioned = async (store) => (await store.list()).filter((r) => r.position !== undefined).length;
+
 beforeEach(() => resetGalleryActionStates());
 
 const settle = () => new Promise((r) => setTimeout(r, 30));
@@ -1321,7 +1324,7 @@ test('a press that moves less than 6 px is a click: it opens the tile and writes
   pointer(g, 'pointerup', el, { x: cell(1).x + 3, y: cell(1).y + 3 });
   /** @type {HTMLElement} */ (el).click();
   assert.deepEqual(g.opened, ['b']);
-  assert.equal((await g.store.stats()).positioned, 0);
+  assert.equal(await positioned(g.store), 0);
   cleanup();
 });
 
@@ -1338,7 +1341,7 @@ test('a drop back into its own slot writes nothing (TDF-0060)', async () => {
   pointer(g, 'pointerup', el, cell(1));
   await settle();
   assert.deepEqual(ids(g), ['a', 'b', 'c', 'd']);
-  assert.equal((await g.store.stats()).positioned, 0);
+  assert.equal(await positioned(g.store), 0);
   cleanup();
 });
 
@@ -1358,7 +1361,7 @@ test('a press on the star, the trash or an action button never starts a drag (TD
     assert.equal(g.container.querySelector('.tdf-gallery-slot'), null, sel);
     pointer(g, 'pointerup', button, cell(0));
   }
-  assert.equal((await g.store.stats()).positioned, 0);
+  assert.equal(await positioned(g.store), 0);
   off();
   cleanup();
 });
@@ -1415,7 +1418,7 @@ test('pointercancel and Escape put a lifted tile back and write nothing (TDF-006
   pointer(g, 'pointerup', el, cell(0));
   await settle();
   assert.deepEqual(ids(g), ['a', 'b', 'c', 'd']);
-  assert.equal((await g.store.stats()).positioned, 0);
+  assert.equal(await positioned(g.store), 0);
   cleanup();
 });
 
@@ -1484,59 +1487,25 @@ test('quickview walks the grid in its manual order after a move (TDF-0060)', asy
   assert.deepEqual(g.errors, []);
 });
 
-test('Reset order shows only while a manual order exists and resets on a second press (TDF-0060)', async () => {
+test('the gallery has no Reset order button, and a drag-placed order survives a remount (TDF-0067)', async () => {
   const g = await open();
   await four(g);
-  const cleanup = g.mount();
+  let cleanup = g.mount();
   await settle();
   layout(g);
-  const reset = /** @type {HTMLButtonElement} */ (g.container.querySelector('.tdf-gallery-reset'));
-  assert.equal(reset.hidden, true);
   mouseDrag(g, 3, 0);
   await settle();
-  assert.equal(reset.hidden, false);
-  assert.equal(reset.textContent, 'Reset order');
-
-  reset.click();
-  await settle();
-  assert.equal(reset.textContent, 'Reset order?', 'the first press only arms it');
-  assert.ok(reset.classList.contains('tdf-armed'));
   assert.deepEqual(ids(g), ['d', 'a', 'b', 'c']);
-  reset.click();
+  assert.equal(g.container.querySelectorAll('.tdf-gallery-reset').length, 0, 'no Reset order button');
+  const labels = [...g.container.querySelectorAll('button')].map((b) => `${b.textContent} ${b.title}`);
+  assert.ok(!labels.some((l) => /reset order/i.test(l)), 'no button offers to reset the order');
+  cleanup();
+  cleanup = g.mount();
   await settle();
-  assert.deepEqual(ids(g), ['a', 'b', 'c', 'd'], 'the second press resets to newest first');
-  assert.equal(reset.hidden, true);
-  assert.equal((await g.store.stats()).positioned, 0);
+  assert.deepEqual(ids(g), ['d', 'a', 'b', 'c'], 'the manual order is kept');
+  assert.equal(await positioned(g.store), 1);
   cleanup();
   assert.deepEqual(g.errors, []);
-});
-
-test('Reset order disarms after 4 s without a second press (TDF-0060)', async () => {
-  const g = await open();
-  await four(g);
-  await g.store.move('d', null, 'a');
-  /** @type {(() => void)[]} */
-  const timers = [];
-  const cleanup = g.mount();
-  await settle();
-  const realSet = g.win.setTimeout.bind(g.win);
-  g.win.setTimeout = /** @type {any} */ ((/** @type {() => void} */ fn, /** @type {number} */ ms) => {
-    if (ms === 4000) {
-      timers.push(fn);
-      return 1;
-    }
-    return realSet(fn, ms);
-  });
-  const reset = /** @type {HTMLButtonElement} */ (g.container.querySelector('.tdf-gallery-reset'));
-  assert.equal(reset.hidden, false);
-  reset.click();
-  assert.equal(timers.length, 1);
-  timers[0]();
-  assert.equal(reset.textContent, 'Reset order');
-  reset.click();
-  await settle();
-  assert.equal((await g.store.stats()).positioned, 1, 'a press after the window only arms again');
-  cleanup();
 });
 
 test('drag CSS: the lifted tile is absolute against a relative grid, and the slot is a 128px cell (TDF-0060)', () => {
@@ -1544,7 +1513,6 @@ test('drag CSS: the lifted tile is absolute against a relative grid, and the slo
   assert.match(css, /\.tdf-gallery-grid \{\s*\/\*[^*]*\*\/\s*position: relative;/);
   assert.match(css, /\.tdf-gallery-tile\.tdf-dragging \{[^}]*position: absolute;/);
   assert.match(css, /\.tdf-gallery-slot \{[^}]*width: 128px;[^}]*height: 128px;/);
-  assert.match(css, /\.tdf-gallery-reset\[hidden\] \{\s*display: none;/);
 });
 
 /** The grid of a mounted gallery. @param {Awaited<ReturnType<typeof open>>} g */
@@ -1730,7 +1698,7 @@ test("drag guards: a non-primary button, a tile being removed, and the browser's
   assert.equal(native.defaultPrevented, true, "the browser's own drag is refused");
   await settle();
   assert.deepEqual(ids(g), ['a', 'b', 'c', 'd']);
-  assert.equal((await g.store.stats()).positioned, 0);
+  assert.equal(await positioned(g.store), 0);
   cleanup();
   assert.deepEqual(g.errors, []);
 });
@@ -1753,7 +1721,7 @@ test('a registry change mid-drag ends the press and leaves no slot (TDF-0060)', 
   await settle();
   assert.deepEqual(ids(g), ['a', 'b', 'c', 'd']);
   assert.deepEqual(g.tiles().map((t) => t.querySelectorAll('[data-action="like"]').length), [1, 1, 1, 1]);
-  assert.equal((await g.store.stats()).positioned, 0);
+  assert.equal(await positioned(g.store), 0);
   off();
   cleanup();
   assert.deepEqual(g.errors, []);
@@ -1781,7 +1749,7 @@ test('closing the flyout mid-drag ends the press, leaves no slot, and runs no ow
   pointer(g, 'pointerup', el, cell(0));
   await settle();
   assert.equal(lists, 0, 'the owed refresh does not run after close');
-  assert.equal((await g.store.stats()).positioned, 0);
+  assert.equal(await positioned(g.store), 0);
   assert.deepEqual(g.errors, []);
 });
 
@@ -1797,22 +1765,6 @@ test('a move the store refuses is reported and the grid returns to the stored or
   await settle();
   assert.deepEqual(ids(g), ['a', 'b', 'c', 'd']);
   assert.deepEqual(g.errors.map((e) => /** @type {Error} */ (e).message), ['move refused']);
-  cleanup();
-});
-
-test('a Reset order the store refuses is reported (TDF-0060)', async () => {
-  const g = await open();
-  await four(g);
-  await g.store.move('d', null, 'a');
-  const cleanup = g.mount();
-  await settle();
-  g.store.resetOrder = () => Promise.reject(new Error('reset refused'));
-  const reset = /** @type {HTMLButtonElement} */ (g.container.querySelector('.tdf-gallery-reset'));
-  reset.click();
-  reset.click();
-  await settle();
-  assert.deepEqual(g.errors.map((e) => /** @type {Error} */ (e).message), ['reset refused']);
-  assert.deepEqual(ids(g), ['d', 'a', 'b', 'c']);
   cleanup();
 });
 
@@ -1856,7 +1808,7 @@ test('a press whose tile a refresh removed before the drag began ends quietly (T
   }
   await settle();
   assert.deepEqual(ids(g), ['a', 'b']);
-  assert.equal((await g.store.stats()).positioned, 0);
+  assert.equal(await positioned(g.store), 0);
   cleanup();
   assert.deepEqual(g.errors, []);
 });

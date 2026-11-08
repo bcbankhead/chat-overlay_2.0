@@ -4,6 +4,9 @@ import 'fake-indexeddb/auto';
 import { openDb } from '../../core/db.js';
 import { FavoriteProtectedError, createImageStore, onImagesChange } from './store.js';
 
+/** How many stored records carry a manual position. @param {{ list: () => Promise<{ position?: unknown }[]> }} store */
+const positioned = async (store) => (await store.list()).filter((r) => r.position !== undefined).length;
+
 let n = 0;
 /** @param {import('./store.js').ImageStore} store @param {string} id */
 const get = async (store, id) => (await store.list()).find((r) => r.id === id);
@@ -73,7 +76,7 @@ test('stats split originals and thumbnails and count favourites', async () => {
   await store.put(image({ id: 'b', thumb: bytes(20) }));
   await store.put(image({ id: 'c' }));
   const totals = await store.stats();
-  assert.deepEqual(totals, { count: 3, originals: 1000, thumbs: 50, favorites: 1, positioned: 0 });
+  assert.deepEqual(totals, { count: 3, originals: 1000, thumbs: 50, favorites: 1 });
 });
 
 test('usage reads size on disk and the limit preview together, in one read', async () => {
@@ -242,7 +245,7 @@ test('move persists a manual order across a reopened store, and notifies (TDF-00
 
   const reopened = createImageStore(await openDb({ name }));
   assert.deepEqual((await reopened.list()).map((r) => r.id), ['c', 'a', 'b']);
-  assert.equal((await reopened.stats()).positioned, 1);
+  assert.equal(await positioned(reopened), 1);
 });
 
 test('move: a missing record writes nothing and does not notify; a new capture lands on top (TDF-0060)', async () => {
@@ -282,27 +285,8 @@ test('move across hidden rows takes the visible neighbours\' keys and writes no 
   const order = (await store.list()).map((r) => r.id);
   assert.deepEqual(order.filter((id) => id !== 'e'), ['a', 'b', 'c', 'd']);
   assert.ok(order.indexOf('e') > order.indexOf('a') && order.indexOf('e') < order.indexOf('c'));
-  assert.equal((await store.stats()).positioned, 1, 'one drop writes one record');
+  assert.equal(await positioned(store), 1, 'one drop writes one record');
 });
-test('resetOrder drops every position and notifies only when one changed (TDF-0060)', async () => {
-  const store = await fresh();
-  await store.put(image({ id: 'a', receivedAt: 1000 }));
-  await store.put(image({ id: 'b', receivedAt: 2000, favorite: true }));
-  await store.move('b', 'a', null);
-  assert.deepEqual((await store.list()).map((r) => r.id), ['a', 'b']);
-  let calls = 0;
-  const off = onImagesChange(() => (calls += 1));
-  assert.equal(await store.resetOrder(), 1);
-  assert.equal(calls, 1);
-  assert.deepEqual((await store.list()).map((r) => r.id), ['b', 'a']);
-  assert.equal((await store.get('b'))?.favorite, true, 'nothing else changes');
-  assert.equal(Object.hasOwn(/** @type {object} */ (await store.get('b')), 'position'), false);
-  assert.equal(await store.resetOrder(), 0);
-  off();
-  assert.equal(calls, 1);
-  assert.equal((await store.stats()).positioned, 0);
-});
-
 test('enforceLimit still evicts by receivedAt, whatever the manual order, and never a favourite (TDF-0060)', async () => {
   const store = await fresh();
   await store.put(image({ id: 'fav', receivedAt: 1, favorite: true, bytes: 100 }));

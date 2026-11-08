@@ -310,41 +310,18 @@ export function createImageStore(db) {
       if (written.length) notify();
     },
 
-    /**
-     * Drop every manual position, returning the gallery to newest first, in one transaction.
-     * Notifies only when a record changed.
-     * @returns {Promise<number>} how many records had a position
-     */
-    async resetOrder() {
-      const t = tx('readwrite');
-      const store = t.objectStore(STORES.images);
-      const rows = /** @type {ImageRecord[]} */ (await request(store.getAll()));
-      let changed = 0;
-      for (const r of rows) {
-        if (r.position === undefined) continue;
-        const { position: _gone, ...rest } = r;
-        store.put(rest);
-        changed += 1;
-      }
-      await done(t);
-      if (changed) notify();
-      return changed;
-    },
-
-    /** Count, size on disk split into originals and thumbnails, favourites, and manually placed. */
+    /** Count, size on disk split into originals and thumbnails, and favourites. */
     async stats() {
       const rows = await all();
       let originals = 0;
       let thumbs = 0;
       let favorites = 0;
-      let positioned = 0;
       for (const r of rows) {
         originals += originalBytes(r);
         thumbs += thumbBytes(r);
         if (r.favorite) favorites += 1;
-        if (r.position !== undefined) positioned += 1;
       }
-      return { count: rows.length, originals, thumbs, favorites, positioned };
+      return { count: rows.length, originals, thumbs, favorites };
     },
 
     /**

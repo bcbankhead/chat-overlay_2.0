@@ -27,8 +27,8 @@
 // after a 350 ms hold (an earlier move scrolls the flyout as before). The drop stores one key
 // between its visible neighbours (store.move), so a move under a filter leaves hidden tiles where
 // they were; the grid's order is order.js's. A press on any button never drags, the click after a
-// drag is swallowed, and store refreshes wait for the drop. Reset order, shown while any image has
-// a manual place, drops them all after a second press within 4 s.
+// drag is swallowed, and store refreshes wait for the drop. There is no control that drops every
+// manual place at once (TDF-0067): one press would undo a curated order.
 
 import { renderIcon } from '../rail/icons.js';
 import { listGalleryItemActions, listGalleryItemDecorations, onGalleryRegistryChange } from './api.js';
@@ -45,7 +45,6 @@ const DRAG_SLOP_PX = 6;
 const TOUCH_HOLD_MS = 350;
 /** Distance from the flyout body's edge where a drag scrolls it. */
 const EDGE_PX = 40;
-const RESET_ARM_MS = 4000;
 const UNAVAILABLE = 'Image unavailable from server';
 
 const ICONS = {
@@ -200,11 +199,7 @@ export function renderGallery(
   mineFilter.setAttribute('aria-label', 'Show my images only');
   mineFilter.setAttribute('aria-pressed', 'false');
   mineFilter.innerHTML = ICONS.person;
-  const resetOrder = doc.createElement('button');
-  resetOrder.type = 'button';
-  resetOrder.className = 'tdf-gallery-reset';
-  resetOrder.hidden = true;
-  head.append(title, stats, chip, resetOrder, mineFilter, favFilter);
+  head.append(title, stats, chip, mineFilter, favFilter);
   const errors = doc.createElement('div');
   errors.className = 'tdf-gallery-error';
   errors.setAttribute('role', 'status');
@@ -247,30 +242,6 @@ export function renderGallery(
     favOnly = !favOnly;
     favFilter.setAttribute('aria-pressed', String(favOnly));
     void refresh();
-  });
-
-  /** @type {ReturnType<typeof setTimeout> | null} pending while Reset order is armed */
-  let resetTimer = null;
-  function disarmReset() {
-    if (resetTimer !== null) win.clearTimeout(resetTimer);
-    resetTimer = null;
-    resetOrder.classList.remove('tdf-armed');
-    resetOrder.textContent = 'Reset order';
-    resetOrder.title = 'Return every image to newest first';
-    resetOrder.setAttribute('aria-label', 'Reset order: return every image to newest first');
-  }
-  disarmReset();
-  resetOrder.addEventListener('click', () => {
-    if (resetTimer === null) {
-      resetOrder.classList.add('tdf-armed');
-      resetOrder.textContent = 'Reset order?';
-      resetOrder.title = 'Press again to return every image to newest first';
-      resetOrder.setAttribute('aria-label', 'Press again to reset the order to newest first');
-      resetTimer = win.setTimeout(disarmReset, RESET_ARM_MS);
-      return;
-    }
-    disarmReset();
-    store?.resetOrder().catch(report);
   });
 
   function renderChip() {
@@ -652,8 +623,6 @@ export function renderGallery(
       stats.title =
         `Originals: ${formatBytes(totals.originals)} · Thumbnails: ${formatBytes(totals.thumbs)} · ` +
         `Favourites: ${totals.favorites}`;
-      resetOrder.hidden = totals.positioned === 0;
-      if (resetOrder.hidden) disarmReset();
 
       const shown = favOnly ? items.filter((r) => r.favorite) : items;
       /** @type {Map<string, Tile>} */
@@ -972,7 +941,6 @@ export function renderGallery(
     closed = true;
     endPress();
     refreshOwed = false;
-    disarmReset();
     offRegistry();
     offImages();
     offErrors();
