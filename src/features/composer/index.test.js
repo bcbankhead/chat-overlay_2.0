@@ -15,6 +15,8 @@ import { whisperTarget } from './whisper.js';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const settle = () => new Promise((r) => setTimeout(r, 20));
 
+const SFX = ['bite.mp3', 'boo.mp3', 'Kiss.mp3', 'Loud.MP3', ''];
+
 const SMILIES = [':)', ';)', ':P', ':7', ';(', ':(', ':V', '[(', '[x', ':h', '*R', '8)', ':d', ':L', ':o'];
 
 /** @type {string} */
@@ -33,8 +35,9 @@ before(async () => {
         "import { mount } from '../../core/shell.js';",
         "import { BAR } from './index.js';",
         "import { openSmileyPicker } from './smilies.js';",
+        "import { openSoundPicker } from './sfx.js';",
         "import { COMPOSER_NOT_READY, uploadAttachment, whisperTo } from './api.js';",
-        'window.__test = { mount, openSmileyPicker, BAR, uploadAttachment, whisperTo, COMPOSER_NOT_READY };',
+        'window.__test = { mount, openSmileyPicker, openSoundPicker, BAR, uploadAttachment, whisperTo, COMPOSER_NOT_READY };',
       ].join('\n'),
       resolveDir: here,
       sourcefile: 'harness.js',
@@ -72,8 +75,15 @@ function fakeTheme(initial = 'dark') {
 /**
  * A page with the engine's composer and the globals the composer touches. `sent` counts
  * submitenter's sends, `clicks` the Send button's. `coarse` stands in for a touch screen.
+ * `sfx` is the engine's mySFX (null leaves it undefined); `messages` records each addMessage
+ * call as the engine reads it, `played` each doSound.
  */
-function page({ chat = true, theme = /** @type {'light' | 'dark' | null} */ ('dark'), coarse = false } = {}) {
+function page({
+  chat = true,
+  theme = /** @type {'light' | 'dark' | null} */ ('dark'),
+  coarse = false,
+  sfx = /** @type {string[] | null} */ (SFX),
+} = {}) {
   const window = new Window({ url: 'https://chat.example.com/forum/chat/' });
   const { document } = window;
   document.body.innerHTML = `${chat ? '<div id="chatContainer"></div>' : ''}
@@ -85,7 +95,13 @@ function page({ chat = true, theme = /** @type {'light' | 'dark' | null} */ ('da
       <span id="optionsLogout"></span>
     </div>`;
   const bar = /** @type {any} */ (document.getElementById('optionsBar'));
-  const state = { sent: 0, clicks: 0, whisperCalls: 0 };
+  const state = {
+    sent: 0,
+    clicks: 0,
+    whisperCalls: 0,
+    /** @type {{ text: string, whisper: string }[]} */ messages: [],
+    /** @type {string[]} */ played: [],
+  };
   // Stands in for the inline onkeypress="return submitenter(...)", which sends on any Enter.
   bar.addEventListener('keypress', (/** @type {any} */ e) => {
     if (e.keyCode === 13) {
@@ -112,6 +128,17 @@ function page({ chat = true, theme = /** @type {'light' | 'dark' | null} */ ('da
   };
   win.clearWhisper = () => {
     /** @type {any} */ (document.getElementById('whisperID')).value = '';
+  };
+  if (sfx) win.mySFX = [...sfx];
+  // addMessage reads the box and the whisper target, then clears and focuses the box.
+  win.addMessage = (/** @type {string} */ input) => {
+    const box = /** @type {any} */ (document.getElementById(input));
+    state.messages.push({ text: box.value, whisper: /** @type {any} */ (document.getElementById('whisperID')).value });
+    box.value = '';
+    box.focus();
+  };
+  win.doSound = (/** @type {string} */ file) => {
+    state.played.push(file);
   };
   win.textColor = '#000080';
   win.changeMessBoxStyle = (/** @type {string} */ id) => {
@@ -359,6 +386,104 @@ test('openSmileyPicker sits above (x, y)', () => {
   assert.equal(picker.style.left, `${40 + win.scrollX}px`);
 });
 
+test('the sound button opens a list of the engine mySFX, each name without its .mp3', () => {
+  const { document } = page();
+  const button = /** @type {any} */ (document.querySelector('.tdf-sfx-button'));
+  assert.ok(button);
+  assert.equal(button.getAttribute('aria-label'), 'Play SFX');
+  assert.equal(button.parentElement, document.getElementById('optionsContainer'), 'beside the smiley button');
+  button.click();
+  const picker = /** @type {any} */ (document.querySelector('.tdf-sfx-picker'));
+  assert.equal(picker.hidden, false);
+  const names = [...picker.querySelectorAll('.tdf-sfx-item')].map((/** @type {any} */ el) => el.textContent);
+  assert.deepEqual(names, ['bite', 'boo', 'Kiss'], 'the empty entry and the .MP3 the engine cannot play are filtered out');
+  assert.equal(picker.querySelectorAll('.tdf-sfx-row .tdf-sfx-preview').length, 3);
+  button.click();
+  assert.equal(picker.hidden, true, 'a second click on the button closes it');
+});
+
+test('no sound button when mySFX is empty or missing', () => {
+  assert.equal(page({ sfx: [] }).document.querySelector('.tdf-sfx-button'), null);
+  assert.equal(page({ sfx: [''] }).document.querySelector('.tdf-sfx-button'), null);
+  assert.equal(page({ sfx: ['Loud.MP3', '.mp3'] }).document.querySelector('.tdf-sfx-button'), null, 'no playable entry');
+  assert.equal(page({ sfx: null }).document.querySelector('.tdf-sfx-button'), null);
+});
+
+test('picking a sound sends /play <name> through addMessage, keeps the whisper and restores the draft', () => {
+  const { document, bar, state, win } = page();
+  bar.value = 'half a thought';
+  bar.focus();
+  bar.setSelectionRange(2, 6);
+  /** @type {any} */ (document.querySelector('.tdf-sfx-button')).click();
+  const picker = /** @type {any} */ (document.querySelector('.tdf-sfx-picker'));
+  picker.querySelectorAll('.tdf-sfx-item')[1].click();
+  assert.deepEqual(state.messages, [{ text: '/play boo', whisper: '' }]);
+  assert.equal(picker.hidden, true, 'a pick closes the board');
+  assert.equal(bar.value, 'half a thought');
+  assert.deepEqual([bar.selectionStart, bar.selectionEnd], [2, 6]);
+  assert.equal(document.activeElement, bar);
+
+  win.whisperUser('Alice');
+  /** @type {any} */ (document.querySelector('.tdf-sfx-button')).click();
+  picker.querySelectorAll('.tdf-sfx-item')[2].click();
+  assert.deepEqual(state.messages[1], { text: '/play Kiss', whisper: 'Alice' }, 'the engine sees the whisper target');
+  assert.equal(/** @type {any} */ (document.getElementById('whisperID')).value, 'Alice');
+  assert.deepEqual(state.played, [], 'a send previews nothing');
+});
+
+test('a preview plays the sound locally and sends nothing', () => {
+  const { document, state } = page();
+  /** @type {any} */ (document.querySelector('.tdf-sfx-button')).click();
+  const picker = /** @type {any} */ (document.querySelector('.tdf-sfx-picker'));
+  picker.querySelectorAll('.tdf-sfx-preview')[2].click();
+  assert.deepEqual(state.played, ['sfx/Kiss.mp3']);
+  assert.deepEqual(state.messages, []);
+  assert.equal(picker.hidden, false, 'a preview leaves the board open');
+});
+
+test('a preview with no engine doSound, or a click between buttons, does nothing and does not throw', () => {
+  const { document, state, win } = page();
+  delete win.doSound;
+  /** @type {any} */ (document.querySelector('.tdf-sfx-button')).click();
+  const picker = /** @type {any} */ (document.querySelector('.tdf-sfx-picker'));
+  picker.querySelector('.tdf-sfx-preview').click();
+  picker.querySelector('.tdf-sfx-row').click();
+  assert.deepEqual(state.messages, []);
+  assert.equal(picker.hidden, false);
+});
+
+test('the stylesheet hides the sound board while hidden on a themed page', () => {
+  const { document } = page();
+  const css = document.getElementById('tdf-composer-style')?.textContent ?? '';
+  assert.match(css, /:root\[data-tdf-theme\] \.tdf-sfx-picker\[hidden\] \{\s*display: none;/);
+});
+
+test('the sound board closes on Escape and on a mousedown outside, not inside', () => {
+  const { window, document, win } = page();
+  const close = win.__test.openSoundPicker({ x: 40, y: 300, onPick: () => {} });
+  assert.equal(typeof close, 'function');
+  const picker = /** @type {any} */ (document.querySelector('.tdf-sfx-picker'));
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+  assert.equal(picker.hidden, true);
+  win.__test.openSoundPicker({ x: 0, y: 0, onPick: () => {} });
+  picker.querySelector('.tdf-sfx-item').dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+  assert.equal(picker.hidden, false);
+  document.body.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+  assert.equal(picker.hidden, true);
+  win.__test.openSoundPicker({ x: 0, y: 0, onPick: () => {} })();
+  assert.equal(picker.hidden, true, 'the returned close closes it');
+});
+
+test('openSoundPicker sits above (x, y)', () => {
+  const { document, win } = page();
+  win.__test.openSoundPicker({ x: 40, y: 300, onPick: () => {} });
+  const picker = /** @type {any} */ (document.querySelector('.tdf-sfx-picker'));
+  picker.getBoundingClientRect = () => ({ width: 160, height: 200, top: 0, left: 0, right: 160, bottom: 200 });
+  win.__test.openSoundPicker({ x: 40, y: 300, onPick: () => {} });
+  assert.equal(picker.style.top, `${300 - 200 + win.scrollY}px`, 'bottom edge at y');
+  assert.equal(picker.style.left, `${40 + win.scrollX}px`);
+});
+
 test('whispering shows the chip and blue border; its × stops the whisper', () => {
   const { document, bar, win } = page();
   const chip = /** @type {any} */ (document.querySelector('.tdf-whisper-chip'));
@@ -403,6 +528,14 @@ test('closing the last open menu or picker focuses the box', async () => {
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await settle();
   assert.ok(document.activeElement === bar, 'the picker closed');
+
+  win.__test.openSoundPicker({ x: 40, y: 300, onPick: () => {} });
+  await settle();
+  assert.ok(document.querySelector('.tdf-sfx-picker')?.matches(OPEN_MENU), 'the sound board is an open menu');
+  /** @type {any} */ (document.activeElement)?.blur?.();
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await settle();
+  assert.ok(document.activeElement === bar, 'the sound board closed');
 
   // A menu another slice owns, closed while a flyout is still open: focus waits for both.
   const menu = document.createElement('div');

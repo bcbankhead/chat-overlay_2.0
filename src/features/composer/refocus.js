@@ -28,7 +28,7 @@ const PRESSES = /** @type {const} */ (['click', 'auxclick', 'contextmenu']);
  * only while it is open.
  */
 export const OPEN_MENU =
-  `.tdf-rail-menu:not([hidden]), .tdf-sm-picker:not([hidden]), .tdf-rail-flyout.tdf-open, ${DRAWER}, ${POPOVER}`;
+  `.tdf-rail-menu:not([hidden]), .tdf-sm-picker:not([hidden]), .tdf-sfx-picker:not([hidden]), .tdf-rail-flyout.tdf-open, ${DRAWER}, ${POPOVER}`;
 
 /**
  * Whether `el` takes typing of its own, so focus must stay with it.

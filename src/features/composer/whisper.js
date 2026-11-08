@@ -6,7 +6,8 @@
 // are wrapped to re-read it — by this slice alone (TDF-0009 Shared Contract, Single wrappers).
 // Inline handlers and the engine's own calls resolve them by global name and get the wrappers.
 // The one other writer, tagging/engineSend.js, saves, clears and restores it around a single
-// synchronous addMessage call, so the value is back before anything could re-read it.
+// synchronous addMessage call, so the value is back before anything could re-read it; with
+// `keepWhisper` (the sound board) it does not write the field at all.
 
 /**
  * The user being whispered to, from #whisperID; '' for the room, or when the field is absent.

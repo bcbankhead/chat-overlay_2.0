@@ -84,3 +84,26 @@ test('with no whisper field and nothing focused, the bar does not keep focus', (
   assert.deepEqual(texts, [':h ^123456']);
   assert.notEqual(doc.activeElement, bar);
 });
+
+test('keepWhisper leaves the whisper target set for the engine, and still restores the draft', () => {
+  const { win, doc, calls, bar, whisper } = page();
+  bar.value = 'draft';
+  bar.focus();
+  bar.setSelectionRange(1, 3);
+  whisper.value = 'bob';
+  assert.equal(engineSend({ doc, win }, '/play boo', { keepWhisper: true }), true);
+  assert.deepEqual(calls, [{ text: '/play boo', whisper: 'bob', args: ['optionsBar', 'chatContainer'] }]);
+  assert.equal(bar.value, 'draft');
+  assert.deepEqual([bar.selectionStart, bar.selectionEnd], [1, 3]);
+  assert.equal(whisper.value, 'bob');
+  assert.equal(doc.activeElement, bar);
+});
+
+test('keepWhisper false is the default: the whisper is cleared for the call and put back', () => {
+  const { win, doc, calls, whisper } = page();
+  whisper.value = 'bob';
+  engineSend({ doc, win }, '/play boo', { keepWhisper: false });
+  engineSend({ doc, win }, '/play boo');
+  assert.deepEqual(calls.map((c) => c.whisper), ['', '']);
+  assert.equal(whisper.value, 'bob');
+});
