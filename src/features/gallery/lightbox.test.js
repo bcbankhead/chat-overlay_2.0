@@ -14,9 +14,9 @@ const item = (id, thumb = `thumb-${id}`) => ({
 });
 
 /**
- * @param {{ count?: number, index?: number, ids?: string[], zoomThrows?: boolean, host?: boolean, coarse?: boolean }} [opts]
+ * @param {{ count?: number, index?: number, ids?: string[], zoomThrows?: boolean, host?: boolean, coarse?: boolean, known?: [string, import('./roster.js').MediaKind][] }} [opts]
  */
-function setup({ count = 5, index = 2, ids, zoomThrows = false, host = true, coarse = false } = {}) {
+function setup({ count = 5, index = 2, ids, zoomThrows = false, host = true, coarse = false, known = [] } = {}) {
   const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
   if (coarse) win.matchMedia = (/** @type {string} */ q) => ({ media: q, matches: false });
   const doc = win.document;
@@ -30,7 +30,7 @@ function setup({ count = 5, index = 2, ids, zoomThrows = false, host = true, coa
   /** @type {unknown[]} */
   const errors = [];
   /** @type {Map<string, import('./roster.js').MediaKind>} */
-  const kinds = new Map();
+  const kinds = new Map(known);
   const items = (ids ?? Array.from({ length: count }, (_, i) => String(i))).map((id) => item(id));
   const box = openLightbox({
     doc,
@@ -150,7 +150,7 @@ test('an image that fails is retried as a video, which is remembered for the sha
 
   s.key('ArrowRight');
   assert.equal(s.media().tagName, 'IMG');
-  assert.equal(s.$('.tdf-lb-tab').hidden, true);
+  assert.equal(s.$('.tdf-lb-tab').hidden, false, 'an image shows it too');
   s.key('ArrowLeft');
   assert.equal(s.media().tagName, 'VIDEO', 'a return visit goes straight to the video');
 });
@@ -177,9 +177,12 @@ test('a late error from an item already stepped past changes nothing', () => {
   assert.equal(/** @type {HTMLImageElement} */ (s.media()).src, 'https://chat.example.com/share/3');
 });
 
-test('clicking the image, or the video\'s new-tab button, zooms the item; a throwing zoom is reported', () => {
+test('clicking the image does nothing; the new-tab button zooms an image or a video; a throwing zoom is reported', () => {
   const s = setup();
   s.media().click();
+  assert.deepEqual(s.zoomed, [], 'the image click is inert');
+  assert.equal(s.media().title, '', 'and does not advertise a click');
+  s.$('.tdf-lb-tab').click();
   assert.deepEqual(s.zoomed, ['2']);
   s.media().dispatchEvent(new s.win.Event('error'));
   s.$('.tdf-lb-tab').click();
@@ -187,8 +190,32 @@ test('clicking the image, or the video\'s new-tab button, zooms the item; a thro
   assert.ok(s.$('.tdf-lb'), 'zooming leaves the popover open');
 
   const t = setup({ zoomThrows: true });
-  t.media().click();
+  t.$('.tdf-lb-tab').click();
   assert.equal(t.errors.length, 1);
+});
+
+test('the bar holds the counter, then new tab, magnify and close, in that order', () => {
+  const s = setup();
+  const classes = [...s.$('.tdf-lb-bar').children].map((c) => c.className);
+  assert.deepEqual(classes, ['tdf-lb-count', 'tdf-lb-tab', 'tdf-lb-magnify', 'tdf-lb-close']);
+  const tab = s.$('.tdf-lb-tab');
+  assert.equal(tab.getAttribute('aria-label'), 'Open in new tab');
+  assert.match(tab.innerHTML, /M14 4h6v6/, 'the external-link glyph');
+});
+
+test('the magnify button has a 16px right margin and the close button is crimson with a lighter hover', () => {
+  const css = readFileSync(new URL('./gallery.css', import.meta.url), 'utf8');
+  /** @param {string} selector */
+  const body = (selector) => {
+    const at = css.indexOf(`\n${selector} {`);
+    return at < 0 ? '' : css.slice(at, css.indexOf('}', at));
+  };
+  assert.match(body('.tdf-lb .tdf-lb-magnify'), /margin-right: 16px;/);
+  assert.match(body('.tdf-lb .tdf-lb-close'), /background: #DC143C;/);
+  assert.match(body('.tdf-lb .tdf-lb-close'), /color: #ffffff;/);
+  assert.match(body('.tdf-lb .tdf-lb-close:hover:not(:disabled)'), /background: #E8405F;/);
+  const shared = css.indexOf('.tdf-lb :is(.tdf-lb-close, .tdf-lb-tab, .tdf-lb-magnify, .tdf-lb-prev, .tdf-lb-next):hover');
+  assert.ok(shared >= 0 && shared < css.indexOf('\n.tdf-lb .tdf-lb-close {'), 'the crimson rules follow the shared ones');
 });
 
 test('Close, Escape and a backdrop click each dismiss it, return focus and remove the listeners', () => {
@@ -324,22 +351,36 @@ const pressM = (s, init = {}, target = s.doc.body) => {
   return event;
 };
 
-test('the magnifier toggle sits in the bar, starts off, and the button and M each flip it', () => {
+test('the magnifier toggle sits in the bar, starts on when opened on an image, and the button and M each flip it', () => {
   const s = setup();
   const button = s.$('.tdf-lb-magnify');
   assert.equal(button.parentElement, s.$('.tdf-lb-bar'));
   assert.equal(button.hidden, false, 'an image shows the toggle');
-  assert.equal(button.getAttribute('aria-pressed'), 'false');
-  assert.equal(button.getAttribute('aria-label'), 'Magnifier');
-  button.click();
   assert.equal(button.getAttribute('aria-pressed'), 'true');
   assert.ok(s.$('.tdf-lb').classList.contains('tdf-lb-magnifying'));
-  assert.ok(s.doc.querySelector('.tdf-lb'), 'the toggle is not a backdrop click');
-  assert.equal(pressM(s).defaultPrevented, true);
+  assert.equal(button.getAttribute('aria-label'), 'Magnifier');
+  button.click();
   assert.equal(button.getAttribute('aria-pressed'), 'false');
   assert.equal(s.$('.tdf-lb').classList.contains('tdf-lb-magnifying'), false);
+  assert.ok(s.doc.querySelector('.tdf-lb'), 'the toggle is not a backdrop click');
+  assert.equal(pressM(s).defaultPrevented, true);
+  assert.equal(button.getAttribute('aria-pressed'), 'true');
+  assert.ok(s.$('.tdf-lb').classList.contains('tdf-lb-magnifying'));
   pressM(s, { key: 'M' });
-  assert.equal(button.getAttribute('aria-pressed'), 'true', 'capital M toggles too');
+  assert.equal(button.getAttribute('aria-pressed'), 'false', 'capital M toggles too');
+});
+
+test('an open on a video starts the magnifier off, and it stays off on the next image until toggled', () => {
+  const s = setup({ known: [['2', 'video']] });
+  assert.equal(s.media().tagName, 'VIDEO');
+  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'false');
+  s.key('ArrowRight');
+  assert.equal(s.media().tagName, 'IMG');
+  assert.equal(s.$('.tdf-lb-magnify').hidden, false);
+  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'false');
+  assert.equal(s.$('.tdf-lb').classList.contains('tdf-lb-magnifying'), false);
+  pressM(s);
+  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'true');
 });
 
 test('while on, a move over the image places the loupe at natural size, centred on the cursor and capped to the layer', () => {
@@ -349,7 +390,6 @@ test('while on, a move over the image places the loupe at natural size, centred 
   assert.equal(loupe.parentElement, s.$('.tdf-lb'));
   assert.equal(loupe.getAttribute('aria-hidden'), 'true');
   assert.equal(loupe.hidden, true);
-  s.$('.tdf-lb-magnify').click();
   move(s, 350, 250);
   assert.equal(loupe.hidden, false);
   assert.deepEqual(
@@ -376,6 +416,7 @@ test('while on, a move over the image places the loupe at natural size, centred 
 test('turning it on with the cursor resting on the image shows the loupe without another move', () => {
   const s = setup();
   measure(s);
+  s.$('.tdf-lb-magnify').click();
   move(s, 350, 250);
   assert.equal(s.$('.tdf-lb-loupe').hidden, true);
   s.$('.tdf-lb-magnify').click();
@@ -393,7 +434,6 @@ test('an image that loads under a still cursor shows the loupe without another m
   const img = measure(s);
   Object.defineProperty(img, 'naturalWidth', { value: 0, configurable: true });
   Object.defineProperty(img, 'naturalHeight', { value: 0, configurable: true });
-  s.$('.tdf-lb-magnify').click();
   move(s, 350, 250);
   const loupe = s.$('.tdf-lb-loupe');
   assert.equal(loupe.hidden, true, 'no natural size yet, nothing to draw');
@@ -407,19 +447,19 @@ test('an image that loads under a still cursor shows the loupe without another m
   );
 });
 
-test('while off, a move over the image draws nothing and a click still zooms', () => {
-  const s = setup();
-  measure(s);
-  move(s, 350, 250);
-  assert.equal(s.$('.tdf-lb-loupe').hidden, true);
-  s.media().click();
-  assert.deepEqual(s.zoomed, ['2']);
-});
-
-test('the toggle stays on across steps and the filmstrip, a step hides the loupe, and a reopen starts off', () => {
+test('while off, a move over the image draws nothing and a click does nothing', () => {
   const s = setup();
   measure(s);
   s.$('.tdf-lb-magnify').click();
+  move(s, 350, 250);
+  assert.equal(s.$('.tdf-lb-loupe').hidden, true);
+  s.media().click();
+  assert.deepEqual(s.zoomed, []);
+});
+
+test('the toggle stays on across steps and the filmstrip, a step hides the loupe, and a reopen on an image starts on', () => {
+  const s = setup();
+  measure(s);
   move(s, 350, 250);
   s.key('ArrowRight');
   assert.equal(s.$('.tdf-lb-loupe').hidden, true, 'the loupe waits for the next move');
@@ -434,16 +474,44 @@ test('the toggle stays on across steps and the filmstrip, a step hides the loupe
   s.win.dispatchEvent(new s.win.Event('resize'));
   assert.equal(s.$('.tdf-lb-loupe').hidden, true, 'a resize hides it');
 
+  s.$('.tdf-lb-magnify').click();
+  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'false', 'turned off before closing');
   s.key('Escape');
   openLightbox({ doc: s.doc, win: s.win, host: s.chat, items: [item('z')], index: 0, zoom: () => {}, report: () => {} });
+  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'true');
+  assert.ok(s.$('.tdf-lb').classList.contains('tdf-lb-magnifying'));
+});
+
+test('an open whose first image falls back to a video or the unavailable note starts the magnifier off', () => {
+  const s = setup();
+  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'true', 'on while it reads as an image');
+  s.media().dispatchEvent(new s.win.Event('error'));
+  assert.equal(s.media().tagName, 'VIDEO');
   assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'false');
   assert.equal(s.$('.tdf-lb').classList.contains('tdf-lb-magnifying'), false);
+  s.key('ArrowRight');
+  assert.equal(s.media().tagName, 'IMG');
+  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'false', 'the next image is not magnified');
+
+  const u = setup();
+  u.kinds.set('2', 'image');
+  u.media().dispatchEvent(new u.win.Event('error'));
+  assert.ok(u.media().classList.contains('tdf-lb-unavailable'));
+  assert.equal(u.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'false');
+});
+
+test('a later item falling back to a video keeps a magnifier carried over the step', () => {
+  const s = setup();
+  s.key('ArrowRight');
+  s.media().dispatchEvent(new s.win.Event('error'));
+  assert.equal(s.media().tagName, 'VIDEO');
+  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'true');
 });
 
 test('a video item hides the toggle and the loupe, and M is left alone on it', () => {
   const s = setup();
+  s.key('ArrowLeft');
   measure(s);
-  s.$('.tdf-lb-magnify').click();
   move(s, 350, 250);
   s.media().dispatchEvent(new s.win.Event('error'));
   assert.equal(s.media().tagName, 'VIDEO');
@@ -478,7 +546,7 @@ test('M in the message box, in a text field, or with Ctrl, Meta or Alt held does
   for (const mod of ['ctrlKey', 'metaKey', 'altKey']) {
     assert.equal(pressM(s, { [mod]: true }).defaultPrevented, false, `${mod} keeps the key`);
   }
-  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'false');
+  assert.equal(s.$('.tdf-lb-magnify').getAttribute('aria-pressed'), 'true', 'still on as opened');
 });
 
 test('without a fine pointer the toggle is hidden and M does nothing', () => {

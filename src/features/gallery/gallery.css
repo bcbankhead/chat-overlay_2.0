@@ -460,6 +460,22 @@
   background: rgba(255, 255, 255, 0.24);
 }
 
+/* The magnify button's right margin separates it from the close button (TDF-0076); the
+   .tdf-lb prefix matches the shared rule's specificity. */
+.tdf-lb .tdf-lb-magnify {
+  margin-right: 16px;
+}
+
+/* The close button is crimson, with a lighter crimson hover and a white glyph (TDF-0076). */
+.tdf-lb .tdf-lb-close {
+  background: #DC143C;
+  color: #ffffff;
+}
+
+.tdf-lb .tdf-lb-close:hover:not(:disabled) {
+  background: #E8405F;
+}
+
 .tdf-lb :is(.tdf-lb-prev, .tdf-lb-next):disabled {
   opacity: 0.3;
   cursor: default;
@@ -538,10 +554,6 @@
   max-height: 100%;
   object-fit: contain;
   border-radius: 4px;
-}
-
-.tdf-lb-image {
-  cursor: zoom-in;
 }
 
 .tdf-lb-unavailable {

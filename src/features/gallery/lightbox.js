@@ -13,8 +13,9 @@
 //
 // Magnifier (TDF-0071): a bar toggle, and the M key, turn on a 500px loupe that follows the cursor
 // over an image and shows it at natural size (loupe.js), shrunk to the quick view's shorter side
-// when that is smaller. Images only, fine pointers only; it stays
-// on across steps within one open, and every open starts with it off.
+// when that is smaller. Images only, fine pointers only; it stays on across steps within one open.
+// An open that reaches the stage as an image starts with it on; any other open starts it off
+// (TDF-0076). The image itself takes no click: the bar's new-tab button opens it.
 
 import { loupeFrame } from './loupe.js';
 import { dedupe, filmstripWindow, step } from './roster.js';
@@ -116,7 +117,7 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
   magnifyButton.hidden = true;
   const counter = el('span', 'tdf-lb-count');
   const bar = el('div', 'tdf-lb-bar');
-  bar.append(counter, magnifyButton, tabButton, closeButton);
+  bar.append(counter, tabButton, magnifyButton, closeButton);
   const prev = button('tdf-lb-prev', 'Previous', ICONS.prev);
   const next = button('tdf-lb-next', 'Next', ICONS.next);
   const stage = el('div', 'tdf-lb-stage');
@@ -128,8 +129,17 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
   loupe.hidden = true;
   layer.append(bar, main, strip, loupe);
 
-  /** the magnifier toggle's state; it carries over steps, and every open starts off */
+  /**
+   * the magnifier toggle's state; it carries over steps. It starts off and is turned on once
+   * after the open's first render when that render put an image on the stage (TDF-0076).
+   */
   let magnifying = false;
+  /**
+   * the open's first render token while the start-on still stands, else 0: an unknown-kind first
+   * item renders as an image and may only then fall back to a video or the unavailable note, which
+   * takes the start-on back (TDF-0076). A step or a toggle clears it.
+   */
+  let autoOn = 0;
   /** whether the stage holds an image, the one kind the magnifier applies to */
   let imageOn = false;
   /** @type {{ img: HTMLImageElement, token: number, x: number, y: number } | null} the cursor's last place over the stage's image */
@@ -175,11 +185,17 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
   };
 
   const toggleMagnifier = () => {
-    if (fine && imageOn) setMagnifying(!magnifying);
+    if (!fine || !imageOn) return;
+    autoOn = 0;
+    setMagnifying(!magnifying);
   };
 
   /** Leave the stage to a kind the magnifier does not apply to. */
   const noMagnifier = () => {
+    if (autoOn && autoOn === shown) {
+      autoOn = 0;
+      setMagnifying(false);
+    }
     imageOn = false;
     magnifyButton.hidden = true;
     hideLoupe();
@@ -253,7 +269,6 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
   const showImage = (item, token) => {
     const img = el('img', 'tdf-lb-media tdf-lb-image');
     img.alt = '';
-    img.title = 'Open in new tab';
     img.addEventListener(
       'load',
       () => {
@@ -272,7 +287,6 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
       },
       { once: true },
     );
-    img.addEventListener('click', () => doZoom(item));
     img.addEventListener('mousemove', (event) => {
       if (token !== shown) return;
       cursor = { img, token, x: event.clientX, y: event.clientY };
@@ -284,7 +298,7 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
     });
     img.src = item.src;
     stage.replaceChildren(img);
-    tabButton.hidden = true;
+    tabButton.hidden = false;
     imageOn = true;
     magnifyButton.hidden = !fine;
     // The item's own src, so the loupe and the stage show the same image.
@@ -337,6 +351,7 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
   const go = (to) => {
     if (closed || to < 0 || to >= items.length) return;
     index = to;
+    autoOn = 0;
     const token = ++shown;
     const item = items[index];
     for (const v of stage.querySelectorAll('video')) v.pause?.();
@@ -427,6 +442,12 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
     return { close, layer };
   }
   go(index);
+  // Opened on an image with a cursor to follow: the magnifier starts on (TDF-0076), until that
+  // first render falls back to a video or the unavailable note.
+  if (fine && imageOn) {
+    setMagnifying(true);
+    autoOn = shown;
+  }
   closeButton.focus();
   return { close, layer };
 }
