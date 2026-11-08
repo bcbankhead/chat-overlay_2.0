@@ -3,6 +3,7 @@
 // onclick handlers pass — so behaviour matches the original panel. Whisper and Clear Whisper
 // are not here: the name menu (nameMenu.js) puts its own Whisper / Stop whispering first.
 
+import { profileUrlFor } from '../../core/forumAvatar.js';
 import { safeDecodeURI } from '../../core/parse.js';
 
 /**
@@ -26,6 +27,8 @@ import { safeDecodeURI } from '../../core/parse.js';
  * @property {unknown} webcamsOn
  * @property {unknown} profileOn
  * @property {unknown} profileRef   0 = uuID, 1 = name, 2 = forum userID
+ * @property {unknown} profileUrl   the forum profile page the engine's viewProfile appends an id to
+ * @property {string} pageUrl       this page's URL, for resolving a relative profileUrl
  * @property {unknown} groupPChat
  * @property {unknown} groupWatch
  * @property {unknown} eCredits
@@ -113,13 +116,17 @@ export const profileLabel = (flags) => lang(flags, 'lang36');
  * @property {string} name     decoded, from the line
  * @property {string} [rawName] the name in the engine's encoded form: from the user's online row
  *   this load when there was one, else from the line
- * @property {string} [userID]  forum user id, when an online row gave one
+ * @property {string} [userID]  forum user id, when an online row gave one; under `profileRef` 2
+ *   its absence sends the profile by name instead (TDF-0078)
  */
 
 /**
  * The one engine call a ghosted row's menu makes: open the profile, or null when it cannot.
  * Under `profileRef` 2 the forum userID is known only from one of the user's online rows, seen
- * this load or saved by an earlier one (TDF-0075).
+ * this load or saved by an earlier one (TDF-0075). A user never seen online has none, so the
+ * forum's profile page is opened by name instead, `mode=viewprofile&un=<name>`, through the
+ * engine's `newWin` — the same window `viewProfile` opens (TDF-0078). Without a usable
+ * `profileUrl` there is no such page, and the call is null.
  * @param {OfflineUser} user
  * @param {EngineFlags} flags
  * @returns {EngineCall | null}
@@ -128,7 +135,11 @@ export function offlineProfileCall(user, flags) {
   if (!flags.profileOn) return null;
   const name = user.rawName || user.name;
   const id = profileID({ uuID: user.uuID, rawName: name, userID: user.userID ?? '' }, flags.profileRef);
-  return id ? ['viewProfile', id, name] : null;
+  if (id) return ['viewProfile', id, name];
+  if (Number(flags.profileRef) !== 2) return null;
+  // The decoded name: profileUrlFor encodes it through searchParams.
+  const url = profileUrlFor(flags.profileUrl, flags.pageUrl, { name: user.name });
+  return url ? ['newWin', url] : null;
 }
 
 /**

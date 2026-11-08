@@ -11,11 +11,13 @@ function page(html = '', globals = {}) {
 }
 
 test('flags read the engine globals and the credit counter', () => {
-  const { engine } = page('<span id="eCreditsID">0</span><input id="whisperID" value="bob">', {
-    uID: 7, admin: 1, profileRef: 2, lang33: 'PM',
+  const { win, engine } = page('<span id="eCreditsID">0</span><input id="whisperID" value="bob">', {
+    uID: 7, admin: 1, profileRef: 2, lang33: 'PM', profileUrl: 'memberlist.php?mode=viewprofile&u=',
   });
   const flags = engine.flags();
   assert.equal(flags.uID, 7);
+  assert.equal(flags.profileUrl, 'memberlist.php?mode=viewprofile&u=');
+  assert.equal(flags.pageUrl, String(win.location.href));
   assert.equal(flags.admin, 1);
   assert.equal(flags.noCredits, true);
   assert.equal(flags.lang.lang33, 'PM');

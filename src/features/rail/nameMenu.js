@@ -2,8 +2,9 @@
 // clamped to the viewport. Whisper (or Stop whispering, for the user already whispered to)
 // comes first and replaces the engine's Whisper To field; then the rest of userPanel's
 // engine-gated actions, then registered ones. A ghosted Recently online row opens a shorter
-// one in the same place (TDF-0075): a 'Last seen …' line and View Profile, disabled when no
-// profile id is known. Esc, a press outside it or a scroll inside the rail closes it.
+// one in the same place (TDF-0075): a 'Last seen …' line and View Profile, by profile id or,
+// under profileRef 2 with no forum id, by name (TDF-0078); disabled when neither can open it.
+// Esc, a press outside it or a scroll inside the rail closes it.
 
 import { listUserMenuActions } from './api.js';
 import { renderIcon } from './icons.js';
