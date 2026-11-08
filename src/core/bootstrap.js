@@ -21,6 +21,7 @@ import { setHistoryOff } from './historyMirror.js';
 import { MAIN_DIV } from './parse.js';
 import { parseHistoryCount, storageCutoff } from './retention.js';
 import { chat2Off, installSwitchLink } from './optOut.js';
+import { createSeenUsers } from './seenUsers.js';
 import { createSettings, onSettingChange } from './settings.js';
 import { mount, unmount } from './shell.js';
 import { FADE_CLASS, createTheme } from './theme.js';
@@ -171,6 +172,24 @@ async function start(lift, coreReady) {
     // Published for the rail and the profile flyout, which show the same avatars.
     const avatars = createAvatarResolver({ win, db });
     win.__tdfChat2Avatars = avatars;
+    // Published for the rail: who has been seen online, so a Recently online row can open the
+    // profile after a reload (TDF-0075). It loads itself and tells the rail when it has.
+    // A failed read or write is not worth failing the start over: View Profile stays disabled on
+    // those rows, and a notice says why (the view shows each distinct text once). One raised
+    // before the view exists is held until it does.
+    /** @type {import('./view.js').View | null} */
+    let seenView = null;
+    /** @type {string[]} */
+    const seenHeld = [];
+    win.__tdfChat2Seen = createSeenUsers({
+      db,
+      report: (err) => {
+        console.error('Seen users:', err);
+        const text = `Recently online profiles storage failed: ${describeError(err)}`;
+        if (seenView) seenView.notice(text);
+        else seenHeld.push(text);
+      },
+    });
     // Each server-history block's collapsed state (TDF-0033.2), read once; a block's first state
     // and each toggle update the loaded copy and store it, except with Chat history off, when
     // the block's records are not stored.
@@ -242,6 +261,8 @@ async function start(lift, coreReady) {
       const shownAs = autoCollapse ? 'collapsed' : 'expanded';
       view.notice(`Server history blocks shown ${shownAs}: their state was not read (${blockStatesFailed})`);
     }
+    seenView = view;
+    for (const text of seenHeld.splice(0)) view.notice(text);
     unsubscribe.push(
       onDeleted((ids) => view.removeById(ids)),
       onClearView(() => view.clear()),
@@ -263,6 +284,7 @@ async function start(lift, coreReady) {
     for (const off of unsubscribe) off();
     hook.abandon();
     delete win.__tdfChat2Avatars;
+    delete win.__tdfChat2Seen;
     unmount();
     theme?.stop();
     delete html.dataset.tdfTheme;

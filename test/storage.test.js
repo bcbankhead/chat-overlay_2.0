@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import 'fake-indexeddb/auto';
-import { DB_VERSION, SUPERSEDED, openDb } from '../src/core/db.js';
+import { DB_VERSION, SUPERSEDED, isClosing, openDb } from '../src/core/db.js';
 import { createHistory } from '../src/core/history.js';
 import { PENDING_TTL_MS } from '../src/core/reconcile.js';
 import { DEFAULTS, createSettings, followSetting, onSettingChange } from '../src/core/settings.js';
@@ -35,12 +35,15 @@ const msg = (over) => ({
   ...over,
 });
 
-test('opens at version 5 with every store and index', async () => {
+test('opens at version 6 with every store and index', async () => {
   const db = await fresh();
   assert.equal(db.version, DB_VERSION);
-  assert.equal(DB_VERSION, 5);
-  assert.deepEqual([...db.objectStoreNames].sort(), ['avatars', 'images', 'messages', 'settings', 'tags']);
+  assert.equal(DB_VERSION, 6);
+  assert.deepEqual([...db.objectStoreNames].sort(), ['avatars', 'images', 'messages', 'seenUsers', 'settings', 'tags']);
   assert.equal(db.transaction('avatars').objectStore('avatars').keyPath, 'name');
+  const seen = db.transaction('seenUsers').objectStore('seenUsers');
+  assert.equal(seen.keyPath, 'uuID');
+  assert.deepEqual([...seen.indexNames], ['at']);
   const t = db.transaction(['messages', 'images', 'tags'], 'readonly');
   const messages = t.objectStore('messages');
   assert.equal(messages.keyPath, 'id');
@@ -227,7 +230,7 @@ const openV4 = (name) => {
   return /** @type {Promise<IDBDatabase>} */ (settled(open));
 };
 
-test('a version 4 database upgrades to version 5, backfilling orderKey and deleting no record', async () => {
+test('a version 4 database upgrades to the current version, backfilling orderKey and deleting no record', async () => {
   const name = `test-v4-${++n}`;
   const v4 = await openV4(name);
   const w = v4.transaction(['messages', 'avatars'], 'readwrite');
@@ -246,7 +249,7 @@ test('a version 4 database upgrades to version 5, backfilling orderKey and delet
   v4.close();
 
   const db = await openDb({ name });
-  assert.equal(db.version, 5);
+  assert.equal(db.version, DB_VERSION);
   const t = db.transaction(['messages', 'avatars']);
   const messages = t.objectStore('messages');
   assert.equal(messages.indexNames.contains('roomID_receivedAt'), false);
@@ -265,6 +268,49 @@ test('a version 4 database upgrades to version 5, backfilling orderKey and delet
     (await createHistory(db).recent('1')).map((r) => r.id),
     ['old', 'w', 'new', 'local-1'],
   );
+  db.close();
+});
+
+test('a version 5 database upgrades to version 6, adding the seenUsers store and keeping every record', async () => {
+  const name = `test-v5-${++n}`;
+  // The version 5 schema: version 4 with the roomID_orderKey index in place of roomID_receivedAt.
+  const open = indexedDB.open(name, 5);
+  open.onupgradeneeded = () => {
+    const v5 = open.result;
+    const messages = v5.createObjectStore('messages', { keyPath: 'id' });
+    for (const i of ['roomID', 'mTime', 'user', 'receivedAt']) messages.createIndex(i, i);
+    messages.createIndex('roomID_orderKey', ['roomID', 'orderKey', 'receivedAt']);
+    v5.createObjectStore('settings', { keyPath: 'key' });
+    const images = v5.createObjectStore('images', { keyPath: 'id' });
+    for (const i of ['user', 'receivedAt', 'hash']) images.createIndex(i, i);
+    const tags = v5.createObjectStore('tags', { keyPath: 'id', autoIncrement: true });
+    tags.createIndex('imageId', 'imageId');
+    tags.createIndex('sourceMessageId', 'sourceMessageId');
+    v5.createObjectStore('avatars', { keyPath: 'name' });
+  };
+  const v5 = /** @type {IDBDatabase} */ (await settled(open));
+  const w = v5.transaction(['messages', 'settings', 'images', 'tags', 'avatars'], 'readwrite');
+  w.objectStore('messages').put(msg({ id: 'm', kind: 'whisper', toUser: '_', orderKey: 7 }));
+  w.objectStore('settings').put({ key: 'theme', value: 'dark' });
+  w.objectStore('images').put({ id: 'i', user: 'bob', receivedAt: 1, hash: 'h' });
+  w.objectStore('tags').put({ imageId: 'i', sourceMessageId: 'm', tag: 'x' });
+  w.objectStore('avatars').put({ name: 'alice', url: 'a.png', at: 1 });
+  await settled(w);
+  v5.close();
+
+  const db = await openDb({ name });
+  assert.equal(db.version, 6);
+  assert.ok(db.objectStoreNames.contains('seenUsers'));
+  const r = db.transaction(['messages', 'settings', 'images', 'tags', 'avatars', 'seenUsers']);
+  // No earlier migration reruns: the whisper and its order key are as stored.
+  const m = await settled(r.objectStore('messages').get('m'));
+  assert.equal(m.kind, 'whisper');
+  assert.equal(m.orderKey, 7);
+  assert.equal((await settled(r.objectStore('settings').get('theme'))).value, 'dark');
+  assert.equal((await settled(r.objectStore('images').get('i'))).hash, 'h');
+  assert.equal((await settled(r.objectStore('tags').getAll())).length, 1);
+  assert.equal((await settled(r.objectStore('avatars').get('alice'))).url, 'a.png');
+  assert.equal((await settled(r.objectStore('seenUsers').getAll())).length, 0);
   db.close();
 });
 
@@ -356,6 +402,14 @@ test('a connection closed by a later version fails every later write with one ex
   assert.deepEqual(new Set(errors), new Set([SUPERSEDED]));
   await assert.rejects(createSettings(db).get('theme'), { message: SUPERSEDED });
   bumped.close();
+});
+
+test('isClosing is true only for an InvalidStateError', () => {
+  assert.equal(isClosing({ name: 'InvalidStateError' }), true);
+  assert.equal(isClosing(null), false);
+  assert.equal(isClosing(undefined), false);
+  assert.equal(isClosing(new Error('disk gone')), false);
+  assert.equal(isClosing({ name: 'AbortError' }), false);
 });
 
 test('a stored whisper with no text survives the upgrade', async () => {

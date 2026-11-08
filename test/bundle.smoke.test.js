@@ -477,6 +477,8 @@ test('a successful start publishes the avatar resolver for the rail and the prof
   const { window } = await page(await bundled(), new IDBFactory());
   assert.ok(window.document.getElementById('tdf-chat'), 'overlay mounted');
   assert.equal(typeof window.__tdfChat2Avatars?.resolve, 'function');
+  // TDF-0075: the saved users the rail's Recently online rows read.
+  assert.equal(typeof window.__tdfChat2Seen?.get, 'function');
 });
 
 test('a start that fails after the avatar resolver is published removes it', async () => {
@@ -490,6 +492,7 @@ test('a start that fails after the avatar resolver is published removes it', asy
   const { window, document } = await page(await bundled(), new IDBFactory(), { globals });
   assert.match(document.querySelector('[role="status"]').textContent, /did not start \(observer broke\)/);
   assert.equal('__tdfChat2Avatars' in window, false);
+  assert.equal('__tdfChat2Seen' in window, false);
 });
 
 test('the site include behaves as the userscript: overlays, stores and replays', async () => {
@@ -934,6 +937,55 @@ test('a failed block-state write raises a notice, and the block still toggles', 
   await shell.window.happyDOM.close();
 });
 
+/**
+ * Make one IDBObjectStore method throw on the seenUsers store until the returned restore runs.
+ * @param {'getAll' | 'put'} method
+ */
+const failSeenUsers = (method) => {
+  const original = IDBObjectStore.prototype[method];
+  IDBObjectStore.prototype[method] = function (...args) {
+    if (this.name === 'seenUsers') throw new DOMException('injected', 'UnknownError');
+    return original.apply(this, args);
+  };
+  return () => {
+    IDBObjectStore.prototype[method] = original;
+  };
+};
+const seenNotices = (document) => noticeTexts(document).filter((t) => /Recently online profiles storage failed/.test(t));
+
+test('a failed seen-users load, before the view exists, is shown as a notice once the view is up', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const restore = failSeenUsers('getAll');
+  let shell;
+  try {
+    shell = await page(bundle, indexedDB);
+    await settle();
+  } finally {
+    restore();
+  }
+  assert.deepEqual(seenNotices(shell.document), ['Recently online profiles storage failed: injected']);
+  await shell.window.happyDOM.close();
+});
+
+test('failed seen-users writes raise a notice, once for a repeated reason', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const shell = await page(bundle, indexedDB);
+  await settle();
+  const seen = shell.window.__tdfChat2Seen;
+  const restore = failSeenUsers('put');
+  try {
+    seen.remember({ uuID: 'u1', userID: '1', rawName: 'bob' });
+    seen.remember({ uuID: 'u2', userID: '2', rawName: 'amy' });
+    await settle();
+  } finally {
+    restore();
+  }
+  assert.deepEqual(seenNotices(shell.document), ['Recently online profiles storage failed: injected']);
+  await shell.window.happyDOM.close();
+});
+
 test('a failed read of Collapse server history automatically starts anyway, blocks expanded, and says why', async () => {
   const bundle = await bundled();
   const indexedDB = new IDBFactory();
@@ -1105,6 +1157,7 @@ test('turned off, from <head>: no cloak, no overlay, no engine hook, no database
   for (const [key, fn] of Object.entries(engine)) assert.equal(window[key], fn, `${key} is not wrapped`);
   assert.deepEqual(touched, [], 'indexedDB never touched');
   assert.equal(window.__tdfChat2Avatars, undefined);
+  assert.equal(window.__tdfChat2Seen, undefined);
   for (const flag of ['Composer', 'Gallery', 'Options', 'Profile', 'Rail', 'Tagging']) {
     assert.equal(window[`__tdfChat2${flag}`], undefined, `${flag} never started`);
   }

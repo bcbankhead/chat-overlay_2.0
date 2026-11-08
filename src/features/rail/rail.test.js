@@ -899,7 +899,6 @@ const offlineNames = (doc, roomID = '1') =>
   [...doc.querySelectorAll(`.tdf-rail-room[data-room="${roomID}"] .tdf-rail-offline .tdf-rail-user-name`)].map((s) => s.textContent);
 const onlineNames = (doc, roomID = '1') =>
   [...doc.querySelectorAll(`.tdf-rail-room[data-room="${roomID}"] .tdf-rail-user:not(.tdf-rail-offline) .tdf-rail-user-name`)].map((s) => s.textContent);
-const menuShown = (doc) => !(doc.querySelector('.tdf-rail-menu')?.hidden ?? true);
 
 test('recently online users show ghosted under a rule and a header, newest first, online users excluded', async () => {
   const presence = createPresence();
@@ -993,21 +992,31 @@ const atServerTime = (presence, serverSeconds) => {
   return presence;
 };
 
-test("an inert ghosted row whose line has no usable time falls back to 'User offline'; a profile row has no title", async () => {
+/**
+ * Open a ghosted row's menu, by a left (or right) click on its name.
+ * @returns {{ event: MouseEvent, menu: HTMLElement, note: string | undefined, profile: HTMLButtonElement | null }}
+ */
+const ghostMenu = (t, uuID, { right = false, x = 600, y = 100 } = {}) => {
+  const event = new t.win.MouseEvent(right ? 'contextmenu' : 'click', { bubbles: true, cancelable: true, clientX: x, clientY: y });
+  t.doc.querySelector(`.tdf-rail-offline[data-uuid="${uuID}"] .tdf-rail-user-name`).dispatchEvent(event);
+  const menu = t.doc.querySelector('.tdf-rail-menu');
+  return {
+    event,
+    menu,
+    note: menu.querySelector('.tdf-rail-menu-note')?.textContent,
+    profile: menu.querySelector('.tdf-rail-menu-item[data-action="profile"]'),
+  };
+};
+
+test("a ghosted row whose line has no usable time has no tooltip, and its menu reads 'Last seen time unknown'", async () => {
   const presence = createPresence();
   presence.ingest('1', [seenLine('77', 'Stranger', 'exit', 0)]);
   const t = setup({ presence, flags: { profileOn: 0 } });
-  assert.equal(t.doc.querySelector('.tdf-rail-offline[data-uuid="77"]').title, 'User offline');
-  await t.teardown();
-  const p2 = createPresence();
-  p2.ingest('1', [seenLine('12', 'Alice', 'exit', 0)]);
-  const t2 = setup({ presence: p2 });
-  t2.doc.getElementById('userlist_121').remove();
-  await nextFrame();
-  const ghost = t2.doc.querySelector('.tdf-rail-offline[data-uuid="12"]');
+  const ghost = t.doc.querySelector('.tdf-rail-offline[data-uuid="77"]');
+  assert.equal(ghost.title, '', "no 'User offline' fallback");
   assert.ok(!ghost.classList.contains('tdf-rail-inert'));
-  assert.equal(ghost.title, '');
-  await t2.teardown();
+  assert.equal(ghostMenu(t, '77').note, 'Last seen time unknown');
+  await t.teardown();
 });
 
 test('last-seen is aged on the server clock, not the device clock', async () => {
@@ -1038,7 +1047,7 @@ test('a ghosted row re-ages its last-seen tooltip on hover and focus, without a 
   await t.teardown();
 });
 
-test('a ghosted row opens the profile only, with the forum id remembered from its online row', async () => {
+test("a ghosted row opens a menu of its 'Last seen …' line and View Profile, by the forum id from its online row", async () => {
   const presence = atServerTime(createPresence(), 500 + 3 * HOUR_S);
   const t = setup({ presence }); // profileRef 2
   presence.ingest('1', [seenLine('12', 'Alice', 'exit', 500)]);
@@ -1046,26 +1055,172 @@ test('a ghosted row opens the profile only, with the forum id remembered from it
   await nextFrame();
   const ghost = t.doc.querySelector('.tdf-rail-offline[data-uuid="12"]');
   assert.equal(ghost.title, 'Last seen 3 hours ago');
-  for (const type of ['click', 'contextmenu']) {
-    const event = new t.win.MouseEvent(type, { bubbles: true, cancelable: true });
-    ghost.querySelector('.tdf-rail-user-name').dispatchEvent(event);
+  for (const right of [false, true]) {
+    const { event, menu, note, profile } = ghostMenu(t, '12', { right });
     assert.equal(event.defaultPrevented, true);
+    assert.equal(menu.hidden, false);
+    assert.equal(menu.querySelector('.tdf-rail-menu-title').textContent, 'Alice');
+    assert.equal(note, 'Last seen 3 hours ago');
+    assert.equal(menu.querySelectorAll('.tdf-rail-menu-note').length, 1);
+    assert.deepEqual(t.items(), ['profile'], 'exactly one item');
+    assert.equal(profile.textContent, 'View Profile');
+    assert.equal(profile.disabled, false);
+    assert.deepEqual(t.calls, [], 'opening the menu calls nothing');
+    t.doc.body.dispatchEvent(new t.win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   }
-  assert.deepEqual(t.calls, [['viewProfile', '912', 'Alice'], ['viewProfile', '912', 'Alice']]);
-  assert.equal(menuShown(t.doc), false, 'no name menu');
+  const { menu, profile } = ghostMenu(t, '12');
+  profile.click();
+  assert.deepEqual(t.calls, [['viewProfile', '912', 'Alice']]);
+  assert.equal(menu.hidden, true, 'the item closes the menu');
   await t.teardown();
 });
 
-test("a ghosted row with no profile id is inert and its tooltip reads 'Last seen …' only", async () => {
+test('the ghosted menu opens leftward from the pointer, like the name menu', async () => {
+  const presence = createPresence();
+  presence.ingest('1', [seenLine('77', 'Stranger', 'exit', 100)]);
+  const t = setup({ presence });
+  const { menu } = ghostMenu(t, '77', { x: 600, y: 100 });
+  const width = menu.getBoundingClientRect().width;
+  assert.equal(menu.style.left, `${Math.max(8, 600 - width)}px`);
+  assert.equal(menu.style.top, '100px');
+  await t.teardown();
+});
+
+test("a ghosted row with no profile id opens the menu with View Profile disabled; its tooltip reads 'Last seen …'", async () => {
   const presence = atServerTime(createPresence(), 100 + 2 * DAY_S);
   presence.ingest('1', [seenLine('77', 'Stranger', 'exit', 100)]);
-  const t = setup({ presence }); // profileRef 2, and Stranger was never online this load
+  const t = setup({ presence }); // profileRef 2, and Stranger was never online, this load or before
   const ghost = t.doc.querySelector('.tdf-rail-offline[data-uuid="77"]');
-  assert.ok(ghost.classList.contains('tdf-rail-inert'));
+  assert.ok(!ghost.classList.contains('tdf-rail-inert'));
   assert.equal(ghost.title, 'Last seen 2 days ago');
-  ghost.click();
+  const { menu, note, profile } = ghostMenu(t, '77');
+  assert.equal(menu.hidden, false);
+  assert.equal(note, 'Last seen 2 days ago');
+  assert.equal(profile.disabled, true);
+  profile.click();
   assert.deepEqual(t.calls, []);
-  assert.equal(menuShown(t.doc), false);
+  await t.teardown();
+});
+
+/**
+ * A stand-in for core/seenUsers.js: `saved` is what an earlier page load stored. Like the real
+ * store, a subscriber added after the load finished is told once, on a microtask, unless it
+ * unsubscribes first; one added before is told when the load finishes.
+ * @param {Record<string, { userID: string, rawName: string }>} saved
+ */
+const fakeSeen = (saved = {}) => {
+  const listeners = new Set();
+  let loaded = false;
+  const store = {
+    saved: { ...saved },
+    remembered: [],
+    /** How many late subscribers were told on a microtask that the load had already finished. */
+    lateNotified: 0,
+    get: (uuID) => store.saved[uuID],
+    remember: (user) => store.remembered.push(user),
+    subscribe(fn) {
+      listeners.add(fn);
+      if (loaded) {
+        queueMicrotask(() => {
+          if (!listeners.has(fn)) return;
+          store.lateNotified++;
+          fn();
+        });
+      }
+      return () => listeners.delete(fn);
+    },
+    /** Finish the load with `records`, telling subscribers. */
+    load(records) {
+      Object.assign(store.saved, records);
+      loaded = true;
+      for (const fn of listeners) fn();
+    },
+    listeners,
+  };
+  return store;
+};
+
+test('after a reload a ghosted row gets the forum id saved by an earlier load, and View Profile opens it', async () => {
+  const presence = createPresence();
+  presence.ingest('1', [seenLine('77', 'Stranger', 'exit', 100)]);
+  const seen = fakeSeen({ 77: { userID: '4077', rawName: 'Stranger' } });
+  const t = setup({ presence, flags: { __tdfChat2Seen: seen } });
+  const { profile } = ghostMenu(t, '77');
+  assert.equal(profile.disabled, false);
+  profile.click();
+  assert.deepEqual(t.calls, [['viewProfile', '4077', 'Stranger']]);
+  await t.teardown();
+});
+
+test('the saved users loading after the first render re-renders the ghosted rows', async () => {
+  const presence = createPresence();
+  presence.ingest('1', [seenLine('77', 'Stranger', 'exit', 100)]);
+  const seen = fakeSeen();
+  const t = setup({ presence, flags: { __tdfChat2Seen: seen } });
+  assert.equal(ghostMenu(t, '77').profile.disabled, true);
+  seen.load({ 77: { userID: '4077', rawName: 'Stranger' } });
+  assert.equal(ghostMenu(t, '77').profile.disabled, false);
+  await t.teardown();
+  assert.equal(seen.listeners.size, 0, 'unsubscribed on teardown');
+});
+
+test('saved users published after the first render are subscribed on the next render, and their load re-renders', async () => {
+  const presence = createPresence();
+  presence.ingest('1', [seenLine('77', 'Stranger', 'exit', 100)]);
+  const t = setup({ presence }); // the bootstrap has not published the store yet
+  assert.equal(ghostMenu(t, '77').profile.disabled, true);
+  const seen = fakeSeen();
+  t.win.__tdfChat2Seen = seen;
+  assert.equal(seen.listeners.size, 0, 'nothing reads the store until a render');
+  presence.ingest('1', [seenLine('78', 'Other', 'exit', 50)]);
+  assert.equal(seen.listeners.size, 1, 'the next render subscribes');
+  seen.load({ 77: { userID: '4077', rawName: 'Stranger' } });
+  const { profile } = ghostMenu(t, '77');
+  assert.equal(profile.disabled, false);
+  profile.click();
+  assert.deepEqual(t.calls, [['viewProfile', '4077', 'Stranger']]);
+  await t.teardown();
+  assert.equal(seen.listeners.size, 0, 'unsubscribed on teardown');
+});
+
+test('saved users published after the first render, their load already finished, re-render on the late-subscribe notice', async () => {
+  const presence = createPresence();
+  presence.ingest('1', [seenLine('77', 'Stranger', 'exit', 100)]);
+  const t = setup({ presence });
+  assert.equal(ghostMenu(t, '77').profile.disabled, true);
+  const seen = fakeSeen();
+  seen.load({ 77: { userID: '4077', rawName: 'Stranger' } });
+  t.win.__tdfChat2Seen = seen;
+  presence.ingest('1', [seenLine('78', 'Other', 'exit', 50)]);
+  await Promise.resolve();
+  assert.equal(seen.lateNotified, 1, 'the late subscriber was told the load had finished');
+  const { profile } = ghostMenu(t, '77');
+  assert.equal(profile.disabled, false);
+  profile.click();
+  assert.deepEqual(t.calls, [['viewProfile', '4077', 'Stranger']]);
+  await t.teardown();
+  assert.equal(seen.listeners.size, 0, 'unsubscribed on teardown');
+});
+
+test('every online row is remembered in the saved users, with its forum id and encoded name', async () => {
+  const seen = fakeSeen();
+  const t = setup({ presence: createPresence(), flags: { __tdfChat2Seen: seen } });
+  const byId = Object.fromEntries(seen.remembered.map((u) => [u.uuID, u]));
+  assert.deepEqual(byId['12'], { uuID: '12', userID: '912', rawName: 'Alice' });
+  assert.deepEqual(byId['13'], { uuID: '13', userID: '913', rawName: 'Bob' });
+  assert.deepEqual(byId['7'], { uuID: '7', userID: '97', rawName: 'me' });
+  await t.teardown();
+});
+
+test('an online row this load wins over a saved earlier record', async () => {
+  const presence = createPresence();
+  const seen = fakeSeen({ 12: { userID: 'stale', rawName: 'Alice' } });
+  const t = setup({ presence, flags: { __tdfChat2Seen: seen } });
+  presence.ingest('1', [seenLine('12', 'Alice', 'exit', 500)]);
+  t.doc.getElementById('userlist_121').remove();
+  await nextFrame();
+  ghostMenu(t, '12').profile.click();
+  assert.deepEqual(t.calls, [['viewProfile', '912', 'Alice']]);
   await t.teardown();
 });
 
@@ -1077,20 +1232,20 @@ test('a user online in another listed room is not ghosted in this one', async ()
   await t.teardown();
 });
 
-test("every inert ghosted row reads 'Last seen …': profiles off, or an unsupported profileRef", async () => {
-  for (const [flags, why] of [
-    [{ profileOn: 0 }, 'Last seen < 1 hour ago'],
-    [{ profileRef: 9 }, 'Last seen < 1 hour ago'],
-  ]) {
+test("profiles off, or an unsupported profileRef, disable View Profile; the row still reads 'Last seen …'", async () => {
+  for (const flags of [{ profileOn: 0 }, { profileRef: 9 }]) {
     const presence = atServerTime(createPresence(), 500 + 59 * 60);
     presence.ingest('1', [seenLine('12', 'Alice', 'exit', 500)]);
     const t = setup({ presence, flags });
     t.doc.getElementById('userlist_121').remove();
     await nextFrame();
     const ghost = t.doc.querySelector('.tdf-rail-offline[data-uuid="12"]');
-    assert.ok(ghost.classList.contains('tdf-rail-inert'));
-    assert.equal(ghost.title, why);
-    ghost.click();
+    assert.ok(!ghost.classList.contains('tdf-rail-inert'));
+    assert.equal(ghost.title, 'Last seen < 1 hour ago');
+    const { note, profile } = ghostMenu(t, '12');
+    assert.equal(note, 'Last seen < 1 hour ago');
+    assert.equal(profile.disabled, true);
+    profile.click();
     assert.deepEqual(t.calls, []);
     await t.teardown();
   }
@@ -1100,7 +1255,7 @@ test("under profileRef 1 a never-online ghosted row passes the line's encoded na
   const presence = createPresence();
   presence.ingest('1', [{ ...seenLine('77', 'Dan B', 'exit', 100), rawName: 'Dan%20B' }]);
   const t = setup({ presence, flags: { profileRef: 1 } });
-  t.doc.querySelector('.tdf-rail-offline[data-uuid="77"]').click();
+  ghostMenu(t, '77').profile.click();
   assert.deepEqual(t.calls, [['viewProfile', 'Dan%20B', 'Dan%20B']]);
   await t.teardown();
 });
@@ -1109,7 +1264,7 @@ test('under profileRef 0 a never-online ghosted row opens the profile by uuID', 
   const presence = createPresence();
   presence.ingest('1', [seenLine('77', 'Stranger', 'exit', 100)]);
   const t = setup({ presence, flags: { profileRef: 0 } });
-  t.doc.querySelector('.tdf-rail-offline[data-uuid="77"]').click();
+  ghostMenu(t, '77').profile.click();
   assert.deepEqual(t.calls, [['viewProfile', '77', 'Stranger']]);
   await t.teardown();
 });
@@ -1130,6 +1285,9 @@ test('the ghosted rows are styled faded, behind a thin rule and a muted header',
   assert.match(css, /\.tdf-rail-rule \{[^}]*border-top: 1px solid var\(--tdf-rail-chip-border\)/);
   assert.match(css, /\.tdf-rail-rule \{[^}]*margin: 36px 8px 2px;/); // TDF-0059: 30px above the rule
   assert.match(css, /\.tdf-rail-section-head \{[^}]*color: var\(--tdf-muted\)/);
+  // TDF-0075: every ghosted row opens a menu, so none is styled inert; the menu's note is muted.
+  assert.doesNotMatch(css, /tdf-rail-inert/);
+  assert.match(css, /\.tdf-rail-menu-note \{[^}]*color: var\(--tdf-muted\)/);
 });
 
 test('a ghosted row whose profile call fails is reported in the rail with its cause', async () => {
@@ -1137,7 +1295,7 @@ test('a ghosted row whose profile call fails is reported in the rail with its ca
   presence.ingest('1', [seenLine('77', 'Stranger', 'exit', 100)]);
   const t = setup({ presence, flags: { profileRef: 0 } });
   delete t.win.viewProfile;
-  t.doc.querySelector('.tdf-rail-offline[data-uuid="77"]').click();
+  ghostMenu(t, '77').profile.click();
   assert.ok(t.errors().some((e) => e.includes('the chat engine has no viewProfile()')), t.errors().join(' | '));
   await t.teardown();
 });

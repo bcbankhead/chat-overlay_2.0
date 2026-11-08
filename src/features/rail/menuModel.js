@@ -100,8 +100,14 @@ export function profileID(user, profileRef) {
 }
 
 /**
+ * The profile item's label, as the engine's userPanel words it.
+ * @param {EngineFlags} flags
+ */
+export const profileLabel = (flags) => lang(flags, 'lang36');
+
+/**
  * A recently online user the rail shows ghosted: known from an entry or exit line, plus what
- * an online row this page load told it (TDF-0058).
+ * an online row told it, this page load or a stored earlier one (TDF-0058, TDF-0075).
  * @typedef {object} OfflineUser
  * @property {string} uuID
  * @property {string} name     decoded, from the line
@@ -111,8 +117,9 @@ export function profileID(user, profileRef) {
  */
 
 /**
- * The one engine call a ghosted row makes: open the profile, or null when it cannot. Under
- * `profileRef` 2 the forum userID is known only from the user's online row earlier this load.
+ * The one engine call a ghosted row's menu makes: open the profile, or null when it cannot.
+ * Under `profileRef` 2 the forum userID is known only from one of the user's online rows, seen
+ * this load or saved by an earlier one (TDF-0075).
  * @param {OfflineUser} user
  * @param {EngineFlags} flags
  * @returns {EngineCall | null}
@@ -170,7 +177,7 @@ export function builtInActions(user, flags) {
   }
 
   if (flags.profileOn) {
-    actions.push({ id: 'profile', label: lang(flags, 'lang36'), calls: [['viewProfile', profileID(user, flags.profileRef), name]] });
+    actions.push({ id: 'profile', label: profileLabel(flags), calls: [['viewProfile', profileID(user, flags.profileRef), name]] });
   }
 
   if (!self && flags.share) {
