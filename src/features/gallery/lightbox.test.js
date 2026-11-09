@@ -507,7 +507,7 @@ test('the magnifier stays on across steps, the filmstrip and a wheel step; a ste
   s.$('.tdf-lb-prev').click();
   s.thumbs()[0].click();
   assert.equal(magnifying(s), true);
-  s.wheel({ deltaY: -100 });
+  s.wheel({ deltaY: 100 });
   assert.equal(s.$('.tdf-lb-count').textContent, '2 / 5');
   assert.equal(magnifying(s), true, 'carried across a wheel step');
   measure(s);
@@ -549,22 +549,22 @@ test('a video or unavailable item hides the loupe', () => {
   assert.equal(u.$('.tdf-lb-loupe').hidden, true);
 });
 
-test('wheel up steps to the next item and wheel down to the previous, clamped at both ends', () => {
+test('wheel down steps to the next item and wheel up to the previous, clamped at both ends', () => {
   const s = setup({ count: 3, index: 1 });
   const count = () => s.$('.tdf-lb-count').textContent;
-  assert.equal(s.wheel({ deltaY: -120 }).defaultPrevented, true);
+  assert.equal(s.wheel({ deltaY: 120 }).defaultPrevented, true);
   assert.equal(count(), '3 / 3');
   s.clock.t += WHEEL_QUIET_MS;
-  s.wheel({ deltaY: -120 });
+  s.wheel({ deltaY: 120 });
   assert.equal(count(), '3 / 3', 'clamped at the last');
   s.clock.t += WHEEL_QUIET_MS;
-  s.wheel({ deltaY: 120 });
+  s.wheel({ deltaY: -120 });
   assert.equal(count(), '2 / 3');
   s.clock.t += WHEEL_QUIET_MS;
-  s.wheel({ deltaY: 120 });
+  s.wheel({ deltaY: -120 });
   assert.equal(count(), '1 / 3');
   s.clock.t += WHEEL_QUIET_MS;
-  assert.equal(s.wheel({ deltaY: 120 }).defaultPrevented, true, 'a clamped step is still consumed');
+  assert.equal(s.wheel({ deltaY: -120 }).defaultPrevented, true, 'a clamped step is still consumed');
   assert.equal(count(), '1 / 3', 'clamped at the first');
 });
 
@@ -577,70 +577,70 @@ test('the wheel steps from anywhere on the popover: the image, the video, the ba
     [() => s.$('.tdf-lb'), '6 / 9'],
   ])) {
     s.clock.t += WHEEL_QUIET_MS;
-    assert.equal(s.wheel({ deltaY: -50 }, target()).defaultPrevented, true);
+    assert.equal(s.wheel({ deltaY: 50 }, target()).defaultPrevented, true);
     assert.equal(count(), expected);
   }
   s.media().dispatchEvent(new s.win.Event('error'));
   assert.equal(s.media().tagName, 'VIDEO');
   s.clock.t += WHEEL_QUIET_MS;
-  s.wheel({ deltaY: 50 }, s.media());
+  s.wheel({ deltaY: -50 }, s.media());
   assert.equal(count(), '5 / 9', 'a video steps too');
 });
 
 test('one gesture steps once: events within the quiet period are ignored and each one extends it', () => {
   const s = setup({ count: 9, index: 4 });
   const count = () => s.$('.tdf-lb-count').textContent;
-  s.wheel({ deltaY: -3 });
+  s.wheel({ deltaY: 3 });
   assert.equal(count(), '6 / 9');
   s.clock.t += WHEEL_QUIET_MS - 1;
-  assert.equal(s.wheel({ deltaY: -3 }).defaultPrevented, true, 'ignored events are still consumed');
+  assert.equal(s.wheel({ deltaY: 3 }).defaultPrevented, true, 'ignored events are still consumed');
   assert.equal(count(), '6 / 9', 'within 250ms: ignored');
   // A stream with gaps under 250ms, running well past 250ms in total, is one gesture.
   for (let i = 0; i < 10; i++) {
     s.clock.t += 100;
-    s.wheel({ deltaY: -3 });
+    s.wheel({ deltaY: 3 });
   }
   assert.equal(count(), '6 / 9', 'a long trackpad swipe still moves one item');
   s.clock.t += WHEEL_QUIET_MS;
-  s.wheel({ deltaY: -3 });
+  s.wheel({ deltaY: 3 });
   assert.equal(count(), '7 / 9', 'the next event after 250ms of quiet steps');
 });
 
 test('a wheel event with no vertical delta neither steps nor extends the gesture', () => {
   const s = setup();
   const count = () => s.$('.tdf-lb-count').textContent;
-  s.wheel({ deltaY: -10 });
+  s.wheel({ deltaY: 10 });
   assert.equal(count(), '4 / 5');
   s.clock.t += WHEEL_QUIET_MS - 10;
   assert.equal(s.wheel({ deltaX: 30, deltaY: 0 }).defaultPrevented, true, 'still consumed off the strip');
   assert.equal(count(), '4 / 5');
   s.clock.t += 10;
-  s.wheel({ deltaY: -10 });
+  s.wheel({ deltaY: 10 });
   assert.equal(count(), '5 / 5', 'the zero-delta event did not reset the quiet period');
 });
 
 test('Ctrl+wheel, Cmd+wheel and trackpad pinch are left to the browser: no step, not consumed, no gesture', () => {
   const s = setup();
   const count = () => s.$('.tdf-lb-count').textContent;
-  assert.equal(s.wheel({ deltaY: -100, ctrlKey: true }).defaultPrevented, false, 'ctrl is left native');
-  assert.equal(s.wheel({ deltaY: -100, metaKey: true }).defaultPrevented, false, 'meta is left native');
-  assert.equal(s.wheel({ deltaY: -100, ctrlKey: true }, s.thumbs()[0]).defaultPrevented, false, 'also over the strip');
+  assert.equal(s.wheel({ deltaY: 100, ctrlKey: true }).defaultPrevented, false, 'ctrl is left native');
+  assert.equal(s.wheel({ deltaY: 100, metaKey: true }).defaultPrevented, false, 'meta is left native');
+  assert.equal(s.wheel({ deltaY: 100, ctrlKey: true }, s.thumbs()[0]).defaultPrevented, false, 'also over the strip');
   assert.equal(count(), '3 / 5');
-  s.wheel({ deltaY: -100 });
+  s.wheel({ deltaY: 100 });
   assert.equal(count(), '4 / 5', 'the zoom gesture did not start a quiet period');
 });
 
 test('off the filmstrip, a mostly sideways swipe is consumed without stepping on its vertical jitter', () => {
   const s = setup();
   const count = () => s.$('.tdf-lb-count').textContent;
-  s.wheel({ deltaY: -10 });
+  s.wheel({ deltaY: 10 });
   assert.equal(count(), '4 / 5');
   s.clock.t += WHEEL_QUIET_MS - 10;
-  assert.equal(s.wheel({ deltaX: 40, deltaY: 2 }).defaultPrevented, true, 'consumed');
-  assert.equal(s.wheel({ deltaX: -40, deltaY: -2 }).defaultPrevented, true);
+  assert.equal(s.wheel({ deltaX: 40, deltaY: -2 }).defaultPrevented, true, 'consumed');
+  assert.equal(s.wheel({ deltaX: -40, deltaY: 2 }).defaultPrevented, true);
   assert.equal(count(), '4 / 5', 'no step');
   s.clock.t += 10;
-  s.wheel({ deltaY: -10 });
+  s.wheel({ deltaY: 10 });
   assert.equal(count(), '5 / 5', 'the sideways events did not extend the gesture');
 });
 
@@ -648,12 +648,12 @@ test('over the filmstrip, sideways input scrolls it natively and vertical input 
   const s = setup();
   const count = () => s.$('.tdf-lb-count').textContent;
   const thumb = s.thumbs()[0];
-  assert.equal(s.wheel({ deltaX: 40, deltaY: 5 }, thumb).defaultPrevented, false, 'sideways is left native');
+  assert.equal(s.wheel({ deltaX: 40, deltaY: -5 }, thumb).defaultPrevented, false, 'sideways is left native');
   assert.equal(s.wheel({ deltaX: 40 }, s.$('.tdf-lb-strip')).defaultPrevented, false);
   assert.equal(count(), '3 / 5');
-  assert.equal(s.wheel({ deltaX: 2, deltaY: -40 }, thumb).defaultPrevented, true, 'vertical is cancelled');
+  assert.equal(s.wheel({ deltaX: 2, deltaY: 40 }, thumb).defaultPrevented, true, 'vertical is cancelled');
   assert.equal(count(), '3 / 5', 'and does not step');
-  s.wheel({ deltaY: -40 });
+  s.wheel({ deltaY: 40 });
   assert.equal(count(), '4 / 5', 'the strip did not start a gesture');
   const css = readFileSync(new URL('./gallery.css', import.meta.url), 'utf8');
   assert.match(/\n\.tdf-lb-strip \{[^}]*\}/.exec(css)?.[0] ?? '', /overscroll-behavior: contain;/);
@@ -669,7 +669,7 @@ test('after a wheel step the filmstrip outlines the shown item and re-centres on
     centred.push([this.dataset.index, opts]);
   };
   try {
-    s.wheel({ deltaY: -1 });
+    s.wheel({ deltaY: 1 });
     assert.equal(s.current()?.dataset.index, '31');
     assert.deepEqual(centred.at(-1), ['31', { block: 'nearest', inline: 'center' }]);
   } finally {
@@ -680,10 +680,10 @@ test('after a wheel step the filmstrip outlines the shown item and re-centres on
 test('the wheel listener is removed on close', () => {
   const s = setup();
   const layer = s.$('.tdf-lb');
-  assert.equal(s.wheel({ deltaY: -100 }, layer).defaultPrevented, true, 'listening while open');
+  assert.equal(s.wheel({ deltaY: 100 }, layer).defaultPrevented, true, 'listening while open');
   s.key('Escape');
   s.clock.t += WHEEL_QUIET_MS;
-  const event = new s.win.WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true });
+  const event = new s.win.WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true });
   layer.dispatchEvent(event);
   assert.equal(event.defaultPrevented, false, 'gone after close');
 });
@@ -695,7 +695,7 @@ test('without a given clock the wheel is timed by the window\'s own performance 
   s.win.performance.now = () => t;
   openLightbox({ doc: s.doc, win: s.win, host: s.chat, items: [item('a'), item('b'), item('c')], index: 0, zoom: () => {}, report: () => {} });
   const count = () => s.$('.tdf-lb-count').textContent;
-  const wheel = () => s.$('.tdf-lb-stage').dispatchEvent(new s.win.WheelEvent('wheel', { deltaY: -1, bubbles: true, cancelable: true }));
+  const wheel = () => s.$('.tdf-lb-stage').dispatchEvent(new s.win.WheelEvent('wheel', { deltaY: 1, bubbles: true, cancelable: true }));
   wheel();
   assert.equal(count(), '2 / 3');
   t += WHEEL_QUIET_MS - 1;

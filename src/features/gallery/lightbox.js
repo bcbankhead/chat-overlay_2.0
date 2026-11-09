@@ -17,8 +17,8 @@
 // across steps within one open (TDF-0077). On a touch-only device a tap on the image opens it in a
 // new tab instead; the bar's new-tab button does the same on any pointer.
 //
-// Wheel (TDF-0077): the wheel anywhere on the popover steps between items, up to the next and down
-// to the previous, one step per gesture: a step, then nothing until WHEEL_QUIET_MS pass with no
+// Wheel (TDF-0077, TDF-0081): the wheel anywhere on the popover steps between items, down to the
+// next and up to the previous, one step per gesture: a step, then nothing until WHEEL_QUIET_MS pass with no
 // wheel event. Sideways input over the filmstrip scrolls it natively; the page behind never scrolls.
 
 import { loupeFrame } from './loupe.js';
@@ -400,7 +400,8 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
   };
 
   /**
-   * The wheel steps between items, one step per gesture. Ctrl/Cmd+wheel and trackpad pinch are
+   * The wheel steps between items, down to the next and up to the previous, one step per
+   * gesture. Ctrl/Cmd+wheel and trackpad pinch are
    * left to the browser's zoom. Over the filmstrip, sideways input is left to scroll it natively
    * and vertical input is cancelled without a step; elsewhere sideways input is cancelled without
    * a step. The step's renderStrip() re-centres a strip that drifted.
@@ -418,7 +419,7 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
     event.preventDefault();
     if (sideways || event.deltaY === 0) return;
     const t = now();
-    if (t - lastWheel >= WHEEL_QUIET_MS) go(step(index, event.deltaY < 0 ? 1 : -1, items.length));
+    if (t - lastWheel >= WHEEL_QUIET_MS) go(step(index, event.deltaY > 0 ? 1 : -1, items.length));
     lastWheel = t;
   };
 

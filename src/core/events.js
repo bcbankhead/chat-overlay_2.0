@@ -67,8 +67,8 @@ export const onInbound = inbound.on;
 export const emitInbound = inbound.emit;
 
 /**
- * Stored messages were deleted, from any room: by a Storage limit, Clear history now, Delete
- * messages by user, or an admin delete. The view drops their rows; tagging re-derives without
+ * Stored messages were deleted, from any room: by a Storage limit, Settings' Clear: History or
+ * Hide messages by user, or an admin delete. The view drops their rows; tagging re-derives without
  * them.
  */
 export const onDeleted = deleted.on;
@@ -78,7 +78,7 @@ export const emitDeleted = deleted.emit;
 export const onConfirmChange = confirmChanged.on;
 export const emitConfirmChange = confirmChanged.emit;
 
-/** Clear chat buffer: the view empties; stored history is kept. */
+/** Settings' Clear: Buffer: the view empties; stored history is kept. */
 export const onClearView = cleared.on;
 export const clearView = () => cleared.emit(undefined);
 
