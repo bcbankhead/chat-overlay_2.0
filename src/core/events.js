@@ -67,8 +67,8 @@ export const onInbound = inbound.on;
 export const emitInbound = inbound.emit;
 
 /**
- * Stored messages were deleted, from any room: by a Storage limit, Settings' Clear: History or
- * Hide messages by user, or an admin delete. The view drops their rows; tagging re-derives without
+ * Stored messages were deleted, from any room: by a Storage limit, Settings' Clear: History, or
+ * an admin delete. Hide messages by user deletes nothing (TDF-0082). The view drops their rows; tagging re-derives without
  * them.
  */
 export const onDeleted = deleted.on;

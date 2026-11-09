@@ -26,8 +26,11 @@ function mediaSwitches(/** @type {HTMLElement} */ container) {
 const AUTOSCROLL = 'input.tdf-opt-autoscroll';
 const HISTORY = 'Chat history (last 25)';
 
-/** A settings stand-in over a plain object; `fail` makes every read reject, `failWrite` every write. */
-function stubSettings(values = {}, { fail = false, failWrite = false } = {}) {
+/**
+ * A settings stand-in over a plain object; `fail` makes every read reject, `failWrite` every
+ * write; `failRead` and `failSet` name single keys whose reads or writes reject.
+ */
+function stubSettings(values = {}, { fail = false, failWrite = false, failRead = /** @type {string[]} */ ([]), failSet = /** @type {string[]} */ ([]) } = {}) {
   /** @type {Record<string, unknown>} */
   const store = {
     historyCount: 25,
@@ -37,6 +40,7 @@ function stubSettings(values = {}, { fail = false, failWrite = false } = {}) {
     autoCollapseServerHistory: false,
     compressStoredImages: false,
     useMediaQuickview: true,
+    hiddenSenders: [],
     ...values,
   };
   /** @type {unknown[][]} */
@@ -45,11 +49,11 @@ function stubSettings(values = {}, { fail = false, failWrite = false } = {}) {
     writes,
     store,
     async get(/** @type {string} */ key) {
-      if (fail) throw new Error('read failed');
+      if (fail || failRead.includes(key)) throw new Error('read failed');
       return store[key];
     },
     async set(/** @type {string} */ key, /** @type {unknown} */ value) {
-      if (failWrite) throw new Error('write failed');
+      if (failWrite || failSet.includes(key)) throw new Error('write failed');
       writes.push([key, value]);
       store[key] = value;
     },
@@ -68,7 +72,7 @@ function boxFor(container, label) {
 
 /**
  * A limits stand-in: gallery previews report `images`, prunes and deletions are recorded.
- * `stored` is the saved history's line count by sender, which Clear and delete-by-user empty.
+ * `stored` is the saved history's line count by sender, which Clear empties.
  */
 function stubLimits({ images = 0, failPrune = false, stored = {}, failDelete = false } = {}) {
   /** @type {unknown[][]} */
@@ -93,17 +97,6 @@ function stubLimits({ images = 0, failPrune = false, stored = {}, failDelete = f
     async senders() {
       calls.push(['senders']);
       return Object.entries(history).map(([user, count]) => ({ user, count }));
-    },
-    async countByUser(/** @type {string} */ user) {
-      calls.push(['countByUser', user]);
-      return history[user] ?? 0;
-    },
-    async deleteByUser(/** @type {string} */ user) {
-      calls.push(['deleteByUser', user]);
-      if (failDelete) throw new Error('delete failed');
-      const n = history[user] ?? 0;
-      delete history[user];
-      return ids(n);
     },
     async pruneHistory(/** @type {number | null} */ days) {
       calls.push(['pruneHistory', days]);
@@ -565,18 +558,31 @@ const clearControl = (container, which = 'History') => {
   return { line, idle, clear: button(idle, which), ask, hint, yes: button(ask, 'Confirm'), no: button(ask, 'Cancel') };
 };
 
-/** The Hide messages by user control: the select and the Hide button share one row. */
+/**
+ * The Hide messages by user control (TDF-0082): the select and the Hide / Unhide toggle share
+ * one row, its report hint directly below.
+ */
 const senderControl = (/** @type {HTMLElement} */ container) => {
   const select = /** @type {HTMLSelectElement} */ (container.querySelector('.tdf-opt-sender select'));
   const row = /** @type {HTMLElement} */ (select.closest('.tdf-opt-sender'));
-  const remove = /** @type {HTMLButtonElement} */ (row.querySelector('button'));
-  const ask = /** @type {HTMLElement} */ (row.nextElementSibling);
-  const hint = /** @type {HTMLElement} */ (ask.nextElementSibling);
-  return { select, row, remove, ask, hint, yes: button(ask, 'Confirm'), no: button(ask, 'Cancel') };
+  const toggle = /** @type {HTMLButtonElement} */ (row.querySelector('button'));
+  const hint = /** @type {HTMLElement} */ (row.nextElementSibling);
+  return { select, row, toggle, hint };
 };
 
+/** Every deletion asked of limits. */
 const deletions = (/** @type {{ calls: unknown[][] }} */ limits) =>
-  limits.calls.filter(([name]) => name === 'clearHistory' || name === 'deleteByUser');
+  limits.calls.filter(([name]) => name === 'clearHistory');
+
+/** The hiddenSenders writes, in order. */
+const hiddenWrites = (/** @type {{ writes: unknown[][] }} */ settings) =>
+  settings.writes.filter(([key]) => key === 'hiddenSenders').map(([, value]) => value);
+
+/** Choose a sender in the picker as the member would. */
+const choose = (/** @type {HTMLSelectElement} */ select, /** @type {string} */ user) => {
+  select.value = user;
+  select.dispatchEvent(new (/** @type {any} */ (select.ownerDocument.defaultView)).Event('change'));
+};
 
 test('the Clear line and Hide messages by user sit after the Chat history switch and its hint', () => {
   const { container } = setup();
@@ -901,18 +907,18 @@ test('a failed deletion is reported in its hint', async () => {
 test('the sender picker lists every stored sender with a count, labelled decoded, valued raw', async () => {
   const { container } = setup({ limits: stubLimits({ stored: { 'Big%20Bob': 2, carol: 1 } }) });
   await settle();
-  const { select, remove } = senderControl(container);
+  const { select, toggle } = senderControl(container);
   assert.deepEqual(
     [...select.options].map((o) => [o.value, o.textContent]),
     [['Big%20Bob', 'Big Bob (2)'], ['carol', 'carol (1)']],
   );
   assert.equal(select.disabled, false);
-  assert.equal(remove.textContent, 'Hide');
+  assert.equal(toggle.textContent, 'Hide');
 });
 
 test('Hide is a small button in the Hide messages by user row, directly after the select and outside its label', () => {
   const { container } = setup();
-  const { select, row, remove, ask } = senderControl(container);
+  const { select, row, toggle: remove, hint } = senderControl(container);
   assert.equal(row.tagName, 'DIV');
   assert.ok(row.classList.contains('tdf-opt-row'));
   const label = /** @type {HTMLElement} */ (select.parentElement);
@@ -923,53 +929,257 @@ test('Hide is a small button in the Hide messages by user row, directly after th
   assert.equal(remove.closest('label'), null, 'a button may not sit inside a label');
   assert.equal(remove.type, 'button');
   assert.ok(remove.classList.contains('tdf-opt-small'));
-  assert.ok(ask.classList.contains('tdf-opt-confirm'), 'the question still shows below the row');
+  assert.ok(hint.classList.contains('tdf-opt-action-hint'), 'its report shows directly below the row');
+  assert.equal(container.querySelector('.tdf-opt-confirm'), null, 'no confirm step: nothing is deleted');
   const css = readFileSync(new URL('./options.css', import.meta.url), 'utf8');
   assert.match(/\.tdf-opt-sender-label \{[^}]*\}/.exec(css)?.[0] ?? '', /display: contents;/);
   assert.match(/\.tdf-opt-sender \.tdf-opt-small \{[^}]*\}/.exec(css)?.[0] ?? '', /flex: none;/);
 });
 
-test('with no saved history the sender picker and its Hide button are disabled', async () => {
+test('with no saved history and nobody hidden the sender picker and its Hide button are disabled', async () => {
   const { container } = setup();
   await settle();
-  const { select, remove } = senderControl(container);
+  const { select, toggle } = senderControl(container);
   assert.equal(select.disabled, true);
-  assert.equal(remove.disabled, true);
+  assert.equal(toggle.disabled, true);
   assert.equal(select.options[0]?.textContent, 'No saved history');
 });
 
-test('Hide messages by user asks, hides the chosen sender once, and refreshes the list', async () => {
+test('Hide hides the chosen sender at once: no confirm, nothing deleted, the set written', async () => {
   const limits = stubLimits({ stored: { 'Big%20Bob': 2, carol: 1 } });
-  const { container } = setup({ limits });
+  const settings = stubSettings();
+  const { container } = setup({ limits, settings });
   await settle();
-  const { select, remove, ask, yes, no, hint } = senderControl(container);
-  select.value = 'Big%20Bob';
-  remove.click();
+  const { select, toggle, hint } = senderControl(container);
+  choose(select, 'Big%20Bob');
+  assert.equal(toggle.textContent, 'Hide');
+  toggle.click();
   await settle();
-  assert.equal(ask.querySelector('span')?.textContent, 'Hide 2 messages from Big Bob?');
-  no.click();
+  assert.deepEqual(hiddenWrites(settings), [['Big%20Bob']]);
   assert.deepEqual(deletions(limits), []);
-  remove.click();
+  assert.equal(hint.textContent, 'Hid messages from Big Bob.');
+  assert.equal(hint.classList.contains('tdf-warn'), false);
+  assert.deepEqual(
+    [...select.options].map((o) => [o.value, o.textContent]),
+    [['Big%20Bob', 'Big Bob (2, hidden)'], ['carol', 'carol (1)']],
+  );
+  assert.equal(select.value, 'Big%20Bob');
+  assert.equal(toggle.textContent, 'Unhide');
+  assert.equal(toggle.disabled, false);
+});
+
+test('Unhide on a hidden sender removes them from the set and reports it', async () => {
+  const settings = stubSettings({ hiddenSenders: ['Big%20Bob', 'zed'] });
+  const { container } = setup({ limits: stubLimits({ stored: { 'Big%20Bob': 2 } }), settings });
   await settle();
-  yes.click();
+  const { select, toggle, hint } = senderControl(container);
+  assert.equal(select.value, 'Big%20Bob');
+  assert.equal(toggle.textContent, 'Unhide');
+  toggle.click();
   await settle();
-  assert.deepEqual(deletions(limits), [['deleteByUser', 'Big%20Bob']]);
-  assert.equal(hint.textContent, 'Hid 2 messages.');
+  assert.deepEqual(hiddenWrites(settings), [['zed']]);
+  assert.equal(hint.textContent, 'Showing messages from Big Bob again.');
+  assert.equal(toggle.textContent, 'Hide');
+  assert.equal(select.options[0]?.textContent, 'Big Bob (2)');
+});
+
+test('the toggle label follows the selected sender', async () => {
+  const settings = stubSettings({ hiddenSenders: ['carol'] });
+  const { container } = setup({ limits: stubLimits({ stored: { bob: 1, carol: 1 } }), settings });
+  await settle();
+  const { select, toggle, hint } = senderControl(container);
+  assert.equal(toggle.textContent, 'Hide');
+  toggle.click();
+  await settle();
+  assert.equal(hint.textContent, 'Hid messages from bob.');
+  choose(select, 'carol');
+  assert.equal(toggle.textContent, 'Unhide');
+  assert.equal(hint.textContent, '', 'a report about another sender is cleared');
+  choose(select, 'dave');
+  choose(select, 'bob');
+  assert.equal(toggle.textContent, 'Unhide');
+});
+
+test('changing the sender keeps a standing read warning', async () => {
+  const settings = stubSettings({}, { failRead: ['hiddenSenders'] });
+  const { container } = setup({ limits: stubLimits({ stored: { bob: 1, carol: 1 } }), settings });
+  await settle();
+  const { select, hint } = senderControl(container);
+  choose(select, 'carol');
+  assert.equal(hint.textContent, 'Could not read hidden senders: read failed');
+  assert.ok(hint.classList.contains('tdf-warn'));
+});
+
+test('a hidden sender with no saved lines stays listed, marked hidden, so it can be unhidden', async () => {
+  const settings = stubSettings({ hiddenSenders: ['Gone%20Guy'] });
+  const { container } = setup({ limits: stubLimits({ stored: { carol: 1 } }), settings });
+  await settle();
+  const { select, toggle } = senderControl(container);
+  assert.deepEqual(
+    [...select.options].map((o) => [o.value, o.textContent]),
+    [['carol', 'carol (1)'], ['Gone%20Guy', 'Gone Guy (0, hidden)']],
+  );
+  choose(select, 'Gone%20Guy');
+  assert.equal(toggle.textContent, 'Unhide');
+  toggle.click();
+  await settle();
+  assert.deepEqual(hiddenWrites(settings), [[]]);
   assert.deepEqual([...select.options].map((o) => o.value), ['carol']);
 });
 
-test('a failed hide is reported in its hint with the hide wording', async () => {
-  const limits = stubLimits({ stored: { 'Big%20Bob': 2 }, failDelete: true });
-  const { container } = setup({ limits });
+test('with no saved history a hidden sender still lists and can be unhidden', async () => {
+  const settings = stubSettings({ hiddenSenders: ['amy'] });
+  const { container } = setup({ settings });
   await settle();
-  const { remove, yes, hint } = senderControl(container);
-  remove.click();
+  const { select, toggle } = senderControl(container);
+  assert.equal(select.disabled, false);
+  assert.equal(toggle.disabled, false);
+  assert.equal(toggle.textContent, 'Unhide');
+  toggle.click();
   await settle();
-  yes.click();
+  assert.equal(select.options[0]?.textContent, 'No saved history');
+  assert.equal(toggle.disabled, true);
+});
+
+test('a failed hide write leaves the label and set unchanged and says so', async () => {
+  const settings = stubSettings({}, { failSet: ['hiddenSenders'] });
+  const { container } = setup({ limits: stubLimits({ stored: { 'Big%20Bob': 2 } }), settings });
   await settle();
-  assert.equal(hint.textContent, 'Could not hide: delete failed');
+  const { select, toggle, hint } = senderControl(container);
+  toggle.click();
+  await settle();
+  assert.equal(hint.textContent, 'Could not hide: write failed');
   assert.ok(hint.classList.contains('tdf-warn'));
-  assert.equal(remove.hidden, false);
+  assert.equal(toggle.textContent, 'Hide');
+  assert.equal(toggle.disabled, false);
+  assert.deepEqual(settings.store.hiddenSenders, []);
+  assert.equal(select.options[0]?.textContent, 'Big Bob (2)');
+});
+
+test('a failed unhide write keeps the sender hidden and says so', async () => {
+  const settings = stubSettings({ hiddenSenders: ['bob'] }, { failSet: ['hiddenSenders'] });
+  const { container } = setup({ limits: stubLimits({ stored: { bob: 1 } }), settings });
+  await settle();
+  const { toggle, hint } = senderControl(container);
+  toggle.click();
+  await settle();
+  assert.equal(hint.textContent, 'Could not unhide: write failed');
+  assert.equal(toggle.textContent, 'Unhide');
+  assert.deepEqual(settings.store.hiddenSenders, ['bob']);
+});
+
+test('the toggle is disabled while its write runs', async () => {
+  /** @type {() => void} */
+  let release = () => {};
+  const settings = stubSettings();
+  const set = settings.set;
+  settings.set = (key, value) => new Promise((r) => (release = () => r(set(key, value))));
+  const { container } = setup({ limits: stubLimits({ stored: { bob: 1 } }), settings });
+  await settle();
+  const { toggle } = senderControl(container);
+  toggle.click();
+  assert.equal(toggle.disabled, true);
+  await settle();
+  assert.equal(toggle.disabled, true, 'still disabled while the write is pending');
+  release();
+  await settle();
+  assert.equal(toggle.disabled, false);
+  assert.equal(toggle.textContent, 'Unhide');
+});
+
+test('an unreadable hidden set warns and disables the toggle; the senders still list', async () => {
+  const settings = stubSettings({}, { failRead: ['hiddenSenders'] });
+  const { container } = setup({ limits: stubLimits({ stored: { bob: 1 } }), settings });
+  await settle();
+  const { select, toggle, hint } = senderControl(container);
+  assert.equal(hint.textContent, 'Could not read hidden senders: read failed');
+  assert.ok(hint.classList.contains('tdf-warn'));
+  assert.equal(toggle.disabled, true);
+  assert.equal(select.options[0]?.textContent, 'bob (1)');
+  toggle.click();
+  await settle();
+  assert.deepEqual(hiddenWrites(settings), []);
+});
+
+test('a toggle write that settles after close writes no hint', async () => {
+  /** @type {() => void} */
+  let release = () => {};
+  const settings = stubSettings();
+  const set = settings.set;
+  settings.set = (key, value) => new Promise((r) => (release = () => r(set(key, value))));
+  const { container, cleanup } = setup({ limits: stubLimits({ stored: { bob: 1 } }), settings });
+  await settle();
+  const { toggle, hint } = senderControl(container);
+  toggle.click();
+  await settle();
+  cleanup();
+  release();
+  await settle();
+  assert.equal(hint.textContent, '');
+});
+
+test('a toggle failure that settles after close writes no hint', async () => {
+  /** @type {() => void} */
+  let release = () => {};
+  const settings = stubSettings({}, { failSet: ['hiddenSenders'] });
+  const set = settings.set;
+  settings.set = (key, value) => new Promise((r) => (release = () => r(set(key, value))));
+  const { container, cleanup } = setup({ limits: stubLimits({ stored: { bob: 1 } }), settings });
+  await settle();
+  const { toggle, hint } = senderControl(container);
+  toggle.click();
+  await settle();
+  cleanup();
+  release();
+  await settle();
+  assert.equal(hint.textContent, '');
+});
+
+test('a toggle keeps a change another tab made to the hidden set since it was read', async () => {
+  const settings = stubSettings({ hiddenSenders: ['carol'] });
+  const { container } = setup({ limits: stubLimits({ stored: { bob: 1, carol: 1 } }), settings });
+  await settle();
+  const { select, toggle, hint } = senderControl(container);
+  settings.store.hiddenSenders = ['carol', 'zed'];
+  assert.equal(select.value, 'bob');
+  toggle.click();
+  await settle();
+  assert.deepEqual(hiddenWrites(settings), [['bob', 'carol', 'zed']]);
+  assert.equal(hint.textContent, 'Hid messages from bob.');
+  assert.equal(toggle.textContent, 'Unhide');
+});
+
+test('a toggle applies its label to the fresh set: Hide on a sender another tab hid keeps them hidden', async () => {
+  const settings = stubSettings();
+  const { container } = setup({ limits: stubLimits({ stored: { bob: 1 } }), settings });
+  await settle();
+  const { toggle } = senderControl(container);
+  settings.store.hiddenSenders = ['bob'];
+  assert.equal(toggle.textContent, 'Hide');
+  toggle.click();
+  await settle();
+  assert.deepEqual(hiddenWrites(settings), [['bob']]);
+  assert.equal(toggle.textContent, 'Unhide');
+});
+
+test('a failed read before a toggle writes nothing and says why', async () => {
+  const settings = stubSettings();
+  const { container } = setup({ limits: stubLimits({ stored: { bob: 1 } }), settings });
+  await settle();
+  const { toggle, hint } = senderControl(container);
+  const get = settings.get;
+  settings.get = async (key) => {
+    settings.get = get;
+    if (key === 'hiddenSenders') throw new Error('read failed');
+    return get(key);
+  };
+  toggle.click();
+  await settle();
+  assert.deepEqual(hiddenWrites(settings), []);
+  assert.equal(hint.textContent, 'Could not hide: read failed');
+  assert.ok(hint.classList.contains('tdf-warn'));
+  assert.equal(toggle.textContent, 'Hide');
+  assert.equal(toggle.disabled, false);
 });
 
 test('the real limits behind the flyout: Confirm empties the view through onDeleted', async (t) => {
@@ -1007,19 +1217,6 @@ test('a count that fails is reported in the hint and asks nothing', async () => 
   assert.ok(hint.classList.contains('tdf-warn'));
   assert.equal(ask.hidden, true);
   assert.equal(clear.disabled, false);
-});
-
-test('a sender with nothing left to hide says so and asks nothing', async () => {
-  const limits = stubLimits({ stored: { 'Big%20Bob': 2 } });
-  limits.countByUser = async () => 0;
-  const { container } = setup({ limits });
-  await settle();
-  const { remove, ask, hint } = senderControl(container);
-  remove.click();
-  await settle();
-  assert.equal(hint.textContent, 'No saved messages from Big Bob to hide.');
-  assert.equal(ask.hidden, true);
-  assert.deepEqual(deletions(limits), []);
 });
 
 test('a count or a deletion that settles after close writes nothing', async () => {
@@ -1098,34 +1295,6 @@ test('only the latest sender read fills the list', async () => {
   assert.deepEqual([...select.options].map((o) => o.value), ['new']);
 });
 
-test('Hide messages by user hides the sender it asked about, with the picker locked meanwhile', async () => {
-  const limits = stubLimits({ stored: { 'Big%20Bob': 2, carol: 1 } });
-  const { container, toggle } = setup({ limits });
-  await settle();
-  const { select, remove, ask, yes, no } = senderControl(container);
-  select.value = 'Big%20Bob';
-  remove.click();
-  await settle();
-  assert.equal(ask.querySelector('span')?.textContent, 'Hide 2 messages from Big Bob?');
-  assert.equal(select.disabled, true);
-  no.click();
-  assert.equal(select.disabled, false);
-  remove.click();
-  await settle();
-  // A refresh while the question is open does not unlock the picker.
-  const reads = limits.calls.filter(([name]) => name === 'senders').length;
-  limits.clearHistory = async () => [];
-  toggle(false);
-  await settle();
-  assert.equal(limits.calls.filter(([name]) => name === 'senders').length, reads + 1);
-  assert.equal(select.disabled, true);
-  select.value = 'carol';
-  yes.click();
-  await settle();
-  assert.deepEqual(deletions(limits), [['deleteByUser', 'Big%20Bob']]);
-  assert.equal(select.disabled, false);
-});
-
 test('Cancel is disabled while a deletion runs', async () => {
   /** @type {(ids: string[]) => void} */
   let done = () => {};
@@ -1154,7 +1323,7 @@ test('a sender list that fails to read disables the picker and Hide; a later rea
   };
   const { container, toggle } = setup({ limits });
   await settle();
-  const { select, remove, hint } = senderControl(container);
+  const { select, toggle: remove, hint } = senderControl(container);
   assert.equal(select.disabled, true);
   assert.equal(remove.disabled, true);
   limits.senders = read;

@@ -30,6 +30,9 @@ export const DEFAULTS = Object.freeze({
   // Whether a shared image or a gallery tile opens in the in-chat media popover (TDF-0035)
   // rather than a new tab.
   useMediaQuickview: true,
+  // The raw senders whose public messages and whispers are hidden (TDF-0082), as the messages
+  // store's user index holds them. Never mutated: every write is a new array (toggleHidden).
+  hiddenSenders: /** @type {readonly string[]} */ (Object.freeze([])),
 });
 
 /** @typedef {keyof typeof DEFAULTS} SettingKey */

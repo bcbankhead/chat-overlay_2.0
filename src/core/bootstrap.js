@@ -22,6 +22,7 @@ import { MAIN_DIV } from './parse.js';
 import { parseHistoryCount, storageCutoff } from './retention.js';
 import { chat2Off, installSwitchLink } from './optOut.js';
 import { createSeenUsers } from './seenUsers.js';
+import { parseHidden } from './hiddenSenders.js';
 import { createSettings, onSettingChange } from './settings.js';
 import { mount, unmount } from './shell.js';
 import { FADE_CLASS, createTheme } from './theme.js';
@@ -244,6 +245,23 @@ async function start(lift, coreReady) {
         if (autoCollapse) blockView?.collapseAll();
       }),
     );
+    // The senders hidden by Settings' Hide messages by user (TDF-0082), followed live; each
+    // change hides or shows their rows already on screen. A failed read hides nothing, and says why.
+    /** @type {string | null} */
+    let hiddenFailed = null;
+    let hidden = new Set(
+      await settings.get('hiddenSenders').then(parseHidden, (err) => {
+        hiddenFailed = describeError(err);
+        return [];
+      }),
+    );
+    unsubscribe.push(
+      onSettingChange((key, value) => {
+        if (key !== 'hiddenSenders') return;
+        hidden = new Set(parseHidden(value));
+        blockView?.setHidden(hidden);
+      }),
+    );
     const view = createView({
       doc: document,
       win,
@@ -252,11 +270,13 @@ async function start(lift, coreReady) {
       avatars,
       blocks,
       autoCollapse: () => autoCollapse,
+      hidden: () => hidden,
     });
     blockView = view;
     if (autoCollapseFailed !== null) {
       view.notice(`Collapse server history automatically not read; blocks arrive expanded (${autoCollapseFailed})`);
     }
+    if (hiddenFailed !== null) view.notice(`Hidden senders not read; every sender is shown (${hiddenFailed})`);
     if (mirrorFailed !== null) view.notice(mirrorFailed);
     if (blockStatesFailed !== null) {
       const shownAs = autoCollapse ? 'collapsed' : 'expanded';

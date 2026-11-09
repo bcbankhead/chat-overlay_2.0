@@ -665,6 +665,10 @@ test('settings return the contract defaults for absent keys', async () => {
   assert.equal(await s.get('theme'), null);
   assert.equal(await s.get('autoCollapseServerHistory'), false);
   assert.equal(await s.get('useMediaQuickview'), true);
+  assert.deepEqual(await s.get('hiddenSenders'), []);
+  assert.ok(Object.isFrozen(DEFAULTS.hiddenSenders), 'the default set is never mutated');
+  await s.set('hiddenSenders', ['bob']);
+  assert.deepEqual(await s.get('hiddenSenders'), ['bob']);
   await s.set('theme', 'dark');
   assert.equal(await s.get('theme'), 'dark');
   await assert.rejects(s.set('nope', 1), /unknown setting/);

@@ -3,6 +3,7 @@
 
 import { blockHeads, blockLabel } from './blockGroups.js';
 import { expand } from './expand.js';
+import { hidesLine } from './hiddenSenders.js';
 import { continuesGroup, groupTime, localDay, orderKey, timeLabel } from './group.js';
 import { renderAvatar } from './avatar.js';
 import { adapt, THEME_BG } from './ink.js';
@@ -68,16 +69,28 @@ const BLOCK_HEAD = 'tdf-block-head';
 /** A row of a collapsed block. */
 const BLOCK_HIDDEN = 'tdf-block-hidden';
 
+/** A row of a hidden sender (TDF-0082): kept in the list, not shown. */
+const SENDER_HIDDEN = 'tdf-hidden-sender';
+
+/** @param {Element | null} el */
+const isSenderHidden = (el) => Boolean(el?.classList.contains(SENDER_HIDDEN));
+
 /**
- * Mark a chat row `tdf-head` or `tdf-cont` from the row before it. Notices carry neither,
- * and break the group for the row after them.
+ * Mark a chat row `tdf-head` or `tdf-cont` from the shown row before it. Notices carry neither,
+ * and break the group for the row after them. Hidden-sender rows are not shown, so they are
+ * passed over both ways (TDF-0082): a group continues across a hidden run, and regrouping a
+ * hidden row regroups the first shown row after it.
  * @param {Element | null} el
  */
 function regroup(el) {
-  const row = /** @type {HTMLElement | null} */ (el);
+  let start = el;
+  while (isSenderHidden(start)) start = /** @type {Element} */ (start).nextElementSibling;
+  const row = /** @type {HTMLElement | null} */ (start);
   const key = row && groupKey(row);
   if (!row || !key || (key.kind !== 'public' && key.kind !== 'whisper')) return;
-  const prev = /** @type {HTMLElement | null} */ (row.previousElementSibling);
+  let before = row.previousElementSibling;
+  while (isSenderHidden(before)) before = /** @type {Element} */ (before).previousElementSibling;
+  const prev = /** @type {HTMLElement | null} */ (before);
   // A group never continues across a server-history block's edge, so the first row after a
   // collapsed block keeps its sender's name (TDF-0033.2).
   const sameBlock = (prev?.dataset.block ?? '') === (row.dataset.block ?? '');
@@ -97,13 +110,16 @@ function regroup(el) {
  *   ceiling?: number,
  *   blocks?: BlockStates | null,
  *   autoCollapse?: () => boolean,
+ *   hidden?: () => ReadonlySet<string>,
  * }} deps `avatars` looks up forum pictures for every sender, preferred over the chat avatar;
  *   `now` is the current time in seconds, which decides whether a time shows its date;
- *   `ceiling` is the most rows the list keeps, LIVE_CEILING unless a test sets a smaller one,
- *   fixed whatever the Chat history setting, since live lines show with history off too;
+ *   `ceiling` is the most shown rows the list keeps, LIVE_CEILING unless a test sets a smaller
+ *   one, fixed whatever the Chat history setting, since live lines show with history off too;
+ *   hidden-sender rows are bounded apart, by the same number (TDF-0082);
  *   `blocks` holds each server-history block's stored collapsed state and is told of each
  *   toggle; `autoCollapse` is whether a block with no stored state arrives collapsed, read
- *   when it first renders
+ *   when it first renders; `hidden` is the raw senders whose public messages and whispers are
+ *   hidden (TDF-0082), read for every row rendered
  */
 export function createView({
   doc,
@@ -115,6 +131,7 @@ export function createView({
   ceiling = LIVE_CEILING,
   blocks = null,
   autoCollapse = () => false,
+  hidden = () => new Set(),
 }) {
   const style = doc.createElement('style');
   style.id = 'tdf-chat-style';
@@ -366,6 +383,7 @@ export function createView({
     el.className = `tdf-msg tdf-kind-${record.kind}`;
     if (record.ircFlag === '1') el.classList.add('tdf-irc');
     if (record.confirm) el.classList.add(`tdf-${record.confirm}`);
+    if (hidesLine(record, hidden())) el.classList.add(SENDER_HIDDEN);
     if (record.id !== null) el.dataset.id = record.id;
     if (record.mTime) el.dataset.mtime = record.mTime;
     const t = groupTime(record);
@@ -560,17 +578,21 @@ export function createView({
   /** @param {Element | null} el */
   const isHead = (el) => Boolean(el?.classList.contains(BLOCK_HEAD));
 
-  // The oldest row: a problem notice or appended row at the top goes first, as it always has;
-  // otherwise the row with the lowest order, the first of equals (TDF-0032). Block headers are
-  // not rows and are passed over.
-  function oldest() {
+  // The oldest row of those `hiddenOnes` picks, hidden-sender rows or shown ones: a problem
+  // notice or appended row at the top goes first, as it always has; otherwise the row with the
+  // lowest order, the first of equals (TDF-0032). Block headers are not rows and are passed over.
+  /** @param {boolean} hiddenOnes */
+  function oldest(hiddenOnes) {
+    /** @param {Element | null} el */
+    const passed = (el) => Boolean(el) && (isHead(el) || isSenderHidden(el) !== hiddenOnes);
     let start = list.firstElementChild;
-    while (isHead(start)) start = /** @type {Element} */ (start).nextElementSibling;
+    while (passed(start)) start = /** @type {Element} */ (start).nextElementSibling;
     const first = /** @type {HTMLElement} */ (start);
     let min = orderOf(first);
     if (min === null) return first;
     let pick = first;
     for (let el = first.nextElementSibling; el; el = el.nextElementSibling) {
+      if (passed(el)) continue;
       const order = orderOf(el);
       if (order !== null && order < min) {
         min = order;
@@ -589,9 +611,16 @@ export function createView({
     return null;
   }
 
-  // The list keeps no more than the ceiling; the oldest entries go first (TDF-0033.1).
+  // Live: the hidden-sender rows (TDF-0082).
+  const hiddenRows = list.getElementsByClassName(SENDER_HIDDEN);
+
+  // The list keeps no more than the ceiling of shown rows; the oldest entries go first
+  // (TDF-0033.1). Hidden-sender rows are bounded apart by the same ceiling, oldest first, so a
+  // flooding hidden sender never trims a shown line and the list never holds more than twice
+  // the ceiling (TDF-0082).
   function trim() {
-    while (shown.length > ceiling) remove(oldest());
+    while (hiddenRows.length > ceiling) remove(oldest(true));
+    while (shown.length - hiddenRows.length > ceiling) remove(oldest(false));
     syncBlocks();
   }
 
@@ -628,7 +657,8 @@ export function createView({
   }
 
   // Place, label and remove headers to match the rows now in the list, and hide the rows of
-  // collapsed blocks.
+  // collapsed blocks. Hidden-sender rows are not shown, so a header counts and sits before only
+  // its block's shown rows, and a block with none has no header (TDF-0082).
   function syncBlocks() {
     if (!blocksDirty) return;
     blocksDirty = false;
@@ -637,7 +667,7 @@ export function createView({
     for (let el = list.firstElementChild; el; el = el.nextElementSibling) {
       if (!isHead(el)) rows.push(/** @type {HTMLElement} */ (el));
     }
-    const found = blockHeads(rows.map((row) => row.dataset.block));
+    const found = blockHeads(rows.map((row) => (isSenderHidden(row) ? undefined : row.dataset.block)));
     const live = new Set(found.map((b) => b.block));
     for (const [id, head] of heads) {
       if (live.has(id)) continue;
@@ -848,6 +878,28 @@ export function createView({
       blocksDirty = true;
       syncBlocks();
       for (const id of open) blocks?.toggle(id, true);
+      keepPinned();
+    },
+
+    /**
+     * Hide the public messages and whispers of these raw senders and show every other sender's,
+     * on the rows already in the list (TDF-0082); rows rendered later read `hidden` themselves.
+     * Block headers recount, and the trim bounds the shown and hidden rows anew.
+     * @param {ReadonlySet<string>} users
+     */
+    setHidden(users) {
+      // The list's children, not the live `shown` collection, which re-reads the DOM per access.
+      for (let el = list.firstElementChild; el; el = el.nextElementSibling) {
+        const row = /** @type {HTMLElement} */ (el);
+        const { kind, user } = row.dataset;
+        if (kind === undefined) continue;
+        row.classList.toggle(SENDER_HIDDEN, hidesLine({ kind, user: user ?? '' }, users));
+      }
+      blocksDirty = true;
+      trim();
+      for (let el = list.firstElementChild; el; el = el.nextElementSibling) {
+        if (!isSenderHidden(el)) regroup(el);
+      }
       keepPinned();
     },
 

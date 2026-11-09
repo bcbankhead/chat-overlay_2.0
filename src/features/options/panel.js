@@ -1,7 +1,8 @@
 // The Settings flyout (UI design 2026-10-27, Flyouts → Settings), in two sections (TDF-0039).
 // Chat: Use Chat 2.0 (TDF-0037), Auto-scroll over the engine's #autoScrollID, Collapse server
 // history automatically (TDF-0033.3), Chat history (last HISTORY_ON, TDF-0033.5) with its
-// Clear: Buffer | History line (TDF-0081), and Hide messages by user (TDF-0010, TDF-0044), then
+// Clear: Buffer | History line (TDF-0081), and Hide messages by user (TDF-0010, TDF-0044), a
+// Hide / Unhide toggle over the hiddenSenders setting that deletes nothing (TDF-0082), then
 // a User options group over the engine's own myOptions checkboxes (TDF-0080). Media and Gallery
 // Settings, one flat list: Include my images (TDF-0009.13), Store images offline,
 // Compress stored images (TDF-0036), Use media quickview (TDF-0035) and Gallery size limit (MB).
@@ -10,10 +11,11 @@
 // deletes every saved line at once. A hint under the gallery field gives the usage, says the
 // oldest over-limit images are purged when the limit is set and on reload (favorites kept), and
 // what the typed value would delete; the setting is written, and the deletion runs, only when the
-// value is committed (change: Enter or leaving the field). The two deletions ask first, inline.
+// value is committed (change: Enter or leaving the field). The two Clear actions ask first, inline.
 // The rail gives the flyout body its scrollbar.
 
 import { describeError } from '../../core/errors.js';
+import { parseHidden, pickerEntries, toggleHidden } from '../../core/hiddenSenders.js';
 import { clearView } from '../../core/events.js';
 import { profileUrlFor } from '../../core/forumAvatar.js';
 import { chat2Off, setChat2Off } from '../../core/optOut.js';
@@ -233,7 +235,6 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
    *   done?: (n: number) => string,
    *   failed?: (err: string) => string,
    *   after?: () => void,
-   *   lock?: (on: boolean) => void,
    * }} step
    * @param {ConfirmView} view
    */
@@ -246,18 +247,13 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
       done = (n) => `Deleted ${plural(n, 'message')}.`,
       failed = (err) => `Could not delete: ${err}`,
       after = () => {},
-      lock = () => {},
     },
     view,
   ) => {
-    const reset = () => {
-      view.idle();
-      lock(false);
-    };
+    const reset = () => view.idle();
     const start = async () => {
       view.report('', false);
       view.busy();
-      lock(true);
       let n = 0;
       if (count) {
         try {
@@ -414,11 +410,13 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     after: () => refreshSenders(),
   });
 
-  // Hide messages by user: any sender in stored history, online or not. It removes their lines
-  // from local history only, so it says hide: the chat server may replay those messages. The
-  // option value is the stored sender, which is what the user index holds; the label is decoded.
-  // The small Hide button sits in the row after the select (TDF-0081), outside the label, since a
-  // button may not sit inside one; its question and report go below the row.
+  // Hide messages by user (TDF-0082): a reversible filter over any sender in stored history,
+  // online or not, and every hidden sender, listed even with no saved lines so it can be unhidden.
+  // Hide adds the selected sender to the `hiddenSenders` setting and Unhide removes them, at once,
+  // with no confirm: nothing is deleted, and the open view follows the setting (bootstrap). The
+  // option value is the stored sender, which is what the user index and the set hold; the label is
+  // decoded. The small toggle sits in the row after the select (TDF-0081), outside the label,
+  // since a button may not sit inside one; its report goes below the row.
   const senderRow = el('div', 'tdf-opt-row tdf-opt-sender');
   const senderLabelEl = el('label', 'tdf-opt-sender-label');
   const sender = el('select', '');
@@ -426,66 +424,50 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   const hideButton = el('button', 'tdf-opt-small', 'Hide');
   hideButton.type = 'button';
   senderRow.append(senderLabelEl, hideButton);
-  const hideAsk = el('div', 'tdf-opt-confirm');
-  hideAsk.hidden = true;
-  const hideQuestion = el('span', '');
-  const hideYes = el('button', 'tdf-opt-confirm-yes', 'Confirm');
-  hideYes.type = 'button';
-  const hideNo = el('button', '', 'Cancel');
-  hideNo.type = 'button';
-  hideAsk.append(hideQuestion, hideYes, hideNo);
   const hideHint = el('div', 'tdf-opt-hint tdf-opt-action-hint');
   hideHint.setAttribute('aria-live', 'polite');
-  // The sender asked about, fixed for that question; the picker is locked while it is open.
-  let asked = '';
-  let locked = false;
+  /** The hidden senders as last read or written; null until read, and after a failed read. */
+  /** @type {readonly string[] | null} */
+  let hiddenList = null;
   /** no sender to pick: an empty list, or one that failed to read */
   let unavailable = false;
+  /** a toggle's write is running */
+  let toggling = false;
+  const selectedHidden = () => hiddenList !== null && hiddenList.includes(sender.value);
   const syncSender = () => {
-    sender.disabled = locked || unavailable;
-    if (!locked) hideButton.disabled = unavailable;
+    sender.disabled = unavailable;
+    hideButton.textContent = selectedHidden() ? 'Unhide' : 'Hide';
+    hideButton.disabled = unavailable || hiddenList === null || toggling;
   };
-  const byUser = confirmFlow({
-    count: () => {
-      asked = sender.value;
-      return limits.countByUser(asked);
-    },
-    none: () => `No saved messages from ${senderLabel(asked)} to hide.`,
-    question: (n) => `Hide ${plural(n, 'message')} from ${senderLabel(asked)}?`,
-    run: () => limits.deleteByUser(asked),
-    done: (n) => `Hid ${plural(n, 'message')}.`,
-    failed: (err) => `Could not hide: ${err}`,
-    after: () => refreshSenders(),
-    lock: (on) => {
-      locked = on;
-      syncSender();
-    },
-  }, {
-    busy: () => {
-      hideButton.disabled = true;
-    },
-    ask: (question) => {
-      hideQuestion.textContent = question;
-      hideButton.hidden = true;
-      hideAsk.hidden = false;
-    },
-    running: () => {
-      hideYes.disabled = true;
-      hideNo.disabled = true;
-    },
-    idle: () => {
-      hideAsk.hidden = true;
-      hideButton.hidden = false;
-      hideButton.disabled = false;
-      hideYes.disabled = false;
-      hideNo.disabled = false;
-    },
-    report: reporter(hideHint),
+  sender.addEventListener('change', () => {
+    hideHint.textContent = senderWarning;
+    hideHint.classList.toggle('tdf-warn', senderWarning !== '');
+    syncSender();
   });
-  hideButton.addEventListener('click', byUser.start);
-  hideYes.addEventListener('click', byUser.confirm);
-  hideNo.addEventListener('click', byUser.cancel);
-  root.append(senderRow, hideAsk, hideHint);
+  // The set is read again just before the write, so a change made in another tab since the last
+  // read is kept; the toggle applies what its label said to that fresh set.
+  hideButton.addEventListener('click', async () => {
+    const user = sender.value;
+    const hiding = !selectedHidden();
+    toggling = true;
+    syncSender();
+    const report = reporter(hideHint);
+    try {
+      const current = parseHidden(await settings.get('hiddenSenders'));
+      const next = current.includes(user) === hiding ? current : toggleHidden(current, user);
+      await settings.set('hiddenSenders', next);
+      if (closed) return;
+      hiddenList = next;
+      report(hiding ? `Hid messages from ${senderLabel(user)}.` : `Showing messages from ${senderLabel(user)} again.`, false);
+    } catch (err) {
+      if (closed) return;
+      report(`Could not ${hiding ? 'hide' : 'unhide'}: ${describeError(err)}`, true);
+    } finally {
+      toggling = false;
+    }
+    refreshSenders();
+  });
+  root.append(senderRow, hideHint);
 
   /**
    * A switch over one of the engine's User Options checkboxes (TDF-0080). The engine checkbox is
@@ -574,20 +556,35 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   const gallery = field('Gallery size limit (MB)', 'No limit');
   gallery.input.min = '1';
 
-  // Only the latest read fills the list.
+  // Only the latest read fills the list. The hidden set is read beside the senders: unreadable,
+  // the senders still list and the toggle is disabled, since a write would replace a set never read.
   let senderSeq = 0;
   let senderWarning = '';
+  /** @param {string} text */
+  const warnSenders = (text) => {
+    senderWarning = text;
+    hideHint.textContent = text;
+    hideHint.classList.add('tdf-warn');
+  };
   const refreshSenders = async () => {
     const mine = ++senderSeq;
     /** @type {Array<{ user: string, count: number }>} */
-    let list;
+    let saved;
+    /** @type {readonly string[] | null} */
+    let read = null;
+    /** @type {string} */
+    let hiddenFailed = '';
     try {
-      list = await limits.senders();
+      [saved, read] = await Promise.all([
+        limits.senders(),
+        settings.get('hiddenSenders').then(parseHidden, (err) => {
+          hiddenFailed = describeError(err);
+          return null;
+        }),
+      ]);
     } catch (err) {
       if (closed || mine !== senderSeq) return;
-      senderWarning = `Could not read saved senders: ${describeError(err)}`;
-      hideHint.textContent = senderWarning;
-      hideHint.classList.add('tdf-warn');
+      warnSenders(`Could not read saved senders: ${describeError(err)}`);
       unavailable = true;
       syncSender();
       return;
@@ -598,10 +595,13 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
       hideHint.classList.remove('tdf-warn');
     }
     senderWarning = '';
+    hiddenList = read;
+    if (read === null) warnSenders(`Could not read hidden senders: ${hiddenFailed}`);
+    const list = pickerEntries(saved, new Set(read ?? []));
     const keep = sender.value;
     sender.replaceChildren(
-      ...list.map(({ user, count }) => {
-        const option = el('option', '', `${senderLabel(user)} (${count})`);
+      ...list.map(({ user, count, hidden }) => {
+        const option = el('option', '', `${senderLabel(user)} (${count}${hidden ? ', hidden' : ''})`);
         option.value = user;
         return option;
       }),
