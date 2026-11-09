@@ -71,8 +71,7 @@
 }
 
 #tdf-rail .tdf-opt-field input,
-#tdf-rail .tdf-opt-sender select,
-#tdf-rail .tdf-opt-confirm button {
+#tdf-rail .tdf-opt-sender select {
   padding: 5px 8px;
   color: var(--tdf-fg);
   background: var(--tdf-rail-chip-bg);
@@ -197,12 +196,12 @@
   display: none;
 }
 
-#tdf-rail .tdf-opt-confirm button:hover,
 #tdf-rail .tdf-opt-sender .tdf-opt-small:hover {
   border-color: var(--tdf-link);
 }
 
-/* Hide messages by user: the stored senders, then the small Hide button beside the select. The
+/* Hide messages by user: the stored and hidden senders, then the small Hide / Unhide toggle
+   beside the select (TDF-0082). The
    label wraps the text and the select for their association, and lays out as if absent. */
 #tdf-rail .tdf-opt-sender-label {
   display: contents;
@@ -235,35 +234,6 @@
   outline-offset: 1px;
 }
 
-/* The inline two-step confirm that replaces a deleting button until answered. */
-#tdf-rail .tdf-opt-confirm {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 6px 2px 2px;
-}
-
-#tdf-rail .tdf-opt-confirm[hidden] {
-  display: none;
-}
-
-#tdf-rail .tdf-opt-confirm span {
-  flex: 1;
-  min-width: 0;
-}
-
-#tdf-rail .tdf-opt-confirm button {
-  flex: none;
-  cursor: pointer;
-}
-
-#tdf-rail .tdf-opt-confirm .tdf-opt-confirm-yes {
-  color: #ffffff;
-  background: #cf222e;
-  border-color: #cf222e;
-}
-
-#tdf-rail .tdf-opt-confirm button:disabled,
 #tdf-rail .tdf-opt-sender .tdf-opt-small:disabled {
   cursor: default;
   opacity: 0.5;

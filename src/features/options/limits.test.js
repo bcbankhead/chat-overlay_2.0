@@ -153,7 +153,7 @@ test('clearHistory over no history deletes and announces nothing', async (t) => 
   assert.deepEqual(await all(db, 'messages'), []);
 });
 
-test('senders lists every stored sender with a line count; countByUser counts one across rooms', async (t) => {
+test('senders lists every stored sender with a line count across rooms', async (t) => {
   const { db, limits } = await setup(t);
   await seedSenders(db);
   assert.deepEqual(await limits.senders(), [
@@ -161,25 +161,13 @@ test('senders lists every stored sender with a line count; countByUser counts on
     { user: 'a', count: 3 },
     { user: 'carol', count: 1 },
   ]);
-  assert.equal(await limits.countByUser('Big%20Bob'), 2);
-  assert.equal(await limits.countByUser('nobody'), 0);
-});
-
-test('deleteByUser deletes only that sender, in every room, and announces their ids', async (t) => {
-  const { db, limits, deleted } = await setup(t);
-  await seedSenders(db);
-  assert.deepEqual((await limits.deleteByUser('Big%20Bob')).sort(), ['b1', 'b2']);
-  assert.deepEqual((await all(db, 'messages')).map((m) => m.id).sort(), ['c1', 'day', 'new', 'old']);
-  assert.deepEqual(deleted, [['b1', 'b2']]);
-  assert.deepEqual(await limits.deleteByUser('nobody'), []);
-  assert.equal(deleted.length, 1);
 });
 
 test('neither deletion touches the gallery images, their favorites, or the tags store', async (t) => {
   const { db, limits } = await setup(t);
   await seedSenders(db);
   const images = await all(db, 'images');
-  await limits.deleteByUser('Big%20Bob');
+  await limits.pruneHistory(100);
   await limits.clearHistory();
   assert.deepEqual(await all(db, 'images'), images);
   // Tagging owns the tags store and re-derives on the announcement.
@@ -230,16 +218,6 @@ test('a deletion touching no block line leaves block state alone', async (t) => 
   await state.set('gone', true);
   await limits.pruneHistory(100);
   assert.deepEqual(await state.load(), { gone: true });
-});
-
-test('delete-by-sender drops the state of a block it emptied', async (t) => {
-  const { createBlockState } = await import('../../core/blockState.js');
-  const { db, limits } = await setup(t);
-  await seed(db, 'messages', [{ ...msg('z1', 0.1), user: 'zed', backlogBlock: 'zb' }]);
-  const state = createBlockState(db);
-  await state.set('zb', true);
-  await limits.deleteByUser('zed');
-  assert.deepEqual(await state.load(), {});
 });
 
 test('Clear history clears every block state', async (t) => {

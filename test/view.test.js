@@ -73,7 +73,7 @@ const NOW = new Date(2026, 0, 2, 12, 0).getTime() / 1000;
 // createView's own default.
 const CEILING = 150;
 
-async function setup({ autoScroll = true, reducedMotion = false, globals = {}, now = () => NOW, ceiling = CEILING, blocks, autoCollapse, avatarsBox = null } = {}) {
+async function setup({ autoScroll = true, reducedMotion = false, globals = {}, now = () => NOW, ceiling = CEILING, blocks, autoCollapse, avatarsBox = null, hidden } = {}) {
   const win = new Window({ url: 'https://example.test/chat/' });
   const frames = stubFrames(win);
   const resizes = stubResize(win);
@@ -86,7 +86,7 @@ async function setup({ autoScroll = true, reducedMotion = false, globals = {}, n
   const whispered = [];
   win.whisperUser = (name) => whispered.push(name);
   const container = doc.getElementById('chatContainer');
-  const view = createView({ doc, win, container, css: '#tdf-chat{}', now, ...(ceiling === null ? {} : { ceiling }), blocks, autoCollapse });
+  const view = createView({ doc, win, container, css: '#tdf-chat{}', now, ...(ceiling === null ? {} : { ceiling }), blocks, autoCollapse, hidden });
   const root = doc.getElementById('tdf-chat');
   return { win, doc, view, root, container, whispered, frames, resizes };
 }
@@ -1534,4 +1534,163 @@ test('the avatar class follows a bubbling change of the box, even one added afte
 test('theme.css hides avatar pictures under the class, leaving the initials tile', () => {
   const css = readFileSync(new URL('../src/core/theme.css', import.meta.url), 'utf8');
   assert.match(css, /#tdf-chat\.tdf-no-avatar-pics \.tdf-avatar-img\s*\{\s*display: none;\s*\}/);
+});
+
+// TDF-0082: hidden senders. A hidden sender's public messages and whispers stay in the list,
+// classed tdf-hidden-sender, so Unhide restores them; entry, exit and system lines stay shown.
+const SENDER_HIDDEN = 'tdf-hidden-sender';
+const hiddenOf = (root) => msgs(root).filter((el) => el.classList.contains(SENDER_HIDDEN)).map((el) => el.dataset.id);
+
+test('a hidden sender is hidden on every path: live, own echo, server backlog, reload replay and confirm', async () => {
+  const hidden = new Set(['bob']);
+  const { view, root } = await setup({ hidden: () => hidden });
+  view.replay([rec({ id: 'r1', mTime: '10' }), rec({ id: 'r2', mTime: '11', user: 'amy' })]);
+  view.place(rec({ id: 'p1', mTime: '20', source: 'backlog' }));
+  view.append(rec({ id: 'a1', mTime: '30', kind: 'whisper' }));
+  view.append(rec({ id: 'pend', mTime: '40', confirm: 'pending' }));
+  view.confirm('pend', rec({ id: 'c1', mTime: '40' }));
+  assert.deepEqual(hiddenOf(root), ['r1', 'p1', 'a1', 'c1']);
+});
+
+test('only public messages and whispers are hidden; entry, exit and system lines stay', async () => {
+  const hidden = new Set(['bob']);
+  const { view, root } = await setup({ hidden: () => hidden });
+  for (const [id, kind] of [['e', 'entry'], ['x', 'exit'], ['s', 'system'], ['p', 'public'], ['w', 'whisper']]) {
+    view.append(rec({ id, mTime: id, kind }));
+  }
+  assert.deepEqual(hiddenOf(root), ['p', 'w']);
+});
+
+test('setHidden hides rows already on screen and shows them again, including lines received while hidden', async () => {
+  let hidden = new Set();
+  const { view, root } = await setup({ hidden: () => hidden });
+  view.replay([rec({ id: '1', mTime: '10' }), rec({ id: '2', mTime: '11', user: 'amy' })]);
+  view.notice('a problem');
+  hidden = new Set(['bob']);
+  view.setHidden(hidden);
+  assert.deepEqual(hiddenOf(root), ['1']);
+  assert.equal(root.querySelector('.tdf-notice').classList.contains(SENDER_HIDDEN), false, 'a notice is passed over');
+  view.append(rec({ id: '3', mTime: '12' }));
+  assert.deepEqual(hiddenOf(root), ['1', '3']);
+  hidden = new Set();
+  view.setHidden(hidden);
+  assert.deepEqual(hiddenOf(root), []);
+  assert.deepEqual(msgs(root).map((el) => el.dataset.id).filter(Boolean), ['1', '2', '3'], 'nothing was removed');
+});
+
+test('a group continues across a hidden run, and regroups when it is shown again', async () => {
+  let hidden = new Set(['amy']);
+  const { view, root } = await setup({ hidden: () => hidden });
+  view.replay([
+    rec({ id: '1', mTime: '10', t: 100 }),
+    rec({ id: '2', mTime: '11', user: 'amy', t: 101 }),
+    rec({ id: '3', mTime: '12', t: 102 }),
+  ]);
+  const row = (id) => root.querySelector(`[data-id="${id}"]`);
+  assert.ok(row('3').classList.contains('tdf-cont'), 'bob continues past hidden amy');
+  hidden = new Set();
+  view.setHidden(hidden);
+  assert.ok(row('2').classList.contains('tdf-head'));
+  assert.ok(row('3').classList.contains('tdf-head'), 'amy shown again breaks the group');
+  hidden = new Set(['amy']);
+  view.setHidden(hidden);
+  assert.ok(row('3').classList.contains('tdf-cont'));
+});
+
+test('a shown row placed before a hidden run regroups the first shown row after it', async () => {
+  const hidden = new Set(['amy']);
+  const { view, root } = await setup({ hidden: () => hidden });
+  view.replay([rec({ id: '2', mTime: '11', user: 'amy', t: 101 }), rec({ id: '3', mTime: '12', t: 102 })]);
+  const row = (id) => root.querySelector(`[data-id="${id}"]`);
+  assert.ok(row('3').classList.contains('tdf-head'));
+  view.place(rec({ id: '1', mTime: '10', t: 100, receivedAt: 0 }));
+  assert.equal(row('1').nextElementSibling, row('2'));
+  assert.ok(row('3').classList.contains('tdf-cont'));
+});
+
+test('a hidden flood never trims a shown line, and hidden rows are bounded by the ceiling, oldest first', async () => {
+  const hidden = new Set(['bob']);
+  const { view, root } = await setup({ hidden: () => hidden, ceiling: 3 });
+  view.append(rec({ id: 'a1', mTime: 'a1', user: 'amy' }));
+  view.append(rec({ id: 'a2', mTime: 'a2', user: 'amy' }));
+  for (let i = 0; i < 10; i++) view.append(rec({ id: `b${i}`, mTime: `b${i}` }));
+  assert.deepEqual(ids(root), ['a1', 'a2', 'b7', 'b8', 'b9']);
+  assert.deepEqual(hiddenOf(root), ['b7', 'b8', 'b9']);
+});
+
+test('shown rows are bounded by the ceiling and trim no hidden row', async () => {
+  const hidden = new Set(['bob']);
+  const { view, root } = await setup({ hidden: () => hidden, ceiling: 2 });
+  view.append(rec({ id: 'b0', mTime: 'b0' }));
+  for (let i = 0; i < 5; i++) view.append(rec({ id: `a${i}`, mTime: `a${i}`, user: 'amy' }));
+  assert.deepEqual(ids(root), ['b0', 'a3', 'a4']);
+});
+
+test('setHidden trims anew: rows shown again past the ceiling lose the oldest', async () => {
+  let hidden = new Set(['bob']);
+  const { view, root } = await setup({ hidden: () => hidden, ceiling: 2 });
+  view.replay([
+    rec({ id: 'b1', mTime: '10' }),
+    rec({ id: 'a1', mTime: '11', user: 'amy' }),
+    rec({ id: 'b2', mTime: '12' }),
+    rec({ id: 'a2', mTime: '13', user: 'amy' }),
+  ]);
+  assert.equal(msgs(root).length, 4, 'two shown and two hidden fit');
+  hidden = new Set();
+  view.setHidden(hidden);
+  assert.deepEqual(ids(root), ['b2', 'a2']);
+});
+
+test('a block header counts only shown rows and sits before the first of them', async () => {
+  const hidden = new Set(['amy']);
+  const { view, root } = await setup({ hidden: () => hidden });
+  view.replay([
+    blockRec({ id: 'b1', mTime: '50', user: 'amy' }),
+    blockRec({ id: 'b2', mTime: '51' }),
+    blockRec({ id: 'b3', mTime: '52', user: 'amy' }),
+    blockRec({ id: 'b4', mTime: '53' }),
+    rec({ id: 'a', mTime: '100' }),
+  ]);
+  assert.equal(blockHead(root).textContent, "From the chat's server history (2)");
+  assert.equal(blockHead(root).nextElementSibling.dataset.id, 'b2');
+});
+
+test('a block whose rows are all hidden has no header', async () => {
+  const hidden = new Set(['bob']);
+  const { view, root } = await setup({ hidden: () => hidden });
+  view.replay([blockRec({ id: 'b1', mTime: '50' }), blockRec({ id: 'b2', mTime: '51' }), rec({ id: 'a', mTime: '100', user: 'amy' })]);
+  assert.equal(blockHead(root), null);
+});
+
+test('setHidden recounts block headers, removes an emptied one and restores it on unhide', async () => {
+  let hidden = new Set();
+  const { view, root } = await setup({ hidden: () => hidden });
+  view.replay([
+    blockRec({ id: 'b1', mTime: '50', user: 'amy' }),
+    blockRec({ id: 'b2', mTime: '51' }),
+    blockRec({ id: 'b3', mTime: '52', user: 'amy' }),
+  ]);
+  assert.equal(blockHead(root).textContent, "From the chat's server history (3)");
+  hidden = new Set(['amy']);
+  view.setHidden(hidden);
+  assert.equal(blockHead(root).textContent, "From the chat's server history (1)");
+  assert.equal(blockHead(root).nextElementSibling.dataset.id, 'b2');
+  hidden = new Set(['amy', 'bob']);
+  view.setHidden(hidden);
+  assert.equal(blockHead(root), null);
+  hidden = new Set();
+  view.setHidden(hidden);
+  assert.equal(blockHead(root).textContent, "From the chat's server history (3)");
+  assert.equal(blockHead(root).nextElementSibling.dataset.id, 'b1');
+});
+
+test('with no hidden dep every sender is shown', async () => {
+  const { view, root } = await setup();
+  view.append(rec());
+  assert.deepEqual(hiddenOf(root), []);
+});
+
+test('theme.css hides hidden-sender rows', () => {
+  const css = readFileSync(new URL('../src/core/theme.css', import.meta.url), 'utf8');
+  assert.match(css, /#tdf-chat \.tdf-hidden-sender\s*\{\s*display: none;\s*\}/);
 });

@@ -1377,3 +1377,87 @@ test('with Chat history off, a message from before the page load never reaches t
   assert.deepEqual(shownIds(shell.document), ['2']);
   await shell.window.happyDOM.close();
 });
+
+// TDF-0082: Hide messages by user hides a sender's messages; it deletes nothing.
+
+const hiddenIds = (document) =>
+  [...document.querySelectorAll('#tdf-chat .tdf-msg.tdf-hidden-sender')].map((el) => el.dataset.id);
+
+test('a stored hidden sender is hidden on reload replay, the history poll and live lines; other lines show', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const first = await page(bundle, indexedDB);
+  first.poll(um('1', 'bob', 'saved', '100'), um('2', 'carol', 'saved', '101'));
+  await settle();
+  await first.window.happyDOM.close();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('hiddenSenders', ['bob']);
+  db.close();
+
+  const second = await page(bundle, indexedDB);
+  historyPoll(second, um('3', 'bob', 'backlog', '102'));
+  second.poll(um('4', 'bob', 'live', '103'), um('5', 'carol', 'live', '104'));
+  await settle();
+  assert.deepEqual(hiddenIds(second.document), ['1', '3', '4']);
+  assert.ok(shownIds(second.document).includes('2') && shownIds(second.document).includes('5'));
+  await second.window.happyDOM.close();
+});
+
+test('Hide in Settings hides the sender on screen at once, keeps their lines, and holds across a reload; Unhide restores them', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const shell = await page(bundle, indexedDB, withRail);
+  shell.poll(um('1', 'bob', 'one', '100'), um('2', 'carol', 'two', '101'));
+  await settle();
+  shell.document.querySelector('.tdf-rail-icon-btn[data-panel="settings"]').click();
+  await settle();
+  const select = shell.document.querySelector('.tdf-opt-sender select');
+  const toggle = shell.document.querySelector('.tdf-opt-sender button');
+  select.value = 'bob';
+  select.dispatchEvent(new shell.window.Event('change'));
+  assert.equal(toggle.textContent, 'Hide');
+  toggle.click();
+  await settle();
+  assert.deepEqual(hiddenIds(shell.document), ['1']);
+  assert.equal(toggle.textContent, 'Unhide');
+  shell.poll(um('3', 'bob', 'three', '102'));
+  await settle();
+  assert.deepEqual(hiddenIds(shell.document), ['1', '3'], 'a line received while hidden is hidden');
+  await shell.window.happyDOM.close();
+
+  const reload = await page(bundle, indexedDB, withRail);
+  await settle();
+  assert.deepEqual(hiddenIds(reload.document), ['1', '3'], 'the saved lines were kept, and stay hidden');
+  reload.document.querySelector('.tdf-rail-icon-btn[data-panel="settings"]').click();
+  await settle();
+  const select2 = reload.document.querySelector('.tdf-opt-sender select');
+  const toggle2 = reload.document.querySelector('.tdf-opt-sender button');
+  select2.value = 'bob';
+  select2.dispatchEvent(new reload.window.Event('change'));
+  assert.equal(toggle2.textContent, 'Unhide');
+  toggle2.click();
+  await settle();
+  assert.deepEqual(hiddenIds(reload.document), []);
+  assert.ok(['1', '2', '3'].every((id) => shownIds(reload.document).includes(id)));
+  await reload.window.happyDOM.close();
+});
+
+test('a failed read of the hidden senders hides nothing and says why', async () => {
+  const bundle = await bundled();
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('hiddenSenders', ['bob']);
+  db.close();
+  const restore = failBlockState('get', 'hiddenSenders');
+  let shell;
+  try {
+    shell = await page(bundle, indexedDB);
+    shell.poll(um('1', 'bob', 'live', '100'));
+    await settle();
+  } finally {
+    restore();
+  }
+  assert.ok(noticeTexts(shell.document).some((t) => /^Hidden senders not read; every sender is shown \(.*injected.*\)$/.test(t)));
+  assert.deepEqual(hiddenIds(shell.document), []);
+  await shell.window.happyDOM.close();
+});

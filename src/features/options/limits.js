@@ -1,10 +1,9 @@
 // The history and gallery limits of Settings, applied: chat history pruned by the fixed storage
-// age over the `messages` receivedAt index (all of it with Chat history off), cleared outright,
-// or deleted by sender over the user index; and the gallery kept under its size by TDF-0009.5's
-// store. Deleted lines are announced through core's onDeleted, so the open view drops their rows
+// age over the `messages` receivedAt index (all of it with Chat history off) or cleared
+// outright; and the gallery kept under its size by TDF-0009.5's store. Deleted lines are announced through core's onDeleted, so the open view drops their rows
 // and tagging, the tags store's only writer, re-derives without them. No deletion here touches
-// images or tags. Limits run on load and on commit; Clear history and delete-by-sender run when
-// the user confirms them.
+// images or tags. Limits run on load and on commit; Clear history runs when the user confirms it.
+// Hide messages by user is a filter over the hiddenSenders setting and deletes nothing here.
 
 import { createBlockState } from '../../core/blockState.js';
 import { STORES, done, request } from '../../core/db.js';
@@ -141,24 +140,6 @@ export function createLimits({ db, gallery, now = Date.now }) {
         };
       });
       return out;
-    },
-
-    /**
-     * How many stored lines `user` sent, in every room.
-     * @param {string} user  the stored (raw) sender
-     */
-    async countByUser(user) {
-      const index = db.transaction(STORES.messages, 'readonly').objectStore(STORES.messages).index('user');
-      return request(index.count(IDBKeyRange.only(user)));
-    },
-
-    /**
-     * Delete every stored line `user` sent, in every room, in one transaction; then announce them.
-     * @param {string} user  the stored (raw) sender
-     * @returns {Promise<string[]>} the ids deleted
-     */
-    async deleteByUser(user) {
-      return deleteWhere('user', IDBKeyRange.only(user));
     },
 
     /**

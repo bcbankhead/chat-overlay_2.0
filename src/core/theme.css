@@ -463,6 +463,12 @@
   display: none;
 }
 
+/* A hidden sender's public messages and whispers (TDF-0082): kept in the list, so Unhide
+   restores them, and not shown. */
+#tdf-chat .tdf-hidden-sender {
+  display: none;
+}
+
 /* Narrow layout (TDF-0068): rail.js sets tdf-narrow on <html> at or under its NARROW_MAX, and
    every rule here keys on that class, never on a width of its own. The engine's resizeDivs
    writes inline px sizes on load and every resize, clamped to at least 640 x 480, so these
