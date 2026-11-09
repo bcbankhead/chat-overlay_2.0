@@ -307,7 +307,7 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   };
 
   // Clear chat buffer (TDF-0084): one standalone button under the Chat buffer switch, as before
-  // TDF-0081. It swaps for its question and Confirm | Cancel, hint-sized, then returns; the report
+  // TDF-0081. It swaps for its question with Confirm and Cancel buttons, then returns; the report
   // hint below serves it. Its tooltip follows the switch. The History action (TDF-0010) is still
   // built and wired below but never placed, so it is out of reach until a UI entry returns.
   const clearLine = el('div', 'tdf-opt-clear-line');
@@ -322,12 +322,16 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     bufferButton.title = off ? 'Clears the view, no history saved' : 'Clears the view, lines return on reload';
   };
   setHistoryOff(false);
-  const clearAsk = el('span', 'tdf-opt-hint tdf-opt-clear-ask');
+  // Its question is the pre-TDF-0081 inline confirm: the question, a red Confirm button and a
+  // bordered Cancel button, in the button's place until answered.
+  const clearAsk = el('div', 'tdf-opt-confirm tdf-opt-clear-ask');
   clearAsk.hidden = true;
   const clearQuestion = el('span', '');
-  const clearYes = linkButton('Confirm');
-  const clearNo = linkButton('Cancel');
-  clearAsk.append(clearQuestion, el('span', '', ' '), clearYes, el('span', '', ' | '), clearNo);
+  const clearYes = el('button', 'tdf-opt-confirm-yes', 'Confirm');
+  clearYes.type = 'button';
+  const clearNo = el('button', '', 'Cancel');
+  clearNo.type = 'button';
+  clearAsk.append(clearQuestion, clearYes, clearNo);
   clearLine.append(clearIdle, clearAsk);
   const clearHint = el('div', 'tdf-opt-hint tdf-opt-action-hint');
   clearHint.setAttribute('aria-live', 'polite');

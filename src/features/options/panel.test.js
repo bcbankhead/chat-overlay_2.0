@@ -613,7 +613,8 @@ test('Clear chat buffer is one standalone button; the Clear: Buffer | History li
   assert.ok(clear.classList.contains('tdf-opt-clear'));
   assert.equal(idle.hidden, false);
   assert.equal(ask.hidden, true);
-  assert.ok(ask.classList.contains('tdf-opt-hint'), 'its question is hint-sized');
+  assert.ok(ask.classList.contains('tdf-opt-confirm'), 'its question is the pre-TDF-0081 button confirm');
+  assert.ok(!ask.classList.contains('tdf-opt-hint'), 'not a hint-sized text line');
   assert.equal(button(container, 'History'), undefined, 'History is not placed');
   assert.equal(button(container, 'Buffer'), undefined);
   assert.equal(button(container, 'Clear history now'), undefined);
@@ -677,7 +678,10 @@ test('Clear chat buffer asks; Confirm calls the engine clrScreen and clears the 
   clear.click();
   assert.equal(idle.hidden, true);
   assert.equal(ask.hidden, false);
-  assert.equal(ask.textContent, 'Clear the message view? Confirm | Cancel');
+  assert.equal(ask.textContent, 'Clear the message view?ConfirmCancel');
+  assert.ok(ask.classList.contains('tdf-opt-confirm'), 'the pre-TDF-0081 button confirm');
+  assert.ok(yes.classList.contains('tdf-opt-confirm-yes'), 'Confirm is the red button');
+  assert.ok(!yes.classList.contains('tdf-opt-link'), 'Confirm is a button, not a text link');
   assert.equal(cleared, 0, 'nothing clears before Confirm');
   assert.equal(viewCleared, 0);
   yes.click();
@@ -787,7 +791,7 @@ test('Hide is a small button in the Hide messages by user row, directly after th
   assert.equal(remove.type, 'button');
   assert.ok(remove.classList.contains('tdf-opt-small'));
   assert.ok(hint.classList.contains('tdf-opt-action-hint'), 'its report shows directly below the row');
-  assert.equal(container.querySelector('.tdf-opt-confirm'), null, 'no confirm step: nothing is deleted');
+  assert.equal(row.querySelector('.tdf-opt-confirm'), null, 'no confirm step: nothing is deleted');
   const css = readFileSync(new URL('./options.css', import.meta.url), 'utf8');
   assert.match(/\.tdf-opt-sender-label \{[^}]*\}/.exec(css)?.[0] ?? '', /display: contents;/);
   assert.match(/\.tdf-opt-sender \.tdf-opt-small \{[^}]*\}/.exec(css)?.[0] ?? '', /flex: none;/);
