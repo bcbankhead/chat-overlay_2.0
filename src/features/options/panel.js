@@ -1,9 +1,9 @@
 // The Settings flyout (UI design 2026-10-27, Flyouts → Settings), in two sections (TDF-0039).
-// Chat: Use Chat 2.0 (TDF-0037), Auto-scroll over the engine's #autoScrollID, Clear chat buffer,
-// Collapse server history automatically (TDF-0033.3), Chat history (last HISTORY_ON,
-// TDF-0033.5), Clear history now and Hide messages by user (TDF-0010, TDF-0044), then a User
-// options group over the engine's own myOptions checkboxes (TDF-0080). Media and
-// Gallery Settings, one flat list: Include my images (TDF-0009.13), Store images offline,
+// Chat: Use Chat 2.0 (TDF-0037), Auto-scroll over the engine's #autoScrollID, Collapse server
+// history automatically (TDF-0033.3), Chat history (last HISTORY_ON, TDF-0033.5) with its
+// Clear: Buffer | History line (TDF-0081), and Hide messages by user (TDF-0010, TDF-0044), then
+// a User options group over the engine's own myOptions checkboxes (TDF-0080). Media and Gallery
+// Settings, one flat list: Include my images (TDF-0009.13), Store images offline,
 // Compress stored images (TDF-0036), Use media quickview (TDF-0035) and Gallery size limit (MB).
 // Every boolean setting is a checkbox drawn as a switch (tdf-opt-switch). Chat history (last
 // HISTORY_ON) is one too: on replays the newest HISTORY_ON lines on reload, and turning it off
@@ -175,21 +175,7 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     scroll.disabled = true;
   }
 
-  // Clear chat buffer: the engine's clrScreen() for its hidden view, then the overlay's own
-  // clear through core, so the view's index empties with its rows.
-  const clear = el('button', 'tdf-opt-clear', 'Clear chat buffer');
-  clear.type = 'button';
-  clear.addEventListener('click', () => {
-    const engineClear = /** @type {any} */ (win).clrScreen;
-    if (typeof engineClear === 'function') engineClear();
-    clearView();
-  });
-
-  root.append(
-    scrollRow,
-    clear,
-    el('div', 'tdf-opt-hint', 'Empties the message view. Saved history is kept and returns on reload.'),
-  );
+  root.append(scrollRow);
   // Collapse server history automatically (TDF-0033.3): core follows the setting live.
   check('autoCollapseServerHistory', 'Collapse server history automatically', 'Server-history blocks arrive collapsed.');
 
@@ -226,26 +212,35 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   let historyOff = false;
 
   /**
-   * A button that asks before it deletes: the first click counts what would go and shows that
-   * with Confirm and Cancel; Confirm deletes once and the hint reports it. Cancel, or closing
-   * the flyout, deletes nothing.
-   * @param {string} label
+   * How a confirm step is drawn; the step itself (confirmFlow) knows nothing of the layout.
+   * @typedef {object} ConfirmView
+   * @property {() => void} busy  the trigger was pressed: disable it while counting
+   * @property {(question: string) => void} ask  show the question with Confirm and Cancel
+   * @property {() => void} running  Confirm was pressed: disable Confirm and Cancel
+   * @property {() => void} idle  back to the trigger, everything enabled
+   * @property {(message: string, warn: boolean) => void} report  the step's result hint
+   */
+
+  /**
+   * An action that asks first: the trigger counts what would go (when there is a count) and
+   * asks; Confirm runs it once and the hint reports it. Cancel, or closing the flyout, runs
+   * nothing. Returns the trigger's, Confirm's and Cancel's handlers for the view to wire.
    * @param {{
-   *   count: () => Promise<number>,
-   *   none: () => string,
+   *   count?: () => Promise<number>,
+   *   none?: () => string,
    *   question: (n: number) => string,
-   *   run: () => Promise<string[]>,
+   *   run: () => Promise<string[]> | string[],
    *   done?: (n: number) => string,
    *   failed?: (err: string) => string,
    *   after?: () => void,
    *   lock?: (on: boolean) => void,
    * }} step
+   * @param {ConfirmView} view
    */
-  const confirmStep = (
-    label,
+  const confirmFlow = (
     {
       count,
-      none,
+      none = () => '',
       question,
       run,
       done = (n) => `Deleted ${plural(n, 'message')}.`,
@@ -253,97 +248,194 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
       after = () => {},
       lock = () => {},
     },
+    view,
   ) => {
-    const button = el('button', 'tdf-opt-clear', label);
-    button.type = 'button';
-    const ask = el('div', 'tdf-opt-confirm');
-    ask.hidden = true;
-    const text = el('span', '');
-    const yes = el('button', 'tdf-opt-confirm-yes', 'Confirm');
-    yes.type = 'button';
-    const no = el('button', '', 'Cancel');
-    no.type = 'button';
-    ask.append(text, yes, no);
-    const hint = el('div', 'tdf-opt-hint tdf-opt-action-hint');
-    hint.setAttribute('aria-live', 'polite');
-
     const reset = () => {
-      ask.hidden = true;
-      button.hidden = false;
-      button.disabled = false;
-      yes.disabled = false;
-      no.disabled = false;
+      view.idle();
       lock(false);
     };
-    /** @param {string} message @param {boolean} [warn] */
-    const report = (message, warn = false) => {
-      hint.textContent = message;
-      hint.classList.toggle('tdf-warn', warn);
-    };
-
-    button.addEventListener('click', async () => {
-      report('');
-      button.disabled = true;
+    const start = async () => {
+      view.report('', false);
+      view.busy();
       lock(true);
-      let n;
-      try {
-        n = await count();
-      } catch (err) {
+      let n = 0;
+      if (count) {
+        try {
+          n = await count();
+        } catch (err) {
+          if (closed) return;
+          reset();
+          view.report(`Could not check: ${describeError(err)}`, true);
+          return;
+        }
         if (closed) return;
-        reset();
-        report(`Could not check: ${describeError(err)}`, true);
-        return;
+        if (n === 0) {
+          reset();
+          view.report(none(), false);
+          return;
+        }
       }
-      if (closed) return;
-      if (n === 0) {
-        reset();
-        report(none());
-        return;
-      }
-      text.textContent = question(n);
-      button.hidden = true;
-      ask.hidden = false;
-    });
-    no.addEventListener('click', reset);
-    yes.addEventListener('click', async () => {
-      yes.disabled = true;
-      no.disabled = true;
+      view.ask(question(n));
+    };
+    const confirm = async () => {
+      view.running();
       try {
         const ids = await run();
         if (closed) return;
         reset();
-        report(done(ids.length));
+        view.report(done(ids.length), false);
       } catch (err) {
         if (closed) return;
         reset();
-        report(failed(describeError(err)), true);
+        view.report(failed(describeError(err)), true);
       }
       after();
-    });
+    };
     undo.push(reset);
-    return { button, ask, hint };
+    return { start, confirm, cancel: reset };
   };
 
-  // Clear history now: every stored line, in every room. The gallery is not touched.
-  const clearHistory = confirmStep('Clear history now', {
+  /** @param {HTMLElement} hint @returns {ConfirmView['report']} */
+  const reporter = (hint) => (message, warn) => {
+    hint.textContent = message;
+    hint.classList.toggle('tdf-warn', warn);
+  };
+
+  /** @param {string} label */
+  const linkButton = (label) => {
+    const button = el('button', 'tdf-opt-link', label);
+    button.type = 'button';
+    return button;
+  };
+
+  // Clear: Buffer | History (TDF-0081): one hint-sized line under the Chat history switch. Either
+  // action swaps the line for its question and Confirm | Cancel, then the line reads Clear: Buffer
+  // | History again; one report hint below serves both.
+  const clearLine = el('div', 'tdf-opt-hint tdf-opt-clear-line');
+  const clearIdle = el('span', 'tdf-opt-clear-idle');
+  const bufferButton = linkButton('Buffer');
+  bufferButton.title = 'Empties the message view. Saved history is kept and returns on reload.';
+  const historyButton = linkButton('History');
+  clearIdle.append(el('span', '', 'Clear: '), bufferButton, el('span', '', ' | '), historyButton);
+  const clearAsk = el('span', 'tdf-opt-clear-ask');
+  clearAsk.hidden = true;
+  const clearQuestion = el('span', '');
+  const clearYes = linkButton('Confirm');
+  const clearNo = linkButton('Cancel');
+  clearAsk.append(clearQuestion, el('span', '', ' '), clearYes, el('span', '', ' | '), clearNo);
+  clearLine.append(clearIdle, clearAsk);
+  const clearHint = el('div', 'tdf-opt-hint tdf-opt-action-hint');
+  clearHint.setAttribute('aria-live', 'polite');
+  root.append(clearLine, clearHint);
+
+  /** @type {{ confirm: () => void, cancel: () => void } | null} the flow whose question shows */
+  let clearActive = null;
+  /**
+   * Wire one Clear action to the shared line. The pressed link is hidden by the swap, so focus
+   * moves to Confirm, and back to the link when the line returns.
+   * @param {HTMLButtonElement} trigger
+   * @param {Parameters<typeof confirmFlow>[0]} step
+   */
+  const clearAction = (trigger, step) => {
+    // Disabling a focused button drops focus to body while an await runs, so whether the trigger
+    // (or Confirm/Cancel) held focus is noted before disabling; body still counts as not moved.
+    let triggerFocused = false;
+    let askFocused = false;
+    const unmoved = () => doc.activeElement === null || doc.activeElement === doc.body;
+    const flow = confirmFlow(step, {
+      busy: () => {
+        triggerFocused = doc.activeElement === trigger;
+        bufferButton.disabled = true;
+        historyButton.disabled = true;
+      },
+      ask: (question) => {
+        const focused = doc.activeElement === trigger || (triggerFocused && unmoved());
+        triggerFocused = false;
+        clearActive = flow;
+        clearQuestion.textContent = question;
+        clearIdle.hidden = true;
+        clearAsk.hidden = false;
+        if (focused) clearYes.focus();
+      },
+      running: () => {
+        askFocused = clearAsk.contains(doc.activeElement);
+        clearYes.disabled = true;
+        clearNo.disabled = true;
+      },
+      idle: () => {
+        if (clearActive !== null && clearActive !== flow) return;
+        const focused = clearAsk.contains(doc.activeElement) || (askFocused && unmoved());
+        triggerFocused = false;
+        askFocused = false;
+        clearActive = null;
+        clearAsk.hidden = true;
+        clearIdle.hidden = false;
+        bufferButton.disabled = false;
+        historyButton.disabled = false;
+        clearYes.disabled = false;
+        clearNo.disabled = false;
+        if (focused) trigger.focus();
+      },
+      report: reporter(clearHint),
+    });
+    trigger.addEventListener('click', flow.start);
+  };
+  clearYes.addEventListener('click', () => clearActive?.confirm());
+  clearNo.addEventListener('click', () => clearActive?.cancel());
+
+  // Buffer: the engine's clrScreen() for its hidden view, then the overlay's own clear through
+  // core, so the view's index empties with its rows. Nothing to count and nothing to report unless
+  // clrScreen throws; the overlay's view clears either way.
+  clearAction(bufferButton, {
+    question: () => 'Clear the message view?',
+    run: () => {
+      const engineClear = /** @type {any} */ (win).clrScreen;
+      try {
+        if (typeof engineClear === 'function') engineClear();
+      } finally {
+        clearView();
+      }
+      return [];
+    },
+    done: () => '',
+    failed: (err) => `Could not clear the view: ${err}`,
+  });
+
+  // History: every stored line, in every room. The gallery is not touched.
+  clearAction(historyButton, {
     count: () => limits.countAll(),
     // Off, the lines on screen were never saved, so this cannot remove them (TDF-0054).
     none: () =>
       historyOff
-        ? 'Chat history is off, so nothing is saved. Clear chat buffer empties the lines on screen.'
+        ? 'Chat history is off, so nothing is saved. Buffer empties the lines on screen.'
         : 'No saved history.',
     question: (n) => `Delete ${plural(n, 'message')}?`,
     run: () => limits.clearHistory(),
     after: () => refreshSenders(),
   });
-  root.append(clearHistory.button, clearHistory.ask, clearHistory.hint);
 
   // Hide messages by user: any sender in stored history, online or not. It removes their lines
   // from local history only, so it says hide: the chat server may replay those messages. The
   // option value is the stored sender, which is what the user index holds; the label is decoded.
-  const senderRow = el('label', 'tdf-opt-row tdf-opt-sender');
+  // The small Hide button sits in the row after the select (TDF-0081), outside the label, since a
+  // button may not sit inside one; its question and report go below the row.
+  const senderRow = el('div', 'tdf-opt-row tdf-opt-sender');
+  const senderLabelEl = el('label', 'tdf-opt-sender-label');
   const sender = el('select', '');
-  senderRow.append(el('span', '', 'Hide messages by user'), sender);
+  senderLabelEl.append(el('span', '', 'Hide messages by user'), sender);
+  const hideButton = el('button', 'tdf-opt-small', 'Hide');
+  hideButton.type = 'button';
+  senderRow.append(senderLabelEl, hideButton);
+  const hideAsk = el('div', 'tdf-opt-confirm');
+  hideAsk.hidden = true;
+  const hideQuestion = el('span', '');
+  const hideYes = el('button', 'tdf-opt-confirm-yes', 'Confirm');
+  hideYes.type = 'button';
+  const hideNo = el('button', '', 'Cancel');
+  hideNo.type = 'button';
+  hideAsk.append(hideQuestion, hideYes, hideNo);
+  const hideHint = el('div', 'tdf-opt-hint tdf-opt-action-hint');
+  hideHint.setAttribute('aria-live', 'polite');
   // The sender asked about, fixed for that question; the picker is locked while it is open.
   let asked = '';
   let locked = false;
@@ -351,9 +443,9 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   let unavailable = false;
   const syncSender = () => {
     sender.disabled = locked || unavailable;
-    if (!locked) byUser.button.disabled = unavailable;
+    if (!locked) hideButton.disabled = unavailable;
   };
-  const byUser = confirmStep('Hide', {
+  const byUser = confirmFlow({
     count: () => {
       asked = sender.value;
       return limits.countByUser(asked);
@@ -368,8 +460,32 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
       locked = on;
       syncSender();
     },
+  }, {
+    busy: () => {
+      hideButton.disabled = true;
+    },
+    ask: (question) => {
+      hideQuestion.textContent = question;
+      hideButton.hidden = true;
+      hideAsk.hidden = false;
+    },
+    running: () => {
+      hideYes.disabled = true;
+      hideNo.disabled = true;
+    },
+    idle: () => {
+      hideAsk.hidden = true;
+      hideButton.hidden = false;
+      hideButton.disabled = false;
+      hideYes.disabled = false;
+      hideNo.disabled = false;
+    },
+    report: reporter(hideHint),
   });
-  root.append(senderRow, byUser.button, byUser.ask, byUser.hint);
+  hideButton.addEventListener('click', byUser.start);
+  hideYes.addEventListener('click', byUser.confirm);
+  hideNo.addEventListener('click', byUser.cancel);
+  root.append(senderRow, hideAsk, hideHint);
 
   /**
    * A switch over one of the engine's User Options checkboxes (TDF-0080). The engine checkbox is
@@ -470,16 +586,16 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     } catch (err) {
       if (closed || mine !== senderSeq) return;
       senderWarning = `Could not read saved senders: ${describeError(err)}`;
-      byUser.hint.textContent = senderWarning;
-      byUser.hint.classList.add('tdf-warn');
+      hideHint.textContent = senderWarning;
+      hideHint.classList.add('tdf-warn');
       unavailable = true;
       syncSender();
       return;
     }
     if (closed || mine !== senderSeq) return;
-    if (senderWarning && byUser.hint.textContent === senderWarning) {
-      byUser.hint.textContent = '';
-      byUser.hint.classList.remove('tdf-warn');
+    if (senderWarning && hideHint.textContent === senderWarning) {
+      hideHint.textContent = '';
+      hideHint.classList.remove('tdf-warn');
     }
     senderWarning = '';
     const keep = sender.value;
@@ -580,7 +696,7 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   gallery.input.addEventListener('input', () => galleryHint(valueOf(gallery.input)));
 
   // Ticking writes HISTORY_ON. Unticking writes 0, then deletes every saved line, announced so the open
-  // view and tags follow, as Clear history now does. A refused write shows the stored value
+  // view and tags follow, as Clear: History does. A refused write shows the stored value
   // again. Only the latest toggle reverts or clears, so a quick off-then-on never deletes after
   // it, and an earlier refusal never overrides a later choice.
   let historySeq = 0;

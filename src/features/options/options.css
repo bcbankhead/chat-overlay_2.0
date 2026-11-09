@@ -163,27 +163,76 @@
   display: none;
 }
 
-#tdf-rail .tdf-opt-clear {
-  width: 100%;
-  margin: 6px 0 2px;
-  padding: 7px 12px;
-  color: var(--tdf-fg);
-  background: var(--tdf-rail-chip-bg);
-  border: 1px solid var(--tdf-rail-chip-border);
-  border-radius: 8px;
+/* A text button inside a hint line: Clear: Buffer | History and its Confirm | Cancel (TDF-0081). */
+#tdf-rail .tdf-opt-link {
+  padding: 0;
+  color: var(--tdf-link);
+  background: none;
+  border: 0;
   font: inherit;
   cursor: pointer;
 }
 
-#tdf-rail .tdf-opt-clear:hover,
-#tdf-rail .tdf-opt-confirm button:hover {
+#tdf-rail .tdf-opt-link:hover {
+  text-decoration: underline;
+}
+
+#tdf-rail .tdf-opt-link:focus-visible {
+  outline: 2px solid var(--tdf-link);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
+#tdf-rail .tdf-opt-link:disabled {
+  cursor: default;
+  opacity: 0.5;
+  text-decoration: none;
+}
+
+#tdf-rail .tdf-opt-clear-line {
+  margin-top: 2px;
+}
+
+#tdf-rail .tdf-opt-clear-line [hidden] {
+  display: none;
+}
+
+#tdf-rail .tdf-opt-confirm button:hover,
+#tdf-rail .tdf-opt-sender .tdf-opt-small:hover {
   border-color: var(--tdf-link);
 }
 
-/* Hide messages by user: the stored senders. */
+/* Hide messages by user: the stored senders, then the small Hide button beside the select. The
+   label wraps the text and the select for their association, and lays out as if absent. */
+#tdf-rail .tdf-opt-sender-label {
+  display: contents;
+}
+
+#tdf-rail .tdf-opt-sender-label > span {
+  flex: 1;
+  min-width: 0;
+}
+
 #tdf-rail .tdf-opt-sender select {
   min-width: 0;
-  max-width: 60%;
+  max-width: 50%;
+}
+
+#tdf-rail .tdf-opt-sender .tdf-opt-small {
+  flex: none;
+  margin-left: -6px;
+  padding: 3px 8px;
+  color: var(--tdf-fg);
+  background: var(--tdf-rail-chip-bg);
+  border: 1px solid var(--tdf-rail-chip-border);
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+}
+
+#tdf-rail .tdf-opt-sender .tdf-opt-small:focus-visible {
+  outline: 2px solid var(--tdf-link);
+  outline-offset: 1px;
 }
 
 /* The inline two-step confirm that replaces a deleting button until answered. */
@@ -215,7 +264,7 @@
 }
 
 #tdf-rail .tdf-opt-confirm button:disabled,
-#tdf-rail .tdf-opt-clear:disabled {
+#tdf-rail .tdf-opt-sender .tdf-opt-small:disabled {
   cursor: default;
   opacity: 0.5;
 }
