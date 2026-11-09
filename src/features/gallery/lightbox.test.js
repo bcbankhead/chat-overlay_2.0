@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
-import { FILMSTRIP_SLOTS, MESSAGE_BOX_ID, WHEEL_QUIET_MS, openLightbox } from './lightbox.js';
+import { FILMSTRIP_SLOTS, MESSAGE_BOX_ID, THUMB_CELL_PX, WHEEL_QUIET_MS, openLightbox } from './lightbox.js';
 import { LOUPE_SIZE } from './loupe.js';
 
 /** @param {string} id @param {string | null} [thumb] */
@@ -14,11 +14,23 @@ const item = (id, thumb = `thumb-${id}`) => ({
 });
 
 /**
- * @param {{ count?: number, index?: number, ids?: string[], zoomThrows?: boolean, host?: boolean, coarse?: boolean, known?: [string, import('./roster.js').MediaKind][] }} [opts]
+ * @param {{ count?: number, index?: number, ids?: string[], zoomThrows?: boolean, host?: boolean, coarse?: boolean, known?: [string, import('./roster.js').MediaKind][], dpr?: number, canvas?: 'ok' | 'no-context' | 'throws', sharedThumb?: string }} [opts]
  */
-function setup({ count = 5, index = 2, ids, zoomThrows = false, host = true, coarse = false, known = [] } = {}) {
+function setup({ count = 5, index = 2, ids, zoomThrows = false, host = true, coarse = false, known = [], dpr, canvas = 'ok', sharedThumb } = {}) {
   const clock = { t: 1000 };
   const win = /** @type {any} */ (new Window({ url: 'https://chat.example.com/forum/chat/index.php' }));
+  if (dpr !== undefined) Object.defineProperty(win, 'devicePixelRatio', { value: dpr, configurable: true });
+  /** @type {unknown[][]} */
+  const draws = [];
+  win.HTMLCanvasElement.prototype.getContext = function () {
+    if (canvas === 'no-context') return null;
+    return {
+      drawImage: (/** @type {unknown[]} */ ...args) => {
+        if (canvas === 'throws') throw new Error('draw broke');
+        draws.push(args);
+      },
+    };
+  };
   if (coarse) win.matchMedia = (/** @type {string} */ q) => ({ media: q, matches: false });
   const doc = win.document;
   doc.body.innerHTML = '<div id="tdf-chat"><div class="tdf-list"></div></div><button id="opener">open</button>';
@@ -32,7 +44,7 @@ function setup({ count = 5, index = 2, ids, zoomThrows = false, host = true, coa
   const errors = [];
   /** @type {Map<string, import('./roster.js').MediaKind>} */
   const kinds = new Map(known);
-  const items = (ids ?? Array.from({ length: count }, (_, i) => String(i))).map((id) => item(id));
+  const items = (ids ?? Array.from({ length: count }, (_, i) => String(i))).map((id) => item(id, sharedThumb));
   const box = openLightbox({
     doc,
     win,
@@ -62,7 +74,7 @@ function setup({ count = 5, index = 2, ids, zoomThrows = false, host = true, coa
     target.dispatchEvent(event);
     return event;
   };
-  return { win, doc, chat, opener, box, $, stage, media, thumbs, current, key, wheel, clock, zoomed, errors, kinds };
+  return { win, doc, chat, opener, box, $, stage, media, thumbs, current, key, wheel, clock, zoomed, errors, kinds, draws };
 }
 
 test('the popover is a fixed layer kept to the chat\'s rect, outside #tdf-chat so the rail cannot cover it', () => {
@@ -307,6 +319,127 @@ test('a filmstrip thumbnail that fails falls back to the glyph for its kind', ()
   /** @type {HTMLImageElement} */ (second.querySelector('img')).dispatchEvent(new s.win.Event('error'));
   assert.equal(second.querySelector('img'), null);
   assert.ok(second.querySelector('.tdf-lb-glyph path[d^="M8 5.5"]'), 'a share known as a video gets the play glyph');
+});
+
+/**
+ * Load a strip cell's image at the given natural size.
+ * @param {any} s @param {HTMLElement} cell @param {number} w @param {number} h
+ */
+function loadThumb(s, cell, w, h) {
+  const img = /** @type {HTMLImageElement} */ (cell.querySelector('img'));
+  Object.defineProperty(img, 'naturalWidth', { value: w, configurable: true });
+  Object.defineProperty(img, 'naturalHeight', { value: h, configurable: true });
+  img.dispatchEvent(new s.win.Event('load'));
+  return img;
+}
+
+test('a loaded filmstrip image is replaced by a centre-cropped snapshot canvas of the cell size', () => {
+  const s = setup();
+  const cell = s.thumbs()[0];
+  const img = loadThumb(s, cell, 300, 200);
+  assert.equal(cell.querySelector('img'), null, 'no live image is left in the cell');
+  const canvas = /** @type {HTMLCanvasElement} */ (cell.querySelector('canvas'));
+  assert.ok(canvas);
+  assert.equal(canvas.width, THUMB_CELL_PX);
+  assert.equal(canvas.height, THUMB_CELL_PX);
+  assert.deepEqual(s.draws, [[img, 50, 0, 200, 200, 0, 0, THUMB_CELL_PX, THUMB_CELL_PX]]);
+
+  const tall = s.thumbs()[1];
+  const tallImg = loadThumb(s, tall, 100, 400);
+  assert.deepEqual(s.draws[1], [tallImg, 0, 150, 100, 100, 0, 0, THUMB_CELL_PX, THUMB_CELL_PX]);
+});
+
+test('the snapshot is drawn at the cell size times devicePixelRatio', () => {
+  const s = setup({ dpr: 2 });
+  const cell = s.thumbs()[0];
+  loadThumb(s, cell, 100, 100);
+  const canvas = /** @type {HTMLCanvasElement} */ (cell.querySelector('canvas'));
+  assert.equal(canvas.width, 112);
+  assert.equal(canvas.height, 112);
+});
+
+test('no 2D context, a throwing draw, or a zero-size image shows the media glyph and reports the cause once', () => {
+  for (const [mode, w, reason] of /** @type {const} */ ([
+    ['no-context', 100, /no 2D canvas context/],
+    ['throws', 100, /draw broke/],
+    ['ok', 0, /no intrinsic size \(0x100\)/],
+  ])) {
+    const label = `${mode} ${w}`;
+    const s = setup({ canvas: mode });
+    const cell = s.thumbs()[0];
+    loadThumb(s, cell, w, 100);
+    assert.equal(cell.querySelector('img'), null, label);
+    assert.equal(cell.querySelector('canvas'), null, label);
+    assert.ok(cell.querySelector('.tdf-lb-glyph rect'), `${label}: the media glyph`);
+    assert.equal(s.errors.length, 1, `${label}: reported`);
+    assert.match(String(/** @type {Error} */ (s.errors[0]).message), reason, label);
+    assert.equal(s.draws.length, 0, `${label}: nothing drawn`);
+    // A step re-renders the strip from the cached failure: still the glyph, no new image, no new report.
+    s.key('ArrowRight');
+    const again = /** @type {HTMLElement} */ (s.thumbs().find((t) => t.dataset.index === '0'));
+    assert.equal(again.querySelector('img'), null, label);
+    assert.ok(again.querySelector('.tdf-lb-glyph rect'), `${label}: the cached glyph`);
+    assert.equal(s.errors.length, 1, `${label}: reported once`);
+  }
+});
+
+test('two items that share one thumbnail URL each keep their own snapshot canvas', () => {
+  const s = setup({ count: 2, index: 0, sharedThumb: 'thumb-same' });
+  const [a, b] = s.thumbs();
+  loadThumb(s, a, 100, 100);
+  loadThumb(s, b, 100, 100);
+  const ca = a.querySelector('canvas');
+  const cb = b.querySelector('canvas');
+  assert.ok(ca && cb && ca !== cb, 'each cell has its own canvas');
+  s.key('ArrowRight');
+  const [a2, b2] = s.thumbs();
+  assert.equal(a2.querySelector('canvas'), ca, 'the first cell keeps its canvas after a step');
+  assert.equal(b2.querySelector('canvas'), cb, 'the second cell keeps its canvas after a step');
+});
+
+test('a step reuses each cached snapshot canvas and creates no new image for it', () => {
+  const s = setup();
+  const canvas = (() => {
+    const cell = s.thumbs()[0];
+    loadThumb(s, cell, 100, 100);
+    return cell.querySelector('canvas');
+  })();
+  s.key('ArrowRight');
+  const cell = /** @type {HTMLElement} */ (s.thumbs().find((t) => t.dataset.index === '0'));
+  assert.ok(canvas && cell.querySelector('canvas') === canvas, 'the same canvas node');
+  assert.equal(cell.querySelector('img'), null, 'no refetch');
+  assert.equal(s.draws.length, 1, 'no re-decode');
+  assert.ok(s.thumbs()[1].querySelector('img'), 'an unloaded cell still gets its image');
+});
+
+test('a load that resolves after its cell was replaced fills the cache and leaves the old cell alone', () => {
+  const s = setup();
+  const stale = s.thumbs()[0];
+  const img = /** @type {HTMLImageElement} */ (stale.querySelector('img'));
+  s.key('ArrowRight');
+  Object.defineProperty(img, 'naturalWidth', { value: 100, configurable: true });
+  Object.defineProperty(img, 'naturalHeight', { value: 100, configurable: true });
+  img.dispatchEvent(new s.win.Event('load'));
+  assert.ok(!stale.querySelector('canvas'), 'the detached cell is not touched');
+  s.key('ArrowLeft');
+  const cell = /** @type {HTMLElement} */ (s.thumbs().find((t) => t.dataset.index === '0'));
+  assert.ok(cell.querySelector('canvas'), 'the next render uses the cached snapshot');
+  assert.equal(cell.querySelector('img'), null);
+});
+
+test('filmstrip images load lazily', () => {
+  const s = setup();
+  for (const cell of s.thumbs()) {
+    assert.equal(/** @type {HTMLImageElement} */ (cell.querySelector('img')).getAttribute('loading'), 'lazy');
+  }
+});
+
+test('THUMB_CELL_PX matches the .tdf-lb-thumb width and height, and the canvas fills the cell', () => {
+  const css = readFileSync(new URL('./gallery.css', import.meta.url), 'utf8');
+  const rule = /\.tdf-lb-thumb \{[^}]*\}/.exec(css)?.[0] ?? '';
+  assert.match(rule, new RegExp(`(^|[^-])width: ${THUMB_CELL_PX}px;`, 'm'));
+  assert.match(rule, new RegExp(`(^|[^-])height: ${THUMB_CELL_PX}px;`, 'm'));
+  assert.match(css, /\.tdf-lb-thumb canvas \{[^}]*object-fit: cover/);
 });
 
 test('a host with a zero-size rect falls back to filling the window', () => {

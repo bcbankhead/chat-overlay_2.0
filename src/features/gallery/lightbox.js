@@ -20,12 +20,45 @@
 // Wheel (TDF-0077, TDF-0081): the wheel anywhere on the popover steps between items, down to the
 // next and up to the previous, one step per gesture: a step, then nothing until WHEEL_QUIET_MS pass with no
 // wheel event. Sideways input over the filmstrip scrolls it natively; the page behind never scrolls.
+//
+// Filmstrip snapshots (TDF-0083): each strip image, once loaded, is drawn once onto a canvas the
+// size of its cell and the canvas replaces it, so an animated GIF or WebP never animates on the
+// strip; only the stage animates. The canvas is kept per item for the open's lifetime and moved
+// into the next render's cell, so a step neither refetches nor shows a live image again. A snapshot
+// that cannot be drawn is reported once and the cell shows the media glyph.
 
 import { loupeFrame } from './loupe.js';
 import { dedupe, filmstripWindow, step } from './roster.js';
 
 /** Filmstrip thumbnails rendered at most; the strip scrolls within them. */
 export const FILMSTRIP_SLOTS = 41;
+
+/** A filmstrip cell's CSS side in px; mirrors `.tdf-lb-thumb`'s width and height in gallery.css. */
+export const THUMB_CELL_PX = 56;
+
+/**
+ * Draws a loaded image's current (first) frame onto a square canvas of `side` px, centre-cropped as
+ * `object-fit: cover` crops it. A cross-origin image taints the canvas, which still displays;
+ * nothing reads it back.
+ * @param {HTMLImageElement} img
+ * @param {number} side
+ * @returns {HTMLCanvasElement}
+ * @throws {Error} when the image has no intrinsic size (a zero-size source draws nothing and
+ *   would leave a blank cell), when no 2D context is available, or when the draw itself throws
+ */
+export function snapshot(img, side) {
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  if (!w || !h) throw new Error(`Filmstrip snapshot: image has no intrinsic size (${w}x${h})`);
+  const canvas = img.ownerDocument.createElement('canvas');
+  canvas.width = side;
+  canvas.height = side;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Filmstrip snapshot: no 2D canvas context');
+  const crop = Math.min(w, h);
+  ctx.drawImage(img, (w - crop) / 2, (h - crop) / 2, crop, crop, 0, 0, side, side);
+  return canvas;
+}
 
 const LAYER = 'tdf-lb';
 
@@ -308,8 +341,16 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
     cell.replaceChildren(g);
   };
 
+  /**
+   * Snapshots per item id for this open; 'failed' when the canvas could not be drawn. Keyed by id,
+   * not thumbnail URL: one canvas node fills one cell, and two shares of one image share a URL.
+   * @type {Map<string, HTMLCanvasElement | 'failed'>}
+   */
+  const snapshots = new Map();
+
   const renderStrip = () => {
     const { start: from, end } = filmstripWindow(index, items.length, FILMSTRIP_SLOTS);
+    const side = Math.round(THUMB_CELL_PX * (win.devicePixelRatio || 1));
     /** @type {HTMLElement | null} */
     let current = null;
     const cells = [];
@@ -321,14 +362,40 @@ export function openLightbox({ doc, win, host, items: given, index: start, zoom,
       cell.setAttribute('aria-label', `Show item ${i + 1} of ${items.length}`);
       const isVideo = kindOf(item) === 'video';
       if (isVideo) cell.classList.add('tdf-lb-thumb-video');
-      if (item.thumb && !isVideo) {
+      const key = item.id;
+      const cached = item.thumb ? snapshots.get(key) : undefined;
+      if (item.thumb && !isVideo && cached && cached !== 'failed') cell.appendChild(cached);
+      else if (item.thumb && !isVideo && cached === undefined) {
+        const url = item.thumb;
         const img = el('img', '');
         img.alt = '';
         img.decoding = 'async';
-        img.addEventListener('error', () => glyph(cell, kindOf(item) === 'video' ? ICONS.play : ICONS.media), {
-          once: true,
-        });
-        img.src = item.thumb;
+        img.loading = 'lazy';
+        const onError = () => glyph(cell, kindOf(item) === 'video' ? ICONS.play : ICONS.media);
+        img.addEventListener('error', onError, { once: true });
+        img.addEventListener(
+          'load',
+          () => {
+            img.removeEventListener('error', onError);
+            let entry = snapshots.get(key);
+            if (!entry) {
+              try {
+                entry = snapshot(img, side);
+              } catch (err) {
+                // Reported once per item: the failure is cached, so later renders show the glyph silently.
+                report(err);
+                entry = 'failed';
+              }
+              snapshots.set(key, entry);
+            }
+            // A cell a later render replaced keeps nothing; the cache still serves the next one.
+            if (!cell.isConnected || img.parentNode !== cell) return;
+            if (entry === 'failed') glyph(cell, ICONS.media);
+            else cell.replaceChildren(entry);
+          },
+          { once: true },
+        );
+        img.src = url;
         cell.appendChild(img);
       } else glyph(cell, isVideo ? ICONS.play : ICONS.media);
       if (i === index) {
