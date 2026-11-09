@@ -5,7 +5,7 @@
 import { safeDecodeURIComponent } from '../../core/parse.js';
 
 // The Chat history rules live in core, which replay reads too; one copy.
-export { DAY_MS, HISTORY_ON, storageCutoff } from '../../core/retention.js';
+export { HISTORY_ON, storageLines } from '../../core/retention.js';
 
 export const MB_BYTES = 1_048_576;
 

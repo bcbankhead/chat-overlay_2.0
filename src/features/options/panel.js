@@ -1,17 +1,17 @@
 // The Settings flyout (UI design 2026-10-27, Flyouts → Settings), in two sections (TDF-0039).
 // Chat: Use Chat 2.0 (TDF-0037), Auto-scroll over the engine's #autoScrollID, Collapse server
-// history automatically (TDF-0033.3), Chat history (last HISTORY_ON, TDF-0033.5) with its
-// Clear: Buffer | History line (TDF-0081), and Hide messages by user (TDF-0010, TDF-0044), a
+// history automatically (TDF-0033.3), Chat buffer (last HISTORY_ON, TDF-0033.5, TDF-0084) with
+// its Clear chat buffer button, and Hide messages by user (TDF-0010, TDF-0044), a
 // Hide / Unhide toggle over the hiddenSenders setting that deletes nothing (TDF-0082), then
 // a User options group over the engine's own myOptions checkboxes (TDF-0080). Media and Gallery
 // Settings, one flat list: Include my images (TDF-0009.13), Store images offline,
 // Compress stored images (TDF-0036), Use media quickview (TDF-0035) and Gallery size limit (MB).
-// Every boolean setting is a checkbox drawn as a switch (tdf-opt-switch). Chat history (last
-// HISTORY_ON) is one too: on replays the newest HISTORY_ON lines on reload, and turning it off
-// deletes every saved line at once. A hint under the gallery field gives the usage, says the
+// Every boolean setting is a checkbox drawn as a switch (tdf-opt-switch). Chat buffer (last
+// HISTORY_ON) is one too, with no hint: on replays the newest HISTORY_ON lines on reload, and
+// turning it off deletes every saved line at once. A hint under the gallery field gives the usage, says the
 // oldest over-limit images are purged when the limit is set and on reload (favorites kept), and
 // what the typed value would delete; the setting is written, and the deletion runs, only when the
-// value is committed (change: Enter or leaving the field). The two Clear actions ask first, inline.
+// value is committed (change: Enter or leaving the field). Clear chat buffer asks first, inline.
 // The rail gives the flyout body its scrollbar.
 
 import { describeError } from '../../core/errors.js';
@@ -200,17 +200,19 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     return { input, hint };
   };
 
-  // Chat history (last HISTORY_ON, TDF-0033.5): a switch over `historyCount`, HISTORY_ON on and
-  // 0 off. The label's count derives from the constant, so it cannot disagree with the cap.
+  // Chat buffer (last HISTORY_ON, TDF-0033.5, TDF-0084): a switch over `historyCount`, HISTORY_ON
+  // on and 0 off. The label's count derives from the constant, so it cannot disagree with replay.
+  // It has no hint of its own (TDF-0084): the hint below it stays empty, and so hidden, unless a
+  // read or write fails; the Clear chat buffer button's tooltip carries the state.
   const historyRow = el('label', 'tdf-opt-row');
   const historyBox = el('input', 'tdf-opt-switch');
   historyBox.type = 'checkbox';
-  historyRow.append(el('span', '', `Chat history (last ${HISTORY_ON})`), historyBox);
+  historyRow.append(el('span', '', `Chat buffer (last ${HISTORY_ON})`), historyBox);
   const historyHint = el('div', 'tdf-opt-hint');
   historyHint.setAttribute('aria-live', 'polite');
   root.append(historyRow, historyHint);
   const history = { box: historyBox, hint: historyHint };
-  /** Whether Chat history is off, once the setting is read or chosen; false until then. */
+  /** Whether Chat buffer is off, once the setting is read or chosen; false until then. */
   let historyOff = false;
 
   /**
@@ -304,16 +306,23 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     return button;
   };
 
-  // Clear: Buffer | History (TDF-0081): one hint-sized line under the Chat history switch. Either
-  // action swaps the line for its question and Confirm | Cancel, then the line reads Clear: Buffer
-  // | History again; one report hint below serves both.
-  const clearLine = el('div', 'tdf-opt-hint tdf-opt-clear-line');
+  // Clear chat buffer (TDF-0084): one standalone button under the Chat buffer switch, as before
+  // TDF-0081. It swaps for its question and Confirm | Cancel, hint-sized, then returns; the report
+  // hint below serves it. Its tooltip follows the switch. The History action (TDF-0010) is still
+  // built and wired below but never placed, so it is out of reach until a UI entry returns.
+  const clearLine = el('div', 'tdf-opt-clear-line');
   const clearIdle = el('span', 'tdf-opt-clear-idle');
-  const bufferButton = linkButton('Buffer');
-  bufferButton.title = 'Empties the message view. Saved history is kept and returns on reload.';
+  const bufferButton = el('button', 'tdf-opt-clear', 'Clear chat buffer');
+  bufferButton.type = 'button';
   const historyButton = linkButton('History');
-  clearIdle.append(el('span', '', 'Clear: '), bufferButton, el('span', '', ' | '), historyButton);
-  const clearAsk = el('span', 'tdf-opt-clear-ask');
+  clearIdle.append(bufferButton);
+  /** Record whether Chat buffer is off, and say so in the button's tooltip. @param {boolean} off */
+  const setHistoryOff = (off) => {
+    historyOff = off;
+    bufferButton.title = off ? 'Clears the view, no history saved' : 'Clears the view, lines return on reload';
+  };
+  setHistoryOff(false);
+  const clearAsk = el('span', 'tdf-opt-hint tdf-opt-clear-ask');
   clearAsk.hidden = true;
   const clearQuestion = el('span', '');
   const clearYes = linkButton('Confirm');
@@ -379,7 +388,7 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   clearYes.addEventListener('click', () => clearActive?.confirm());
   clearNo.addEventListener('click', () => clearActive?.cancel());
 
-  // Buffer: the engine's clrScreen() for its hidden view, then the overlay's own clear through
+  // Clear chat buffer: the engine's clrScreen() for its hidden view, then the overlay's own clear through
   // core, so the view's index empties with its rows. Nothing to count and nothing to report unless
   // clrScreen throws; the overlay's view clears either way.
   clearAction(bufferButton, {
@@ -397,13 +406,13 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     failed: (err) => `Could not clear the view: ${err}`,
   });
 
-  // History: every stored line, in every room. The gallery is not touched.
+  // History: every stored line, in every room. The gallery is not touched. Unplaced (TDF-0084).
   clearAction(historyButton, {
     count: () => limits.countAll(),
     // Off, the lines on screen were never saved, so this cannot remove them (TDF-0054).
     none: () =>
       historyOff
-        ? 'Chat history is off, so nothing is saved. Buffer empties the lines on screen.'
+        ? 'Chat buffer is off, so nothing is saved. Clear chat buffer empties the lines on screen.'
         : 'No saved history.',
     question: (n) => `Delete ${plural(n, 'message')}?`,
     run: () => limits.clearHistory(),
@@ -649,13 +658,8 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   /** @param {HTMLInputElement} input */
   const valueOf = (input) => (input.validity?.badInput ? null : input.value);
 
-  /**
-   * What the Chat history switch does in its state. Async to match the other hint readers.
-   * @param {boolean} on
-   */
-  const historyText = async (on) => ({
-    text: on ? `Replays the newest ${HISTORY_ON} lines on reload.` : 'No chat history is kept or replayed.',
-  });
+  /** The Chat buffer switch's settled hint: empty, so hidden (TDF-0084). */
+  const historyText = async () => ({ text: '' });
 
   /** @param {string | null} input */
   const galleryText = async (input) => {
@@ -696,14 +700,14 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
   gallery.input.addEventListener('input', () => galleryHint(valueOf(gallery.input)));
 
   // Ticking writes HISTORY_ON. Unticking writes 0, then deletes every saved line, announced so the open
-  // view and tags follow, as Clear: History does. A refused write shows the stored value
+  // view and tags follow, as Clear history does. A refused write shows the stored value
   // again. Only the latest toggle reverts or clears, so a quick off-then-on never deletes after
   // it, and an earlier refusal never overrides a later choice.
   let historySeq = 0;
   history.box.addEventListener('change', () => {
     const on = history.box.checked;
     const mine = ++historySeq;
-    historyOff = !on;
+    setHistoryOff(!on);
     commit(
       showHistory,
       async () => {
@@ -717,7 +721,7 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
             );
             if (!closed && mine === historySeq) {
               history.box.checked = stored;
-              historyOff = !stored;
+              setHistoryOff(!stored);
             }
           }
           throw err;
@@ -726,7 +730,7 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
         await limits.clearHistory();
         refreshSenders();
       },
-      () => historyText(on),
+      historyText,
     );
   });
 
@@ -750,9 +754,9 @@ export function renderSettings(container, { doc, win, settings, limits, loadFail
     ([count, mb]) => {
       if (closed) return;
       history.box.checked = count !== 0;
-      historyOff = count === 0;
+      setHistoryOff(count === 0);
       gallery.input.value = mb === null ? '' : String(mb);
-      showHistory(() => historyText(count !== 0));
+      showHistory(historyText);
       galleryHint(gallery.input.value);
     },
     (err) => {

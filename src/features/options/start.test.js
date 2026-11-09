@@ -8,7 +8,6 @@ import { openDb } from '../../core/db.js';
 import { onDeleted } from '../../core/events.js';
 import { createSettings } from '../../core/settings.js';
 import { listPanels } from '../rail/api.js';
-import { DAY_MS } from './selectors.js';
 import { startSettings } from './start.js';
 
 const settle = () => new Promise((r) => setTimeout(r, 50));
@@ -22,7 +21,7 @@ async function until(/** @type {() => Promise<boolean> | boolean} */ check) {
   assert.fail('condition never held');
 }
 
-/** A database holding one old and one recent line, and the given settings. */
+/** A database holding one room of 26 lines, the oldest `old`, and the given settings. */
 async function seeded(values = {}) {
   const indexedDB = new IDBFactory();
   const db = await openDb({ indexedDB });
@@ -32,8 +31,10 @@ async function seeded(values = {}) {
   const base = { roomID: '1', user: 'a', text: 'x' };
   await new Promise((resolve, reject) => {
     const t = db.transaction('messages', 'readwrite');
-    t.objectStore('messages').put({ ...base, id: 'old', mTime: '1', receivedAt: now - 40 * DAY_MS });
-    t.objectStore('messages').put({ ...base, id: 'new', mTime: '2', receivedAt: now - 1 });
+    t.objectStore('messages').put({ ...base, id: 'old', mTime: '1', receivedAt: now, orderKey: 1 });
+    for (let i = 0; i < 25; i++) {
+      t.objectStore('messages').put({ ...base, id: `n${String(i).padStart(2, '0')}`, mTime: String(10 + i), receivedAt: now, orderKey: 10 + i });
+    }
     t.oncomplete = resolve;
     t.onerror = () => reject(t.error);
   });
@@ -72,12 +73,12 @@ test('start registers the Settings gear at the end of the icon row and opens the
   assert.equal(body.querySelector('.tdf-opt-title')?.textContent, 'Settings');
   // Unbuilt, the version is 'dev'; the build defines the real one.
   assert.equal(body.querySelector('.tdf-opt-version-num')?.textContent, 'vdev');
-  const history = [...body.querySelectorAll('label.tdf-opt-row')].find((r) => r.textContent === 'Chat history (last 25)');
+  const history = [...body.querySelectorAll('label.tdf-opt-row')].find((r) => r.textContent === 'Chat buffer (last 25)');
   assert.equal(/** @type {HTMLInputElement} */ (history?.querySelector('input')).checked, true, 'on by default');
   if (typeof cleanup === 'function') cleanup();
 });
 
-test('the fixed 30-day storage age runs once the message view exists, deleting older lines', async (t) => {
+test('the load-time limits leave stored history to bootstrap, which bounds it before replay (TDF-0057)', async (t) => {
   const win = /** @type {any} */ (new Window());
   const doc = win.document;
   const indexedDB = await seeded();
@@ -85,41 +86,41 @@ test('the fixed 30-day storage age runs once the message view exists, deleting o
   const deleted = [];
   t.after(onDeleted((ids) => deleted.push(ids)));
   startSettings({ win, doc, css: '', indexedDB });
-  await settle();
-  // Waiting for the view: nothing deleted yet.
-  assert.deepEqual(await storedIds(indexedDB), ['new', 'old']);
   doc.body.innerHTML = '<div id="tdf-chat"><div class="tdf-list"></div></div>';
-  await until(async () => (await storedIds(indexedDB)).length === 1);
-  assert.deepEqual(await storedIds(indexedDB), ['new']);
-  // Announced for the view and tagging to follow.
-  await until(() => deleted.length === 1);
-  assert.deepEqual(deleted, [['old']]);
+  await settle();
+  await settle();
+  // A prune here would run after replay and could remove rows already shown.
+  assert.equal((await storedIds(indexedDB)).length, 26);
+  assert.deepEqual(deleted, []);
 });
 
 test('a load-time limit that fails is shown at the top of the flyout', async () => {
   const win = /** @type {any} */ (new Window());
   const doc = win.document;
   doc.body.innerHTML = '<div id="tdf-chat"></div>';
-  // A clock no cutoff can be made from: the key range refuses NaN.
-  const indexedDB = await seeded();
+  // The gallery limit's read refuses to run.
+  const indexedDB = await seeded({ galleryLimitMB: 1 });
+  const store = /** @type {any} */ (globalThis).IDBObjectStore.prototype;
+  const getAll = store.getAll;
   const logged = console.error;
-  const clock = Date.now;
   /** @type {unknown[][]} */
   const errors = [];
   console.error = (...args) => errors.push(args);
-  Date.now = () => NaN;
+  store.getAll = () => {
+    throw new Error('read refused');
+  };
   try {
     startSettings({ win, doc, css: '', indexedDB });
     await until(() => errors.length > 0);
   } finally {
     console.error = logged;
-    Date.now = clock;
+    store.getAll = getAll;
   }
   const body = doc.createElement('div');
   settingsPanel()?.render(body);
   await settle();
   const warn = body.querySelector('.tdf-opt-title + .tdf-opt-hint.tdf-warn');
-  assert.match(String(warn?.textContent), /^The storage limits did not run on load: /);
+  assert.match(String(warn?.textContent), /^The storage limits did not run on load: .*read refused/);
   assert.doesNotMatch(String(warn?.textContent), /IDBKeyRange is not defined/);
 });
 

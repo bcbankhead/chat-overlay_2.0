@@ -24,7 +24,7 @@ function mediaSwitches(/** @type {HTMLElement} */ container) {
   return boxes;
 }
 const AUTOSCROLL = 'input.tdf-opt-autoscroll';
-const HISTORY = 'Chat history (last 25)';
+const HISTORY = 'Chat buffer (last 25)';
 
 /**
  * A settings stand-in over a plain object; `fail` makes every read reject, `failWrite` every
@@ -189,12 +189,12 @@ function setup({ settings = stubSettings(), limits = stubLimits(), engine = true
     limits: /** @type {any} */ (limits),
     ...(loadFailure ? { loadFailure } : {}),
   });
-  // The Chat history switch (Chat, TDF-0033.5) precedes the gallery limit (Media and Gallery
+  // The Chat buffer switch (Chat, TDF-0033.5) precedes the gallery limit (Media and Gallery
   // Settings) in the DOM (TDF-0044); the gallery limit is the one number field left.
   const history = boxFor(container, HISTORY);
   const gallery = /** @type {HTMLInputElement} */ (container.querySelector('.tdf-opt-field input'));
   const hints = () => [history, gallery].map((input) => input.closest('label')?.nextElementSibling?.textContent);
-  /** Tick or untick Chat history, as the member does. @param {boolean} on */
+  /** Tick or untick Chat buffer, as the member does. @param {boolean} on */
   const toggle = (on) => {
     history.checked = on;
     history.dispatchEvent(new win.Event('change'));
@@ -207,12 +207,10 @@ function setup({ settings = stubSettings(), limits = stubLimits(), engine = true
   return { win, doc, container, cleanup, history, gallery, hints, type, toggle, settings, limits };
 }
 
-// TDF-0033.5, TDF-0056: Chat history (last 25), a switch over historyCount.
+// TDF-0033.5, TDF-0056, TDF-0084: Chat buffer (last 25), a switch over historyCount, with no
+// hint: the one under it stays empty unless a read or write fails.
 
-const ON_HINT = 'Replays the newest 25 lines on reload.';
-const OFF_HINT = 'No chat history is kept or replayed.';
-
-test('Chat history is a switch, on, replaying the newest 25 with no deletion count, whatever is stored', async () => {
+test('Chat buffer is a switch, on, with no hint and no deletion count, whatever is stored', async () => {
   const { history, gallery, hints } = setup({
     settings: stubSettings({ historyCount: 25, galleryLimitMB: 50 }),
     limits: stubLimits({ stored: { a: 2, b: 1 } }),
@@ -223,19 +221,25 @@ test('Chat history is a switch, on, replaying the newest 25 with no deletion cou
   assert.equal(history.checked, true);
   assert.equal(gallery.value, '50');
   assert.deepEqual(hints(), [
-    ON_HINT,
+    '',
     '3.0 MB used; favorites kept; oldest over-limit purged when set and on reload.',
   ]);
 });
 
-test('Chat history stored off shows the switch unticked: nothing is kept', async () => {
+test('Chat buffer stored off shows the switch unticked, with no hint', async () => {
   const { history, hints } = setup({ settings: stubSettings({ historyCount: 0 }), limits: stubLimits({ stored: { a: 2 } }) });
   await settle();
   assert.equal(history.checked, false);
-  assert.equal(hints()[0], OFF_HINT);
+  assert.equal(hints()[0], '');
 });
 
-test('a settings read that fails is shown under both the Chat history switch and the gallery field', async () => {
+test('the former hint strings are gone from the panel source (TDF-0084)', () => {
+  const source = readFileSync(new URL('./panel.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /Replays the newest/);
+  assert.doesNotMatch(source, /No chat history is kept or replayed/);
+});
+
+test('a settings read that fails is shown under both the Chat buffer switch and the gallery field', async () => {
   const { history, gallery, hints } = setup({ settings: stubSettings({}, { fail: true }) });
   await settle();
   // The rows sit in different sections (TDF-0044), so each must say why it is empty.
@@ -245,7 +249,7 @@ test('a settings read that fails is shown under both the Chat history switch and
   }
 });
 
-test('unticking Chat history writes 0, then deletes every saved line, and says nothing is kept', async () => {
+test('unticking Chat buffer writes 0, then deletes every saved line, and shows no hint', async () => {
   const limits = stubLimits({ stored: { a: 2 } });
   const { hints, toggle, settings } = setup({ limits });
   await settle();
@@ -255,10 +259,10 @@ test('unticking Chat history writes 0, then deletes every saved line, and says n
   assert.deepEqual(settings.writes, [['historyCount', 0]]);
   assert.deepEqual(deletions(limits), [['clearHistory']]);
   assert.ok(!limits.calls.some(([name]) => name === 'pruneHistory'));
-  assert.equal(hints()[0], OFF_HINT);
+  assert.equal(hints()[0], '');
 });
 
-test('ticking Chat history writes 25 and deletes nothing', async () => {
+test('ticking Chat buffer writes 25 and deletes nothing', async () => {
   const limits = stubLimits({ stored: { a: 2 } });
   const { hints, toggle, settings } = setup({ settings: stubSettings({ historyCount: 0 }), limits });
   await settle();
@@ -266,10 +270,10 @@ test('ticking Chat history writes 25 and deletes nothing', async () => {
   await settle();
   assert.deepEqual(settings.writes, [['historyCount', 25]]);
   assert.deepEqual(deletions(limits), []);
-  assert.equal(hints()[0], ON_HINT);
+  assert.equal(hints()[0], '');
 });
 
-test('a refused Chat history write puts the switch back, deletes nothing and says so', async () => {
+test('a refused Chat buffer write puts the switch back, deletes nothing and says so', async () => {
   const limits = stubLimits({ stored: { a: 2 } });
   const { history, hints, toggle } = setup({ settings: stubSettings({}, { failWrite: true }), limits });
   await settle();
@@ -545,17 +549,16 @@ const button = (container, text) =>
   /** @type {HTMLButtonElement} */ ([...container.querySelectorAll('button')].find((b) => b.textContent === text));
 
 /**
- * The Clear: Buffer | History line (TDF-0081): one action's link as `clear` (History by default),
- * the idle and asking halves of the line, its report hint, and Confirm and Cancel.
+ * The Clear chat buffer control (TDF-0084): the button as `clear`, the idle and asking halves of
+ * its line, its report hint, and Confirm and Cancel.
  * @param {HTMLElement} container
- * @param {'Buffer' | 'History'} [which]
  */
-const clearControl = (container, which = 'History') => {
+const clearControl = (container) => {
   const line = /** @type {HTMLElement} */ (container.querySelector('.tdf-opt-clear-line'));
   const idle = /** @type {HTMLElement} */ (line.querySelector('.tdf-opt-clear-idle'));
   const ask = /** @type {HTMLElement} */ (line.querySelector('.tdf-opt-clear-ask'));
   const hint = /** @type {HTMLElement} */ (line.nextElementSibling);
-  return { line, idle, clear: button(idle, which), ask, hint, yes: button(ask, 'Confirm'), no: button(ask, 'Cancel') };
+  return { line, idle, clear: button(idle, 'Clear chat buffer'), ask, hint, yes: button(ask, 'Confirm'), no: button(ask, 'Cancel') };
 };
 
 /**
@@ -584,12 +587,12 @@ const choose = (/** @type {HTMLSelectElement} */ select, /** @type {string} */ u
   select.dispatchEvent(new (/** @type {any} */ (select.ownerDocument.defaultView)).Event('change'));
 };
 
-test('the Clear line and Hide messages by user sit after the Chat history switch and its hint', () => {
+test('Clear chat buffer and Hide messages by user sit after the Chat buffer switch and its hint', () => {
   const { container } = setup();
   const { line } = clearControl(container);
   const historyHint = /** @type {HTMLElement} */ (line.previousElementSibling);
   assert.ok(historyHint.classList.contains('tdf-opt-hint'));
-  assert.match(String(historyHint.previousElementSibling?.textContent), /Chat history/);
+  assert.match(String(historyHint.previousElementSibling?.textContent), /Chat buffer/);
   const { row, hint } = senderControl(container);
   assert.ok(clearControl(container).hint.nextElementSibling === row, 'Hide messages by user follows the Clear report hint');
   assert.match(String(row.textContent), /^Hide messages by user/);
@@ -600,46 +603,77 @@ test('the Clear line and Hide messages by user sit after the Chat history switch
   assert.equal(next?.textContent, 'User options');
 });
 
-test('the Clear line reads Clear: Buffer | History in hint style, with Buffer and History as text buttons', () => {
+test('Clear chat buffer is one standalone button; the Clear: Buffer | History line and its History link are gone', () => {
   const { container } = setup();
-  const { line, idle, ask, hint } = clearControl(container);
-  assert.ok(line.classList.contains('tdf-opt-hint'));
+  const { line, idle, ask, hint, clear } = clearControl(container);
   assert.equal(line.tagName, 'DIV');
-  assert.equal(idle.textContent, 'Clear: Buffer | History');
+  assert.ok(!line.classList.contains('tdf-opt-hint'), 'the button is not hint-sized');
+  assert.deepEqual([...idle.children].map((c) => [c.tagName, c.textContent]), [['BUTTON', 'Clear chat buffer']]);
+  assert.equal(clear.type, 'button');
+  assert.ok(clear.classList.contains('tdf-opt-clear'));
   assert.equal(idle.hidden, false);
   assert.equal(ask.hidden, true);
-  for (const label of /** @type {const} */ (['Buffer', 'History'])) {
-    const link = clearControl(container, label).clear;
-    assert.equal(link.tagName, 'BUTTON');
-    assert.equal(link.type, 'button');
-    assert.ok(link.classList.contains('tdf-opt-link'));
-  }
-  // Clear: and | are plain text, not buttons.
-  assert.deepEqual([...idle.children].map((c) => [c.tagName, c.textContent]), [
-    ['SPAN', 'Clear: '],
-    ['BUTTON', 'Buffer'],
-    ['SPAN', ' | '],
-    ['BUTTON', 'History'],
-  ]);
+  assert.ok(ask.classList.contains('tdf-opt-hint'), 'its question is hint-sized');
+  assert.equal(button(container, 'History'), undefined, 'History is not placed');
+  assert.equal(button(container, 'Buffer'), undefined);
+  assert.equal(button(container, 'Clear history now'), undefined);
+  assert.doesNotMatch(String(container.textContent), /Clear: /);
   assert.equal(hint.getAttribute('aria-live'), 'polite');
   assert.equal(hint.textContent, '');
 });
 
-test('Buffer carries the old hint as its tooltip', () => {
-  const { container } = setup();
-  assert.equal(clearControl(container, 'Buffer').clear.title, 'Empties the message view. Saved history is kept and returns on reload.');
-  assert.equal(container.querySelector('.tdf-opt-clear'), null, 'the old full-width buttons are gone');
-  assert.equal(button(container, 'Clear chat buffer'), undefined);
-  assert.equal(button(container, 'Clear history now'), undefined);
+const TITLE_ON = 'Clears the view, lines return on reload';
+const TITLE_OFF = 'Clears the view, no history saved';
+
+test('the Clear chat buffer tooltip follows the stored Chat buffer setting', async () => {
+  const on = setup();
+  await settle();
+  assert.equal(clearControl(on.container).clear.title, TITLE_ON);
+  const off = setup({ settings: stubSettings({ historyCount: 0 }) });
+  await settle();
+  assert.equal(clearControl(off.container).clear.title, TITLE_OFF);
 });
 
-test('Buffer asks on the line; Confirm calls the engine clrScreen and clears the view through core, then the line returns', async (t) => {
-  const { win, doc, container } = setup();
+test('the Clear chat buffer tooltip follows the switch: off, then on again', async () => {
+  const { container, toggle } = setup({ limits: stubLimits() });
+  await settle();
+  const { clear } = clearControl(container);
+  toggle(false);
+  assert.equal(clear.title, TITLE_OFF);
+  await settle();
+  assert.equal(clear.title, TITLE_OFF);
+  toggle(true);
+  assert.equal(clear.title, TITLE_ON);
+});
+
+test('a refused Chat buffer untick puts the Clear chat buffer tooltip back to on', async () => {
+  const { container, toggle, history } = setup({ settings: stubSettings({}, { failWrite: true }) });
+  await settle();
+  const { clear } = clearControl(container);
+  toggle(false);
+  await settle();
+  assert.equal(history.checked, true);
+  assert.equal(clear.title, TITLE_ON);
+});
+
+test('a refused Chat buffer tick puts the Clear chat buffer tooltip back to off', async () => {
+  const { container, toggle, history } = setup({ settings: stubSettings({ historyCount: 0 }, { failWrite: true }) });
+  await settle();
+  const { clear } = clearControl(container);
+  toggle(true);
+  await settle();
+  assert.equal(history.checked, false);
+  assert.equal(clear.title, TITLE_OFF);
+});
+
+test('Clear chat buffer asks; Confirm calls the engine clrScreen and clears the view through core, deleting nothing stored', async (t) => {
+  const limits = stubLimits({ stored: { a: 2 } });
+  const { win, doc, container } = setup({ limits });
   let cleared = 0;
   win.clrScreen = () => cleared++;
   let viewCleared = 0;
   t.after(onClearView(() => viewCleared++));
-  const { clear, idle, ask, yes, hint } = clearControl(container, 'Buffer');
+  const { clear, idle, ask, yes, hint } = clearControl(container);
   clear.click();
   assert.equal(idle.hidden, true);
   assert.equal(ask.hidden, false);
@@ -654,28 +688,29 @@ test('Buffer asks on the line; Confirm calls the engine clrScreen and clears the
   assert.equal(doc.querySelectorAll('#tdf-chat .tdf-msg').length, 2);
   assert.equal(idle.hidden, false);
   assert.equal(ask.hidden, true);
-  assert.equal(idle.textContent, 'Clear: Buffer | History');
-  assert.equal(hint.textContent, '', 'Buffer reports nothing');
+  assert.equal(hint.textContent, '', 'Clear chat buffer reports nothing');
+  assert.deepEqual(deletions(limits), [], 'nothing stored is deleted');
+  assert.ok(!limits.calls.some(([name]) => name === 'countAll'), 'nothing stored is counted');
 });
 
-test('Buffer without the engine clrScreen still clears the view', async (t) => {
+test('Clear chat buffer without the engine clrScreen still clears the view', async (t) => {
   const { container } = setup();
   let viewCleared = 0;
   t.after(onClearView(() => viewCleared++));
-  const { clear, yes } = clearControl(container, 'Buffer');
+  const { clear, yes } = clearControl(container);
   clear.click();
   yes.click();
   await settle();
   assert.equal(viewCleared, 1);
 });
 
-test('Buffer Cancel clears nothing and restores the line', async (t) => {
+test('Clear chat buffer Cancel clears nothing and restores the button', async (t) => {
   const { win, container } = setup();
   let cleared = 0;
   win.clrScreen = () => cleared++;
   let viewCleared = 0;
   t.after(onClearView(() => viewCleared++));
-  const { clear, idle, ask, no } = clearControl(container, 'Buffer');
+  const { clear, idle, ask, no } = clearControl(container);
   clear.click();
   no.click();
   await settle();
@@ -686,11 +721,11 @@ test('Buffer Cancel clears nothing and restores the line', async (t) => {
   assert.equal(clear.disabled, false);
 });
 
-test('closing the flyout while Buffer asks restores the line and clears nothing', async (t) => {
+test('closing the flyout while Clear chat buffer asks restores the button and clears nothing', async (t) => {
   const { container, cleanup } = setup();
   let viewCleared = 0;
   t.after(onClearView(() => viewCleared++));
-  const { clear, idle, ask } = clearControl(container, 'Buffer');
+  const { clear, idle, ask } = clearControl(container);
   clear.click();
   cleanup();
   assert.equal(idle.hidden, false);
@@ -698,9 +733,9 @@ test('closing the flyout while Buffer asks restores the line and clears nothing'
   assert.equal(viewCleared, 0);
 });
 
-test('focus moves from a pressed Clear link to Confirm, and back when the line returns', async () => {
+test('focus moves from Clear chat buffer to Confirm, and back when the button returns', async () => {
   const { doc, container } = setup();
-  const { clear, yes, no } = clearControl(container, 'Buffer');
+  const { clear, yes, no } = clearControl(container);
   clear.focus();
   clear.click();
   assert.equal(doc.activeElement, yes);
@@ -708,14 +743,14 @@ test('focus moves from a pressed Clear link to Confirm, and back when the line r
   assert.equal(doc.activeElement, clear);
 });
 
-test('a Buffer whose engine clrScreen throws still clears the view and reports the failure', async (t) => {
+test('a Clear chat buffer whose engine clrScreen throws still clears the view and reports the failure', async (t) => {
   const { win, container } = setup();
   win.clrScreen = () => {
     throw new Error('boom');
   };
   let viewCleared = 0;
   t.after(onClearView(() => viewCleared++));
-  const { clear, idle, ask, yes, hint } = clearControl(container, 'Buffer');
+  const { clear, idle, ask, yes, hint } = clearControl(container);
   clear.click();
   yes.click();
   await settle();
@@ -724,184 +759,6 @@ test('a Buffer whose engine clrScreen throws still clears the view and reports t
   assert.ok(hint.classList.contains('tdf-warn'));
   assert.equal(idle.hidden, false);
   assert.equal(ask.hidden, true);
-});
-
-/**
- * A browser's focus fixup: a focused button that becomes disabled loses focus to body. happy-dom
- * neither does this nor blurs a disabled element, so the button is briefly re-enabled to blur it.
- * @param {HTMLButtonElement} b
- */
-const focusFixup = (b) => {
-  const disabled = b.disabled;
-  b.disabled = false;
-  b.blur();
-  b.disabled = disabled;
-};
-
-test('History moves focus to Confirm after counting, though the disabled link lost focus meanwhile', async () => {
-  /** @type {(n: number) => void} */
-  let counted = () => {};
-  const limits = stubLimits({ stored: { a: 2 } });
-  limits.countAll = () => new Promise((r) => (counted = r));
-  const { doc, container } = setup({ limits });
-  const { clear, yes } = clearControl(container);
-  clear.focus();
-  clear.click();
-  focusFixup(clear);
-  assert.ok(doc.activeElement !== clear, 'the fixup moved focus off History');
-  counted(2);
-  await settle();
-  assert.ok(doc.activeElement === yes, 'focus is on Confirm');
-});
-
-test('focus returns to History after an async Confirm, though the disabled Confirm lost focus meanwhile', async () => {
-  /** @type {(ids: string[]) => void} */
-  let cleared = () => {};
-  const limits = stubLimits({ stored: { a: 2 } });
-  limits.clearHistory = () => new Promise((r) => (cleared = r));
-  const { doc, container } = setup({ limits });
-  const { clear, yes } = clearControl(container);
-  clear.focus();
-  clear.click();
-  await settle();
-  assert.ok(doc.activeElement === yes, 'focus is on Confirm');
-  yes.click();
-  focusFixup(yes);
-  assert.ok(doc.activeElement !== yes, 'the fixup moved focus off Confirm');
-  cleared(['1', '2']);
-  await settle();
-  assert.ok(doc.activeElement === clear, 'focus is back on History');
-});
-
-test('History is disabled while it counts, and so is Buffer', async () => {
-  /** @type {(n: number) => void} */
-  let counted = () => {};
-  const limits = stubLimits({ stored: { a: 2 } });
-  limits.countAll = () => new Promise((r) => (counted = r));
-  const { container } = setup({ limits });
-  const { clear, ask } = clearControl(container);
-  const buffer = clearControl(container, 'Buffer').clear;
-  clear.click();
-  assert.equal(clear.disabled, true);
-  assert.equal(buffer.disabled, true);
-  counted(2);
-  await settle();
-  assert.equal(ask.hidden, false);
-});
-
-test('History asks on the Clear line with the count first; Cancel deletes nothing and restores the line', async () => {
-  const limits = stubLimits({ stored: { a: 2, b: 1 } });
-  const { container } = setup({ limits });
-  const { clear, idle, ask, no } = clearControl(container);
-  assert.equal(ask.hidden, true);
-  clear.click();
-  await settle();
-  assert.equal(idle.hidden, true);
-  assert.equal(ask.hidden, false);
-  assert.equal(ask.querySelector('span')?.textContent, 'Delete 3 messages?');
-  no.click();
-  assert.equal(ask.hidden, true);
-  assert.equal(idle.hidden, false);
-  assert.equal(clear.disabled, false);
-  assert.deepEqual(deletions(limits), []);
-});
-
-test('Confirm clears the history once and the hint reports the count', async () => {
-  const limits = stubLimits({ stored: { a: 2, b: 1 } });
-  const { container } = setup({ limits });
-  const { clear, idle, ask, yes, hint } = clearControl(container);
-  clear.click();
-  await settle();
-  yes.click();
-  yes.click();
-  await settle();
-  assert.deepEqual(deletions(limits), [['clearHistory']]);
-  assert.equal(hint.textContent, 'Deleted 3 messages.');
-  assert.equal(ask.hidden, true);
-  assert.equal(idle.hidden, false);
-  // The sender list follows: nothing is left to pick.
-  assert.equal(senderControl(container).select.disabled, true);
-});
-
-test('History over no saved history says so and asks nothing', async () => {
-  const limits = stubLimits();
-  const { container } = setup({ limits });
-  const { clear, ask, hint } = clearControl(container);
-  clear.click();
-  await settle();
-  assert.equal(ask.hidden, true);
-  assert.equal(hint.textContent, 'No saved history.');
-  assert.deepEqual(deletions(limits), []);
-});
-
-// TDF-0054: with Chat history off the lines on screen were never saved, so Clear says so.
-const OFF_CLEAR = 'Chat history is off, so nothing is saved. Buffer empties the lines on screen.';
-
-test('History with Chat history stored off says nothing is saved and points to Buffer', async () => {
-  const limits = stubLimits();
-  const { container } = setup({ settings: stubSettings({ historyCount: 0 }), limits });
-  await settle();
-  const { clear, ask, hint } = clearControl(container);
-  clear.click();
-  await settle();
-  assert.equal(ask.hidden, true);
-  assert.equal(hint.textContent, OFF_CLEAR);
-  assert.deepEqual(deletions(limits), []);
-});
-
-test('History follows the Chat history switch: off, then on again', async () => {
-  const limits = stubLimits();
-  const { container, toggle } = setup({ limits });
-  await settle();
-  const { clear, hint } = clearControl(container);
-  toggle(false);
-  await settle();
-  clear.click();
-  await settle();
-  assert.equal(hint.textContent, OFF_CLEAR);
-  toggle(true);
-  await settle();
-  clear.click();
-  await settle();
-  assert.equal(hint.textContent, 'No saved history.');
-});
-
-test('a refused Chat history untick leaves History reading history as on', async () => {
-  const settings = stubSettings({}, { failWrite: true });
-  const { container, toggle } = setup({ settings });
-  await settle();
-  toggle(false);
-  await settle();
-  const { clear, hint } = clearControl(container);
-  clear.click();
-  await settle();
-  assert.equal(hint.textContent, 'No saved history.');
-});
-
-test('closing the flyout while a deletion asks restores the button and deletes nothing', async () => {
-  const limits = stubLimits({ stored: { a: 2 } });
-  const { container, cleanup } = setup({ limits });
-  const { clear, idle, ask } = clearControl(container);
-  clear.click();
-  await settle();
-  assert.equal(ask.hidden, false);
-  cleanup();
-  assert.equal(ask.hidden, true);
-  assert.equal(idle.hidden, false);
-  assert.deepEqual(deletions(limits), []);
-});
-
-test('a failed deletion is reported in its hint', async () => {
-  const limits = stubLimits({ stored: { a: 2 }, failDelete: true });
-  const { container } = setup({ limits });
-  const { clear, idle, yes, hint } = clearControl(container);
-  clear.click();
-  await settle();
-  yes.click();
-  await settle();
-  assert.equal(hint.textContent, 'Could not delete: delete failed');
-  assert.ok(hint.classList.contains('tdf-warn'));
-  assert.equal(idle.hidden, false);
 });
 
 test('the sender picker lists every stored sender with a count, labelled decoded, valued raw', async () => {
@@ -1182,7 +1039,7 @@ test('a failed read before a toggle writes nothing and says why', async () => {
   assert.equal(toggle.disabled, false);
 });
 
-test('the real limits behind the flyout: Confirm empties the view through onDeleted', async (t) => {
+test('the real limits behind the flyout: Clear chat buffer Confirm deletes no stored line', async () => {
   const db = await openDb({ name: `panel-clear-${Date.now()}` });
   await new Promise((resolve, reject) => {
     const tx = db.transaction('messages', 'readwrite');
@@ -1191,61 +1048,12 @@ test('the real limits behind the flyout: Confirm empties the view through onDele
     tx.onerror = () => reject(tx.error);
   });
   const limits = createLimits({ db, gallery: { usage: async () => ({ used: 0, preview: null }), enforceLimit: async () => [] } });
-  const { doc, container } = setup({ limits: /** @type {any} */ (limits) });
-  // Stands in for the view's own removeById.
-  t.after(onDeleted((ids) => ids.forEach((id) => doc.querySelector(`[data-id="${id}"]`)?.remove())));
-  const { clear, yes, hint } = clearControl(container);
+  const { container } = setup({ limits: /** @type {any} */ (limits) });
+  const { clear, yes } = clearControl(container);
   clear.click();
-  await settle();
   yes.click();
   await settle();
-  assert.equal(hint.textContent, 'Deleted 2 messages.');
-  assert.equal(doc.querySelectorAll('#tdf-chat .tdf-msg').length, 0);
-  assert.equal(await limits.countAll(), 0);
-});
-
-test('a count that fails is reported in the hint and asks nothing', async () => {
-  const limits = stubLimits({ stored: { a: 2 } });
-  limits.countAll = async () => {
-    throw new Error('read failed');
-  };
-  const { container } = setup({ limits });
-  const { clear, ask, hint } = clearControl(container);
-  clear.click();
-  await settle();
-  assert.equal(hint.textContent, 'Could not check: read failed');
-  assert.ok(hint.classList.contains('tdf-warn'));
-  assert.equal(ask.hidden, true);
-  assert.equal(clear.disabled, false);
-});
-
-test('a count or a deletion that settles after close writes nothing', async () => {
-  /** @type {(n: number) => void} */
-  let counted = () => {};
-  /** @type {(ids: string[]) => void} */
-  let cleared = () => {};
-  const limits = stubLimits({ stored: { a: 2 } });
-  limits.countAll = () => new Promise((r) => (counted = r));
-  const first = setup({ limits });
-  const one = clearControl(first.container);
-  one.clear.click();
-  first.cleanup();
-  counted(2);
-  await settle();
-  assert.equal(one.ask.hidden, true);
-  assert.equal(one.hint.textContent, '');
-
-  limits.countAll = async () => 2;
-  limits.clearHistory = () => new Promise((r) => (cleared = r));
-  const second = setup({ limits });
-  const two = clearControl(second.container);
-  two.clear.click();
-  await settle();
-  two.yes.click();
-  second.cleanup();
-  cleared(['x', 'y']);
-  await settle();
-  assert.equal(two.hint.textContent, '');
+  assert.equal(await limits.countAll(), 2);
 });
 
 test('a sender list that fails to read is reported under Hide', async () => {
@@ -1261,17 +1069,16 @@ test('a sender list that fails to read is reported under Hide', async () => {
 });
 
 test('a refresh keeps the chosen sender while they are still listed', async () => {
-  const limits = stubLimits({ stored: { 'Big%20Bob': 2, carol: 1 }, failDelete: true });
-  const { container } = setup({ limits });
+  const limits = stubLimits({ stored: { 'Big%20Bob': 2, carol: 1 } });
+  const { container, toggle } = setup({ limits });
   await settle();
   const { select } = senderControl(container);
   select.value = 'carol';
-  const { clear, yes } = clearControl(container);
-  clear.click();
+  // An untick whose deletion leaves the lines in place still refreshes the list.
+  limits.clearHistory = async () => [];
+  toggle(false);
   await settle();
-  yes.click();
-  await settle();
-  // The failed clear still refreshed the list: both senders remain, carol still chosen.
+  // Both senders remain, carol still chosen.
   assert.ok(limits.calls.filter(([name]) => name === 'senders').length >= 2);
   assert.equal(select.value, 'carol');
 });
@@ -1281,11 +1088,10 @@ test('only the latest sender read fills the list', async () => {
   const reads = [];
   const limits = stubLimits({ stored: { a: 1 } });
   limits.senders = () => new Promise((r) => reads.push(r));
-  const { container } = setup({ limits });
-  const { clear, yes, select } = { ...clearControl(container), ...senderControl(container) };
-  clear.click();
-  await settle();
-  yes.click();
+  const { container, toggle } = setup({ limits });
+  const { select } = senderControl(container);
+  limits.clearHistory = async () => [];
+  toggle(false);
   await settle();
   assert.equal(reads.length, 2);
   reads[1]([{ user: 'new', count: 1 }]);
@@ -1293,26 +1099,6 @@ test('only the latest sender read fills the list', async () => {
   reads[0]([{ user: 'stale', count: 9 }]);
   await settle();
   assert.deepEqual([...select.options].map((o) => o.value), ['new']);
-});
-
-test('Cancel is disabled while a deletion runs', async () => {
-  /** @type {(ids: string[]) => void} */
-  let done = () => {};
-  const limits = stubLimits({ stored: { a: 2 } });
-  limits.clearHistory = () => new Promise((r) => (done = r));
-  const { container } = setup({ limits });
-  const { clear, idle, ask, yes, no, hint } = clearControl(container);
-  clear.click();
-  await settle();
-  yes.click();
-  assert.equal(no.disabled, true);
-  no.click();
-  assert.equal(ask.hidden, false);
-  assert.equal(idle.hidden, true);
-  done(['x', 'y']);
-  await settle();
-  assert.equal(hint.textContent, 'Deleted 2 messages.');
-  assert.equal(no.disabled, false);
 });
 
 test('a sender list that fails to read disables the picker and Hide; a later read clears the warning', async () => {
@@ -1358,7 +1144,7 @@ test('a later sender read keeps a deletion report shown since the warning', asyn
   assert.equal(hint.textContent, 'Deleted 1 message.');
 });
 
-test('unticking Chat history refreshes the sender list after the deletion', async () => {
+test('unticking Chat buffer refreshes the sender list after the deletion', async () => {
   const limits = stubLimits({ stored: { carol: 1 } });
   const { container, toggle } = setup({ limits });
   await settle();
@@ -1371,35 +1157,10 @@ test('unticking Chat history refreshes the sender list after the deletion', asyn
   assert.deepEqual([...senderControl(container).select.options].map((o) => o.textContent), ['No saved history']);
 });
 
-test('a count, deletion or sender read that fails after close writes nothing', async () => {
-  /** @type {(e: Error) => void} */
-  let failCount = () => {};
-  /** @type {(e: Error) => void} */
-  let failRun = () => {};
+test('a sender read that fails after close writes nothing', async () => {
   /** @type {(e: Error) => void} */
   let failSenders = () => {};
   const limits = stubLimits({ stored: { a: 2 } });
-  limits.countAll = () => new Promise((_, reject) => (failCount = reject));
-  const first = setup({ limits });
-  const one = clearControl(first.container);
-  one.clear.click();
-  first.cleanup();
-  failCount(new Error('read failed'));
-  await settle();
-  assert.equal(one.hint.textContent, '');
-
-  limits.countAll = async () => 2;
-  limits.clearHistory = () => new Promise((_, reject) => (failRun = reject));
-  const second = setup({ limits });
-  const two = clearControl(second.container);
-  two.clear.click();
-  await settle();
-  two.yes.click();
-  second.cleanup();
-  failRun(new Error('delete failed'));
-  await settle();
-  assert.equal(two.hint.textContent, '');
-
   limits.senders = () => new Promise((_, reject) => (failSenders = reject));
   const third = setup({ limits });
   third.cleanup();
