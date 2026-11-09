@@ -185,12 +185,51 @@
   opacity: 0.5;
 }
 
-/* The button's question, hint-sized, in its place until answered. */
-#tdf-rail .tdf-opt-clear-ask {
-  display: block;
+/* The inline two-step confirm that replaces Clear chat buffer until answered: the question,
+   a red Confirm and a bordered Cancel, as before TDF-0081 (TDF-0084). */
+#tdf-rail .tdf-opt-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 2px 2px;
 }
 
-/* A text button inside a hint line: Clear chat buffer's Confirm | Cancel (TDF-0081). */
+#tdf-rail .tdf-opt-confirm[hidden] {
+  display: none;
+}
+
+#tdf-rail .tdf-opt-confirm span {
+  flex: 1;
+  min-width: 0;
+}
+
+#tdf-rail .tdf-opt-confirm button {
+  flex: none;
+  padding: 5px 8px;
+  color: var(--tdf-fg);
+  background: var(--tdf-rail-chip-bg);
+  border: 1px solid var(--tdf-rail-chip-border);
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+}
+
+#tdf-rail .tdf-opt-confirm button:hover {
+  border-color: var(--tdf-link);
+}
+
+#tdf-rail .tdf-opt-confirm .tdf-opt-confirm-yes {
+  color: #ffffff;
+  background: #cf222e;
+  border-color: #cf222e;
+}
+
+#tdf-rail .tdf-opt-confirm button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* A text button inside a hint line: the unplaced History action (TDF-0010). */
 #tdf-rail .tdf-opt-link {
   padding: 0;
   color: var(--tdf-link);
