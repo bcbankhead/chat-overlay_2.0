@@ -1,12 +1,12 @@
 // The Chat history rules (TDF-0033.5), shared by the core's replay and history bound and by the
 // Options feature (which re-exports them from selectors.js). Pure: no I/O.
 //
-// The member's setting is Chat history (last HISTORY_ON): on replays the newest HISTORY_ON
-// lines, off keeps and replays none. Storage mirrors it (TDF-0057): on each load, before replay,
-// each room is cut back to its newest STORAGE_LINES stored lines, which is HISTORY_ON, so storage
-// never holds less than replay shows; within a session it grows with room activity until the
-// next load bounds it again.
-// The rows kept on screen during live chat are bounded apart from it too, by LIVE_CEILING
+// The member's setting is Chat buffer (last HISTORY_ON): on replays the newest HISTORY_ON lines,
+// off keeps and replays none. Storage is bounded apart from replay (TDF-0084): on each load,
+// before replay, each room is cut back to its newest STORAGE_LINES stored lines, a deliberately
+// larger number than HISTORY_ON, so storage never holds less than replay shows; within a session
+// it grows with room activity until the next load bounds it again.
+// The rows kept on screen during live chat are bounded apart from both, by LIVE_CEILING
 // (TDF-0056), so lowering the look-back never shrinks live chat.
 
 /**
@@ -27,10 +27,12 @@ export const HISTORY_ON = /** @type {const} */ (25);
 export const LIVE_CEILING = /** @type {const} */ (200);
 
 /**
- * The most stored lines each room keeps with Chat history on (TDF-0057): the replay window, so
- * storage and replay read one constant. There is no control for it.
+ * The most stored lines each room keeps with Chat buffer on (TDF-0084). Deliberately larger than
+ * HISTORY_ON and not derived from it, so storage keeps a margin over replay (lines replay skips,
+ * such as earlier loads' entry and exit lines, and a backlog's re-sent lines) and the two counts
+ * cannot be conflated in one literal. There is no control for it.
  */
-export const STORAGE_LINES = HISTORY_ON;
+export const STORAGE_LINES = /** @type {const} */ (50);
 
 /**
  * A stored Chat history value, read: anything other than 0 reads as on (HISTORY_ON, 25), so an

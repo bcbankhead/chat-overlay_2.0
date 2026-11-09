@@ -2,9 +2,9 @@
 // STORAGE_LINES lines (all of it with Chat history off) or cleared outright, through core's
 // historyDelete.js, which announces each deletion so the open view drops the rows and tagging,
 // the tags store's only writer, re-derives without them; and the gallery kept under its size by
-// TDF-0009.5's store. No deletion here touches images or tags. The history bound runs on load in
-// bootstrap, before replay reads, and here on commit; the gallery limit runs on load and on
-// commit; Clear history runs when the user confirms it. Hide messages by user is a filter over the
+// TDF-0009.5's store. No deletion here touches images or tags. Only bootstrap bounds stored
+// history, on load, before replay reads; the gallery limit runs on load and on commit; Clear
+// history runs when the user confirms it. Hide messages by user is a filter over the
 // hiddenSenders setting and deletes nothing here.
 
 import { STORES, request } from '../../core/db.js';
@@ -26,17 +26,9 @@ import { megabytesToBytes } from './selectors.js';
  * @param {{ db: IDBDatabase, gallery: GalleryLimit }} deps
  */
 export function createLimits({ db, gallery }) {
-  const { deleteWhere, pruneHistory } = createHistoryDelete(db);
+  const { deleteWhere } = createHistoryDelete(db);
 
   return {
-    /**
-     * Delete the stored lines the Chat history setting `count` does not keep, and announce them
-     * (core's historyDelete.js).
-     * @param {import('../../core/retention.js').HistoryCount} count
-     * @returns {Promise<string[]>} the ids deleted
-     */
-    pruneHistory,
-
     /** How many lines are stored, in every room. */
     async countAll() {
       return request(db.transaction(STORES.messages, 'readonly').objectStore(STORES.messages).count());

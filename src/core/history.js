@@ -210,9 +210,11 @@ export function createHistory(db) {
      * mTime second keep their first-seen arrival order.
      * @param {string} roomID
      * @param {number} [limit] at most this many, the newest; HISTORY_ON by default
+     * @param {(record: MessageRecord) => boolean} [accept]  only records it accepts are returned
+     *   and count toward `limit`; every record when omitted
      * @returns {Promise<MessageRecord[]>}
      */
-    async recent(roomID, limit = HISTORY_ON) {
+    async recent(roomID, limit = HISTORY_ON, accept = () => true) {
       const t = tx('readonly');
       const index = t.objectStore(STORES.messages).index('roomID_orderKey');
       const range = IDBKeyRange.bound([roomID, -Infinity, -Infinity], [roomID, Infinity, Infinity]);
@@ -224,7 +226,8 @@ export function createHistory(db) {
         req.onsuccess = () => {
           const cursor = req.result;
           if (!cursor || out.length >= limit) return resolve(undefined);
-          out.push(/** @type {MessageRecord} */ (cursor.value));
+          const record = /** @type {MessageRecord} */ (cursor.value);
+          if (accept(record)) out.push(record);
           cursor.continue();
         };
       });

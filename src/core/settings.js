@@ -9,7 +9,7 @@ import { HISTORY_ON, countFromDays, parseHistoryCount } from './retention.js';
 const RETIRED_RETENTION_KEY = 'retentionDays';
 
 export const DEFAULTS = Object.freeze({
-  // Chat history (last HISTORY_ON, TDF-0033.5, TDF-0056): HISTORY_ON replays the newest
+  // Chat buffer (last HISTORY_ON, TDF-0033.5, TDF-0056, TDF-0084): HISTORY_ON replays the newest
   // HISTORY_ON lines, 0 keeps and replays none. Read through parseHistoryCount, so nothing else
   // is ever handed on.
   historyCount: /** @type {import('./retention.js').HistoryCount} */ (HISTORY_ON),

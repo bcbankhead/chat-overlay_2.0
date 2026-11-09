@@ -281,7 +281,8 @@ test('with Chat history on, replay shows the newest 25 lines and live messages g
   await createSettings(db).set('historyCount', 100);
   const base = { roomID: '1', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '', size: '', family: '', text: 'hi', ircFlag: '0', lineBreakFlag: '0' };
   const t = db.transaction('messages', 'readwrite');
-  // More than 25 lines, received over the last 24 days; storage keeps the newest 25 (TDF-0057).
+  // More than 25 lines, received over the last 24 days; storage keeps the newest 50 per room
+  // (STORAGE_LINES, TDF-0084) and replay shows 25.
   for (let i = 0; i < 120; i++) {
     const mTime = String(1000 + i);
     t.objectStore('messages').put({ ...base, id: `m${i}`, mTime, receivedAt: clock - 24 * DAY + i * 4 * 3_600_000, orderKey: Number(mTime) * 1000 });
@@ -346,20 +347,20 @@ test('stored entry and exit lines from an earlier load are not replayed (TDF-006
   assert.deepEqual(shownIds(document), ['m0', 'm2']);
 });
 
-test('replay shows the newest 25 lines whatever their age, and the load-time prune leaves 25 per room (TDF-0057)', async () => {
+test('60 stored lines: replay shows the newest 25 whatever their age, and the load-time prune leaves 50 per room (TDF-0084)', async () => {
   const DAY = 86_400_000;
   const indexedDB = new IDBFactory();
   const db = await openDb({ indexedDB });
   await createSettings(db).set('historyCount', 25);
   const base = { roomID: '1', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '', size: '', family: '', text: 'hi', ircFlag: '0', lineBreakFlag: '0' };
   const t = db.transaction('messages', 'readwrite');
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 60; i++) {
     const mTime = String(1000 + i);
     // The newest three by message time were received 40 days ago: no age bound skips them.
-    const receivedAt = Date.now() - (i < 27 ? 1 : 40) * DAY + i * 1000;
+    const receivedAt = Date.now() - (i < 57 ? 1 : 40) * DAY + i * 1000;
     t.objectStore('messages').put({ ...base, id: `m${i}`, mTime, receivedAt, orderKey: Number(mTime) * 1000 });
   }
-  // A quiet second room, below the busy room's newest 25 by order: bounded on its own.
+  // A quiet second room, below the busy room's newest 50 by order: bounded on its own.
   for (let i = 0; i < 3; i++) t.objectStore('messages').put({ ...base, roomID: '2', id: `q${i}`, mTime: String(i), receivedAt: Date.now(), orderKey: i });
   await new Promise((resolve) => (t.oncomplete = resolve));
   db.close();
@@ -367,9 +368,9 @@ test('replay shows the newest 25 lines whatever their age, and the load-time pru
   const { document, window } = await page(await bundled(), indexedDB);
   for (let i = 0; i < 40 && shownIds(document).length === 0; i++) await settle();
   const shown = shownIds(document);
-  assert.equal(shown.length, 25);
-  assert.equal(shown[0], 'm5');
-  assert.equal(shown.at(-1), 'm29');
+  assert.equal(shown.length, 25, 'replay shows HISTORY_ON lines, not the cap');
+  assert.equal(shown[0], 'm35');
+  assert.equal(shown.at(-1), 'm59');
   /** @returns {Promise<string[]>} */
   const storedIds = async () => {
     const after = await openDb({ indexedDB });
@@ -381,13 +382,66 @@ test('replay shows the newest 25 lines whatever their age, and the load-time pru
     return /** @type {string[]} */ (ids);
   };
   let stored = await storedIds();
-  for (let i = 0; i < 40 && stored.length > 28; i++) {
+  for (let i = 0; i < 40 && stored.length > 53; i++) {
     await settle();
     stored = await storedIds();
   }
-  assert.equal(stored.filter((id) => id.startsWith('m')).length, 25, 'the busy room keeps its newest 25');
-  assert.ok(!stored.includes('m0') && stored.includes('m5'));
+  assert.equal(stored.filter((id) => id.startsWith('m')).length, 50, 'the busy room keeps its newest 50');
+  assert.ok(!stored.includes('m9') && stored.includes('m10'));
   assert.deepEqual(stored.filter((id) => id.startsWith('q')).sort(), ['q0', 'q1', 'q2'], 'the quiet room keeps every line');
+  await window.happyDOM.close();
+});
+
+test('entry and exit lines count toward neither the load-time prune nor replay: 25 chat lines replay and 50 are kept (TDF-0084)', async () => {
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('historyCount', 25);
+  const base = { roomID: '1', user: 'bob', toUser: '', avatar: '', color: '', size: '', family: '', ircFlag: '0', lineBreakFlag: '0' };
+  const now = Date.now();
+  const t = db.transaction('messages', 'readwrite');
+  // 60 chat lines, the newest 20 of them interleaved with 30 entry and exit lines, so the
+  // room's newest 50 records hold 30 presence lines and only 20 chat lines.
+  let order = 0;
+  const put = (id, kind, text) => {
+    const mTime = String(1000 + order);
+    t.objectStore('messages').put({ ...base, id, mTime, kind, text, receivedAt: now - 60_000 + order, orderKey: Number(mTime) * 1000 });
+    order += 1;
+  };
+  for (let i = 0; i < 40; i++) put(`m${i}`, 'public', 'hi');
+  for (let i = 40; i < 60; i++) {
+    put(`m${i}`, 'public', 'hi');
+    if (i < 50) {
+      put(`e${i}`, 'entry', '** bob has joined the room ...');
+      put(`x${i}`, 'exit', '** bob has left the room ...');
+    } else put(`x${i}`, 'exit', '** bob has left the room ...');
+  }
+  await new Promise((resolve) => (t.oncomplete = resolve));
+  db.close();
+
+  const { document, window } = await page(await bundled(), indexedDB);
+  for (let i = 0; i < 40 && shownIds(document).length === 0; i++) await settle();
+  assert.deepEqual(shownIds(document), Array.from({ length: 25 }, (_, i) => `m${35 + i}`), 'the newest 25 chat lines replay');
+  /** @returns {Promise<string[]>} */
+  const storedIds = async () => {
+    const after = await openDb({ indexedDB });
+    const ids = await new Promise((resolve) => {
+      const req = after.transaction('messages').objectStore('messages').getAllKeys();
+      req.onsuccess = () => resolve(req.result);
+    });
+    after.close();
+    return /** @type {string[]} */ (ids);
+  };
+  let stored = await storedIds();
+  for (let i = 0; i < 40 && stored.filter((id) => id.startsWith('m')).length > 50; i++) {
+    await settle();
+    stored = await storedIds();
+  }
+  assert.deepEqual(
+    stored.filter((id) => id.startsWith('m')).sort(),
+    Array.from({ length: 50 }, (_, i) => `m${10 + i}`).sort(),
+    'the newest 50 chat lines are kept',
+  );
+  assert.equal(stored.filter((id) => !id.startsWith('m')).length, 30, 'presence lines newer than the cutoff are kept');
   await window.happyDOM.close();
 });
 
@@ -396,7 +450,7 @@ test('the load-time bound runs before replay: a line stored after replay removes
   const db = await openDb({ indexedDB });
   const base = { roomID: '1', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '', size: '', family: '', text: 'hi', ircFlag: '0', lineBreakFlag: '0' };
   const t = db.transaction('messages', 'readwrite');
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 60; i++) {
     const mTime = String(1000 + i);
     t.objectStore('messages').put({ ...base, id: `m${i}`, mTime, receivedAt: Date.now() - 60_000 + i, orderKey: Number(mTime) * 1000 });
   }
@@ -416,16 +470,17 @@ test('the load-time bound runs before replay: a line stored after replay removes
   });
   for (let i = 0; i < 40 && !shownIds(document).includes('9001'); i++) await settle();
   for (let i = 0; i < 4; i++) await settle();
-  const replayed = Array.from({ length: 25 }, (_, i) => `m${5 + i}`);
+  const replayed = Array.from({ length: 25 }, (_, i) => `m${35 + i}`);
+  const kept = Array.from({ length: 50 }, (_, i) => `m${10 + i}`);
   assert.deepEqual(shownIds(document), [...replayed, '9001'], 'every replayed row stays beside the new line');
-  assert.ok(![...everShown].some((id) => ['m0', 'm1', 'm2', 'm3', 'm4'].includes(id)), 'pruned lines were never replayed');
+  assert.ok(![...everShown].some((id) => Number(id.slice(1)) < 10 && id.startsWith('m')), 'pruned lines were never replayed');
   const after = await openDb({ indexedDB });
   const stored = await new Promise((resolve) => {
     const req = after.transaction('messages').objectStore('messages').getAllKeys();
     req.onsuccess = () => resolve(req.result);
   });
   after.close();
-  assert.deepEqual([.../** @type {string[]} */ (stored)].sort(), [...replayed, '9001'].sort(), 'storage grows past 25 until the next load');
+  assert.deepEqual([.../** @type {string[]} */ (stored)].sort(), [...kept, '9001'].sort(), 'storage grows past 50 until the next load');
   await window.happyDOM.close();
 });
 
@@ -965,6 +1020,36 @@ test('a failed block-state read shows blocks expanded with a notice saying why',
   await shell.window.happyDOM.close();
 });
 
+test('a failed load-time prune says why in a notice, and replay still runs', async () => {
+  const indexedDB = new IDBFactory();
+  const db = await openDb({ indexedDB });
+  await createSettings(db).set('historyCount', 25);
+  const base = { roomID: '1', user: 'bob', toUser: '', kind: 'public', avatar: '', color: '', size: '', family: '', text: 'hi', ircFlag: '0', lineBreakFlag: '0' };
+  const t = db.transaction('messages', 'readwrite');
+  for (let i = 0; i < 60; i++) {
+    const mTime = String(1000 + i);
+    t.objectStore('messages').put({ ...base, id: `m${i}`, mTime, receivedAt: Date.now() - 60_000 + i, orderKey: Number(mTime) * 1000 });
+  }
+  await new Promise((resolve) => (t.oncomplete = resolve));
+  db.close();
+  // The prune is the only reader of this index in a readwrite transaction.
+  const original = IDBObjectStore.prototype.index;
+  IDBObjectStore.prototype.index = function (name) {
+    if (this.name === 'messages' && name === 'roomID_orderKey' && this.transaction.mode === 'readwrite') throw new DOMException('injected', 'UnknownError');
+    return original.call(this, name);
+  };
+  let shell;
+  try {
+    shell = await page(await bundled(), indexedDB);
+    for (let i = 0; i < 40 && shownIds(shell.document).length === 0; i++) await settle();
+  } finally {
+    IDBObjectStore.prototype.index = original;
+  }
+  assert.ok(noticeTexts(shell.document).some((t) => /^Stored chat history not trimmed on load \(.*injected.*\)$/.test(t)));
+  assert.deepEqual(shownIds(shell.document), Array.from({ length: 25 }, (_, i) => `m${35 + i}`), 'replay still runs');
+  await shell.window.happyDOM.close();
+});
+
 test('a failed block-state write raises a notice, and the block still toggles', async () => {
   const bundle = await bundled();
   const indexedDB = new IDBFactory();
@@ -1263,7 +1348,7 @@ test('localStorage that throws reads as on: the overlay starts as before', async
   assert.equal(document.getElementById('tdf-chat2-switch'), null);
 });
 
-// TDF-0033.5: Chat history (last 25, TDF-0056), turned off and on through the built bundle's Settings.
+// TDF-0033.5, TDF-0084: Chat buffer (last 25, TDF-0056), turned off and on through the built bundle's Settings.
 
 test('unticking Chat history deletes saved lines from storage and the view, stores nothing new, and a reload replays nothing; ticking it stores again', async () => {
   const bundle = await bundled();
@@ -1281,7 +1366,7 @@ test('unticking Chat history deletes saved lines from storage and the view, stor
   shell.poll(um('1', 'bob', 'kept', '100'), um('2', 'carol', 'kept too', '101'));
   await settle();
   assert.equal(await stored(), 2);
-  const box = await settingsBox(shell, 'Chat history (last 25)');
+  const box = await settingsBox(shell, 'Chat buffer (last 25)');
   assert.equal(box.checked, true, 'on for a member who never set it');
 
   box.checked = false;
@@ -1299,7 +1384,7 @@ test('unticking Chat history deletes saved lines from storage and the view, stor
   const again = await page(bundle, indexedDB, withRail);
   await settle();
   assert.deepEqual(shownIds(again.document), [], 'a reload replays nothing');
-  const on = await settingsBox(again, 'Chat history (last 25)');
+  const on = await settingsBox(again, 'Chat buffer (last 25)');
   assert.equal(on.checked, false);
   on.checked = true;
   on.dispatchEvent(new again.window.Event('change'));
@@ -1323,7 +1408,7 @@ test('the history-off mirror is written at start and follows the Chat history sw
   db.close();
   const shell = await page(bundle, indexedDB, withRail);
   assert.equal(shell.window.localStorage.getItem(MIRROR_KEY), '1', 'written at start');
-  const box = await settingsBox(shell, 'Chat history (last 25)');
+  const box = await settingsBox(shell, 'Chat buffer (last 25)');
   box.checked = true;
   box.dispatchEvent(new shell.window.Event('change'));
   await settle();
@@ -1367,7 +1452,7 @@ test('blocked site data leaves the history-off mirror unwritten without a notice
   });
   assert.ok(shell.document.getElementById('tdf-chat'), 'the overlay started');
   assert.deepEqual(banners(shell.document), []);
-  const box = await settingsBox(shell, 'Chat history (last 25)');
+  const box = await settingsBox(shell, 'Chat buffer (last 25)');
   box.checked = true;
   box.dispatchEvent(new shell.window.Event('change'));
   await settle();
@@ -1398,7 +1483,7 @@ test('any other failed mirror write raises a notice saying why, at start and liv
   assert.deepEqual(mirrorNotices(shell.document), [
     'Chat history off not recorded for the next page load, which may show messages sent before it loads (injected set)',
   ]);
-  const box = await settingsBox(shell, 'Chat history (last 25)');
+  const box = await settingsBox(shell, 'Chat buffer (last 25)');
   box.checked = true;
   box.dispatchEvent(new shell.window.Event('change'));
   await settle();

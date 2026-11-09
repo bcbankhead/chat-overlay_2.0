@@ -141,7 +141,7 @@ async function start(lift, coreReady) {
     theme = createTheme({ win, settings, root: html });
     await theme.load();
     mount(theme);
-    // Chat history (last HISTORY_ON, TDF-0033.5): a stored Chat history (days) value is retired
+    // Chat buffer (last HISTORY_ON, TDF-0033.5, TDF-0084): a stored Chat history (days) value is retired
     // first, so this read sees its migrated count. Off keeps nothing: the hook stores nothing,
     // and the replay shows nothing left from before it was turned off. Followed live, as
     // Settings writes it.
@@ -160,26 +160,25 @@ async function start(lift, coreReady) {
         if (failed !== null) shown?.notice(mirrorFailedNotice(historyCount, failed));
       }),
     );
-    // Storage keeps each room's newest STORAGE_LINES lines, none with Chat history off (TDF-0057),
+    // Entry and exit lines stored by earlier loads are never replayed: the chat shows only this
+    // session's (TDF-0066). They count toward neither the stored nor the replayed lines.
+    const presenceLang = { publicEntry: String(win.publicEntry ?? ''), publicExit: String(win.publicExit ?? '') };
+    /** @param {import('./history.js').MessageRecord} r */
+    const replayable = (r) => presenceLineKind(r.kind, r.text, presenceLang) === null;
+    // Storage keeps each room's newest STORAGE_LINES lines, none with Chat buffer off (TDF-0057, TDF-0084),
     // bounded here before replay reads, so replay and storage agree when it does: nothing it shows
     // is deleted by the bound. Nothing has mounted yet, so a failure is said once the view is up
     // rather than failing the start.
     /** @type {string | null} */
     let pruneFailed = null;
     await createHistoryDelete(db)
-      .pruneHistory(historyCount)
+      .pruneHistory(historyCount, replayable)
       .catch((err) => {
         pruneFailed = describeError(err);
       });
     const { expired, pending } = await history.expirePending(roomID);
     // Replay shows the newest historyCount lines; the view keeps at most LIVE_CEILING either way.
-    // Entry and exit lines stored by earlier loads are never replayed: the chat shows only this
-    // session's (TDF-0066). They count toward the room's stored lines until newer ones push them
-    // past the cap, so a replay may show fewer than historyCount lines.
-    const presenceLang = { publicEntry: String(win.publicEntry ?? ''), publicExit: String(win.publicExit ?? '') };
-    const records = (historyCount === 0 ? [] : await history.recent(roomID, historyCount)).filter(
-      (r) => presenceLineKind(r.kind, r.text, presenceLang) === null,
-    );
+    const records = historyCount === 0 ? [] : await history.recent(roomID, historyCount, replayable);
 
     // Published for the rail and the profile flyout, which show the same avatars.
     const avatars = createAvatarResolver({ win, db });

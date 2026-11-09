@@ -98,24 +98,28 @@ export function createHistoryDelete(db) {
     deleteWhere,
 
     /**
-     * Delete the stored lines the Chat history setting `count` does not keep, in one
-     * transaction: every line of each room past its newest STORAGE_LINES by orderKey (own and
-     * pending lines count), or every line when it is off (0). Then announce them, so they leave
+     * Delete the stored lines the Chat buffer setting `count` does not keep, in one transaction:
+     * every line of each room older than its newest STORAGE_LINES lines by orderKey that `counts`
+     * accepts (own and pending lines count by default), or every line when it is off (0). A line
+     * `counts` rejects is kept while newer than that cutoff. Then announce them, so they leave
      * the open view and their tags.
      * @param {import('./retention.js').HistoryCount} count
+     * @param {(record: any) => boolean} [counts]  whether a line counts toward the room's
+     *   STORAGE_LINES; every line does when omitted
      * @returns {Promise<string[]>} the ids deleted
      */
-    pruneHistory(count) {
+    pruneHistory(count, counts = () => true) {
       const keep = storageLines(count);
       if (keep === 0) return deleteWhere(null, null);
-      /** @type {Map<string, number>} lines seen so far per room, newest first */
+      /** @type {Map<string, number>} counted lines seen so far per room, newest first */
       const seen = new Map();
       return deleteMatching(
         (store) => store.index('roomID_orderKey').openCursor(null, 'prev'),
         (record) => {
-          const n = (seen.get(record.roomID) ?? 0) + 1;
-          seen.set(record.roomID, n);
-          return n > keep;
+          const n = seen.get(record.roomID) ?? 0;
+          if (n >= keep) return true;
+          if (counts(record)) seen.set(record.roomID, n + 1);
+          return false;
         },
         false,
       );

@@ -7,8 +7,8 @@ import { SMILIE_CODES_FIXTURE as CODES } from './smilieCodes.fixture.js';
 import { deriveTags } from './infer.js';
 import { createTagStore } from './store.js';
 import { onDeleted } from '../../core/events.js';
-import { createLimits } from '../options/limits.js';
-import { DAY_MS, STORAGE_AGE_DAYS } from '../../core/retention.js';
+import { createHistoryDelete } from '../../core/historyDelete.js';
+import { STORAGE_LINES } from '../../core/retention.js';
 
 const A = '100000000111111';
 const img = (/** @type {string} */ id) => `[[img src="plugins/share/view.php?id=${id}"]]`;
@@ -233,26 +233,29 @@ test('a delete announced while a rebuild reads is applied over the read', async 
 
 test('a Storage prune removes the tag rows its deleted messages made, in every room', async (t) => {
   const { db, history, store, rows } = await fresh();
-  const gallery = { usage: async () => ({ used: 0, preview: null }), enforceLimit: async () => [] };
-  // Only bob's lines, received at 0, are past the storage age.
-  const limits = createLimits({ db, gallery, now: () => STORAGE_AGE_DAYS * DAY_MS + 1 });
+  const { pruneHistory } = createHistoryDelete(db);
   /** @type {Promise<void>[]} */
   const applied = [];
   t.after(onDeleted((ids) => applied.push(store.applyDeleted(ids))));
-  const image = msg('alice', img(A));
-  const like = msg('bob', ':h', { receivedAt: 0 });
+  // Two posts of the image: the first, and bob's like of it, are room 1's two oldest lines, past
+  // its newest STORAGE_LINES; the second keeps the image in the room. In room 2 only bob's is.
+  const posted = msg('alice', img(A));
+  const like = msg('bob', ':h');
+  for (const m of [posted, like, msg('erin', img(A))]) await history.put(m);
+  for (let i = 0; i < STORAGE_LINES - 2; i++) await history.put(msg('dave', 'x'));
   const keep = msg('carol', ':h ^111111');
-  for (const m of [image, like, keep]) await history.put(m);
+  await history.put(keep);
   await store.rebuildRoom();
   // A row bob's message in another room made.
-  const away = msg('bob', ':o', { roomID: '2', receivedAt: 0 });
+  const away = msg('bob', ':o', { roomID: '2' });
   await history.put(away);
+  for (let i = 0; i < STORAGE_LINES; i++) await history.put(msg('dave', 'x', { roomID: '2' }));
   const tx = db.transaction(STORES.tags, 'readwrite');
   tx.objectStore(STORES.tags).add({ imageId: A, code: ':o', sender: 'bob', roomID: '2', sourceMessageId: away.id, certain: false });
   await new Promise((r) => (tx.oncomplete = r));
   assert.equal(store.likesFor(A).count, 2);
 
-  await limits.pruneHistory(25);
+  await pruneHistory(25);
   await Promise.all(applied);
   assert.equal(store.likesFor(A).count, 1);
   assert.deepEqual((await rows()).map((r) => `${r.roomID} ${r.sender} ${r.code}`), ['1 carol :h']);

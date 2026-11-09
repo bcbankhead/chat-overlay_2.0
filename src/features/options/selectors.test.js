@@ -24,10 +24,11 @@ test('countFromDays: 0 days becomes 0, any other value, null included, 25', () =
   for (const days of [30, 1, 365, null, undefined, NaN]) assert.equal(countFromDays(days), 25, String(days));
 });
 
-test('storageLines: off keeps no line, on keeps each room’s newest HISTORY_ON (TDF-0057)', () => {
-  assert.equal(STORAGE_LINES, HISTORY_ON);
+test('storageLines: off keeps no line, on keeps each room’s newest STORAGE_LINES, above HISTORY_ON (TDF-0084)', () => {
+  assert.equal(STORAGE_LINES, 50);
+  assert.ok(STORAGE_LINES > HISTORY_ON, 'storage keeps a margin over replay');
   assert.equal(storageLines(0), 0);
-  assert.equal(storageLines(25), 25);
+  assert.equal(storageLines(25), 50);
 });
 
 test('parseMegabytes: empty is no limit, whole numbers from 1, the rest refused', () => {
