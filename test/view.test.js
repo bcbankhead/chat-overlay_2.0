@@ -1694,3 +1694,85 @@ test('theme.css hides hidden-sender rows', () => {
   const css = readFileSync(new URL('../src/core/theme.css', import.meta.url), 'utf8');
   assert.match(css, /#tdf-chat \.tdf-hidden-sender\s*\{\s*display: none;\s*\}/);
 });
+
+// TDF-0085: history older than 3 hours before page load shows ghosted.
+
+const GHOST_CUTOFF = NOW - 3 * 60 * 60;
+const ghosted = (root, id) => root.querySelector(`[data-id="${id}"]`).classList.contains('tdf-ghost');
+
+test('a replayed line older than the page-load cutoff ghosts; one at the cutoff does not', async () => {
+  const { view, root } = await setup();
+  view.replay([
+    rec({ id: 'old', mTime: String(GHOST_CUTOFF - 1) }),
+    rec({ id: 'edge', mTime: String(GHOST_CUTOFF) }),
+    rec({ id: 'new', mTime: String(NOW - 60) }),
+  ]);
+  assert.equal(ghosted(root, 'old'), true);
+  assert.equal(ghosted(root, 'edge'), false);
+  assert.equal(ghosted(root, 'new'), false);
+});
+
+test('a placed server-backlog line ghosts when older than the cutoff, not when newer', async () => {
+  const { view, root } = await setup();
+  view.place(blockRec({ id: 'b-old', mTime: String(GHOST_CUTOFF - 60) }));
+  view.place(blockRec({ id: 'b-new', mTime: String(NOW - 60) }));
+  assert.equal(ghosted(root, 'b-old'), true);
+  assert.equal(ghosted(root, 'b-new'), false);
+});
+
+test('a replayed line with no mTime ghosts by its receipt time', async () => {
+  const { view, root } = await setup();
+  view.replay([
+    rec({ id: 'own-old', mTime: '', receivedAt: (GHOST_CUTOFF - 60) * 1000 }),
+    rec({ id: 'own-new', mTime: '', receivedAt: (NOW - 60) * 1000 }),
+  ]);
+  assert.equal(ghosted(root, 'own-old'), true);
+  assert.equal(ghosted(root, 'own-new'), false);
+});
+
+test('a live line never ghosts, appended or placed, however old its mTime', async () => {
+  const { view, root } = await setup();
+  // Control: history as old as the live lines does ghost in the same view.
+  view.replay([rec({ id: 'h', mTime: String(GHOST_CUTOFF - 7200) })]);
+  view.append(rec({ id: 'a', mTime: String(GHOST_CUTOFF - 3600) }));
+  view.place(rec({ id: 'p', mTime: String(GHOST_CUTOFF - 7200) }));
+  assert.equal(ghosted(root, 'h'), true);
+  assert.equal(ghosted(root, 'a'), false);
+  assert.equal(ghosted(root, 'p'), false);
+});
+
+test('an old entry line from the server backlog ghosts like a chat line', async () => {
+  const { view, root } = await setup();
+  view.place(blockRec({ id: 'e', kind: 'entry', avatar: '1', text: '** bob has joined the room ...', mTime: String(GHOST_CUTOFF - 60) }));
+  assert.equal(ghosted(root, 'e'), true);
+});
+
+test('the cutoff is fixed at page load: a later clock does not ghost lines that were new', async () => {
+  let now = NOW;
+  const { view, root } = await setup({ now: () => now });
+  now = NOW + 6 * 60 * 60;
+  view.replay([
+    rec({ id: 'r', mTime: String(NOW - 60) }),
+    // Control: older than the page-load cutoff, so it ghosts whatever the clock now reads.
+    rec({ id: 'r-old', mTime: String(GHOST_CUTOFF - 60) }),
+  ]);
+  view.place(blockRec({ id: 'b', mTime: String(NOW - 120) }));
+  assert.equal(ghosted(root, 'r'), false);
+  assert.equal(ghosted(root, 'r-old'), true);
+  assert.equal(ghosted(root, 'b'), false);
+});
+
+test('a server-history block header and a notice never ghost', async () => {
+  const { view, root } = await setup();
+  view.place(blockRec({ id: 'b1', mTime: String(GHOST_CUTOFF - 60) }));
+  view.notice('trouble');
+  assert.equal(ghosted(root, 'b1'), true);
+  assert.equal(blockHead(root).classList.contains('tdf-ghost'), false);
+  assert.equal(root.querySelector('.tdf-notice').classList.contains('tdf-ghost'), false);
+});
+
+test('theme.css dims a ghosted row to half opacity and restores it on hover', () => {
+  const css = readFileSync(new URL('../src/core/theme.css', import.meta.url), 'utf8');
+  assert.match(css, /#tdf-chat \.tdf-ghost\s*\{\s*opacity: 0\.5;\s*transition: opacity 120ms;\s*\}/);
+  assert.match(css, /#tdf-chat \.tdf-ghost:hover\s*\{\s*opacity: 1;\s*\}/);
+});

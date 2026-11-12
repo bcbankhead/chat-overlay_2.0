@@ -32,6 +32,12 @@ export const ENGINE_AVATARS_ID = 'userAvatarsON';
 /** How long a new row takes to slide into view at the bottom. */
 const SLIDE_MS = 150;
 
+/** History lines older than this before page load show ghosted (TDF-0085), in seconds. */
+const GHOST_AGE_S = 3 * 60 * 60;
+
+/** The class that ghosts a history line; theme.css dims it and restores it on hover. */
+const GHOST = 'tdf-ghost';
+
 /**
  * Tag a posted image once its size is known, so it takes the pointer and the hover fade.
  * @param {HTMLImageElement} img
@@ -112,7 +118,8 @@ function regroup(el) {
  *   autoCollapse?: () => boolean,
  *   hidden?: () => ReadonlySet<string>,
  * }} deps `avatars` looks up forum pictures for every sender, preferred over the chat avatar;
- *   `now` is the current time in seconds, which decides whether a time shows its date;
+ *   `now` is the current time in seconds, which decides whether a time shows its date, and
+ *   read once at creation fixes the cutoff before which history ghosts (TDF-0085);
  *   `ceiling` is the most shown rows the list keeps, LIVE_CEILING unless a test sets a smaller
  *   one, fixed whatever the Chat history setting, since live lines show with history off too;
  *   hidden-sender rows are bounded apart, by the same number (TDF-0082);
@@ -137,6 +144,9 @@ export function createView({
   style.id = 'tdf-chat-style';
   style.textContent = css;
   doc.head.appendChild(style);
+
+  // Fixed once at page load and never recomputed: history older than this ghosts (TDF-0085).
+  const ghostCutoff = now() - GHOST_AGE_S;
 
   const root = doc.createElement('div');
   root.id = 'tdf-chat';
@@ -377,8 +387,12 @@ export function createView({
     enableUrl: win.enableUrl === undefined ? true : Boolean(Number(win.enableUrl)),
   };
 
-  /** @param {ViewRecord} record */
-  function render(record) {
+  /**
+   * @param {ViewRecord} record
+   * @param {boolean} [history] whether the line is history shown at load (a replay or the
+   *   server backlog), which ghosts when older than the page-load cutoff (TDF-0085)
+   */
+  function render(record, history = false) {
     const el = doc.createElement('div');
     el.className = `tdf-msg tdf-kind-${record.kind}`;
     if (record.ircFlag === '1') el.classList.add('tdf-irc');
@@ -387,6 +401,9 @@ export function createView({
     if (record.id !== null) el.dataset.id = record.id;
     if (record.mTime) el.dataset.mtime = record.mTime;
     const t = groupTime(record);
+    // No mTime falls back to receipt time: a replayed one (an own message the server never
+    // returned) ghosts by when it was first seen; a backlog one was received this load, so never.
+    if (history && t < ghostCutoff) el.classList.add(GHOST);
     el.dataset.kind = record.kind;
     el.dataset.user = record.user;
     el.dataset.t = String(t);
@@ -733,7 +750,8 @@ export function createView({
 
   /** @param {ViewRecord} record */
   function add(record) {
-    const el = render(record);
+    // The first poll's backlog is history; live records carry no source and never ghost.
+    const el = render(record, record.source === 'backlog');
     index(el);
     resized?.observe(el);
     return el;
@@ -804,7 +822,8 @@ export function createView({
     replay(records) {
       relabel();
       // Render every record before indexing any, so a throw leaves nothing behind.
-      const els = records.map(render);
+      // Not map(render): its index argument would land in `history`.
+      const els = records.map((r) => render(r, true));
       const frag = doc.createDocumentFragment();
       for (const el of els) {
         index(el);
