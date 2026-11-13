@@ -28,7 +28,8 @@ import { HISTORY_ON } from './retention.js';
  *   samples, re-estimated when the send is confirmed; without it, receipt time orders it
  * @property {'pending' | 'unconfirmed'} [confirm] absent on server records
  * @property {'backlog'} [source]   set only when first stored from the page load's server
- *   history poll; absent means received live (seen). Never removed, never added later
+ *   history poll, never on an own message; absent means received live (seen). Never removed,
+ *   never added later
  * @property {string} [backlogBlock] the page-load id of that history poll, grouping its
  *   records into one block in the view
  */
@@ -68,11 +69,14 @@ export function createHistory(db) {
      * message stored live is never tagged by a later backlog. Read and write share one
      * transaction, so two tabs' writes cannot interleave between them.
      * @param {MessageRecord} record its `orderKey` is computed here
+     * @returns {Promise<MessageRecord>} the record as stored, with the first-seen tag
      */
     async put(record) {
       const t = tx('readwrite');
       const store = t.objectStore(STORES.messages);
       const req = store.get(record.id);
+      /** @type {MessageRecord | undefined} */
+      let result;
       req.onsuccess = () => {
         /** @type {MessageRecord | undefined} */
         const existing = req.result;
@@ -84,8 +88,10 @@ export function createHistory(db) {
         if (first.source) stored.source = first.source;
         if (first.backlogBlock) stored.backlogBlock = first.backlogBlock;
         store.put(stored);
+        result = stored;
       };
       await done(t);
+      return /** @type {MessageRecord} */ (result);
     },
 
     /**
