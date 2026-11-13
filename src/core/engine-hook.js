@@ -624,14 +624,22 @@ export function installEngineHook({ win, roomID, presence = pagePresence }) {
       if (pending) {
         pendings = pendings.filter((p) => p !== pending);
         sentOwn = sentOwn.filter((p) => p !== pending);
-        const confirmed = { ...record, receivedAt: pending.receivedAt };
+        // The user wrote and saw it, so a backlog copy neither shows nor stores it as unseen;
+        // its block id stays, keeping it in the history block it arrived in.
+        const { source: _source, ...seen } = record;
+        const confirmed = { ...seen, receivedAt: pending.receivedAt };
         if (storing()) report(history.confirmPending(pending.id, confirmed));
         view.confirm(pending.id, confirmed);
         return;
       }
       if (!rendered || replayedIds.has(record.id)) return;
       // Entry and exit lines are live only: a later load would hide them anyway (TDF-0066).
-      if (storing() && presenceLineKind(kind, body.text, lang) === null) report(history.put(record));
+      if (storing() && presenceLineKind(kind, body.text, lang) === null) {
+        const put = history.put(record);
+        // A backlog record this browser already stored live keeps no tag: it was seen, so its
+        // placed row ghosts only by age.
+        report(backlog ? put.then((stored) => stored?.source !== 'backlog' && view.seen(record.id)) : put);
+      }
       view.place(record);
       emit(record);
       return;

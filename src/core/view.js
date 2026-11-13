@@ -32,8 +32,11 @@ export const ENGINE_AVATARS_ID = 'userAvatarsON';
 /** How long a new row takes to slide into view at the bottom. */
 const SLIDE_MS = 150;
 
-/** History lines older than this before page load show ghosted (TDF-0085), in seconds. */
-const GHOST_AGE_S = 3 * 60 * 60;
+/**
+ * History seen live in this browser within this long before page load stays current; older
+ * history, and any never seen live, shows ghosted (TDF-0086), in seconds.
+ */
+const GHOST_AGE_S = 60 * 60;
 
 /** The class that ghosts a history line; theme.css dims it and restores it on hover. */
 const GHOST = 'tdf-ghost';
@@ -119,7 +122,7 @@ function regroup(el) {
  *   hidden?: () => ReadonlySet<string>,
  * }} deps `avatars` looks up forum pictures for every sender, preferred over the chat avatar;
  *   `now` is the current time in seconds, which decides whether a time shows its date, and
- *   read once at creation fixes the cutoff before which history ghosts (TDF-0085);
+ *   read once at creation fixes the cutoff before which seen history ghosts (TDF-0086);
  *   `ceiling` is the most shown rows the list keeps, LIVE_CEILING unless a test sets a smaller
  *   one, fixed whatever the Chat history setting, since live lines show with history off too;
  *   hidden-sender rows are bounded apart, by the same number (TDF-0082);
@@ -145,7 +148,8 @@ export function createView({
   style.textContent = css;
   doc.head.appendChild(style);
 
-  // Fixed once at page load and never recomputed: history older than this ghosts (TDF-0085).
+  // Fixed once at page load and never recomputed: history older than this ghosts, seen live
+  // or not (TDF-0086).
   const ghostCutoff = now() - GHOST_AGE_S;
 
   const root = doc.createElement('div');
@@ -390,7 +394,8 @@ export function createView({
   /**
    * @param {ViewRecord} record
    * @param {boolean} [history] whether the line is history shown at load (a replay or the
-   *   server backlog), which ghosts when older than the page-load cutoff (TDF-0085)
+   *   server backlog), which ghosts when never seen live in this browser (`source: 'backlog'`)
+   *   or when older than the page-load cutoff (TDF-0086)
    */
   function render(record, history = false) {
     const el = doc.createElement('div');
@@ -401,9 +406,10 @@ export function createView({
     if (record.id !== null) el.dataset.id = record.id;
     if (record.mTime) el.dataset.mtime = record.mTime;
     const t = groupTime(record);
-    // No mTime falls back to receipt time: a replayed one (an own message the server never
-    // returned) ghosts by when it was first seen; a backlog one was received this load, so never.
-    if (history && t < ghostCutoff) el.classList.add(GHOST);
+    // Backlog was never seen live, so it ghosts whatever its age; a line seen live ghosts once
+    // older than the cutoff. No mTime falls back to receipt time: a replayed one (an own message
+    // the server never returned) has no source and ghosts by when it was first seen.
+    if (history && (record.source === 'backlog' || t < ghostCutoff)) el.classList.add(GHOST);
     el.dataset.kind = record.kind;
     el.dataset.user = record.user;
     el.dataset.t = String(t);
@@ -750,7 +756,8 @@ export function createView({
 
   /** @param {ViewRecord} record */
   function add(record) {
-    // The first poll's backlog is history; live records carry no source and never ghost.
+    // The first poll's backlog is history, never seen live, so it always ghosts; live records
+    // carry no source and never ghost.
     const el = render(record, record.source === 'backlog');
     index(el);
     resized?.observe(el);
@@ -851,6 +858,15 @@ export function createView({
         regroup(replacement);
         regroup(replacement.nextElementSibling);
       }
+    },
+
+    /**
+     * A placed backlog line turned out to be stored live in this browser: seen, so it ghosts
+     * only when older than the page-load cutoff (TDF-0086).
+     * @param {string} id
+     */
+    seen(id) {
+      for (const el of entries('id', id)) if (Number(el.dataset.t) >= ghostCutoff) el.classList.remove(GHOST);
     },
 
     /** @param {string} id */

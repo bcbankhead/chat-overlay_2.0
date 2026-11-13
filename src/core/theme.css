@@ -175,10 +175,11 @@
   font-size: inherit;
 }
 
-/* History older than 3 hours before page load (TDF-0085): the whole row dims, so avatars,
+/* History never seen live, or seen over an hour before page load (TDF-0086): the whole row
+   dims to 30%, so avatars,
    smilies, posted images and previews dim with the text; hover shows it in full. */
 #tdf-chat .tdf-ghost {
-  opacity: 0.5;
+  opacity: 0.3;
   transition: opacity 120ms;
 }
 

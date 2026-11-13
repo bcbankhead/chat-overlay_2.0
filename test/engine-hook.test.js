@@ -888,6 +888,98 @@ test("the page-load block id comes from the browser's randomUUID where it has on
   assert.equal(calls.find((c) => c[0] === 'put')[1].backlogBlock, 'uuid-1');
 });
 
+// TDF-0086: backlog ghosts only when this browser never saw it live.
+
+test('a pending own message confirmed by its backlog copy is shown and stored as seen', async () => {
+  const win = withHistoryFlag(fakeEngine());
+  const history = createHistory(await openDb({ name: 'engine-hook-backlog-confirm' }));
+  const calls = [];
+  const view = new Proxy({}, { get: (_, op) => (...args) => calls.push([`view.${op}`, ...args]) });
+  const pending = {
+    id: 'local-2-0',
+    roomID: '1',
+    mTime: '',
+    user: 'alice',
+    toUser: '',
+    kind: 'public',
+    avatar: 'av.gif',
+    color: '#000',
+    size: '12px',
+    family: 'verdana',
+    text: 'written before reload',
+    ircFlag: '0',
+    lineBreakFlag: '0',
+    receivedAt: Date.now() - 1000,
+    confirm: 'pending',
+  };
+  await history.addPending(pending);
+  installEngineHook({ win, roomID: '1' }).attach({ history, view, pending: [pending], replayed: [pending] });
+  win.receiveMesReq.responseXML = xml(um('1070', 'alice', 'written before reload', '1730'), um('1071', 'bob', 'other', '1731'));
+  win.handleMessages();
+  await new Promise((r) => setTimeout(r, 20));
+  const confirmed = calls.find((c) => c[0] === 'view.confirm')[2];
+  assert.equal(confirmed.id, '1070');
+  assert.equal(confirmed.source, undefined);
+  const stored = await history.get('1070');
+  assert.equal(stored.source, undefined);
+  // Control: the other backlog line is stored unseen, and the own message keeps its block.
+  assert.equal((await history.get('1071')).source, 'backlog');
+  assert.equal(stored.backlogBlock, (await history.get('1071')).backlogBlock);
+  assert.equal(await history.get('local-2-0'), undefined);
+});
+
+test('a backlog line already stored live, but not replayed, is marked seen; a new one is not', async () => {
+  const win = withHistoryFlag(fakeEngine());
+  const history = createHistory(await openDb({ name: 'engine-hook-backlog-seen' }));
+  await history.put({
+    id: '1080',
+    roomID: '1',
+    mTime: '1700',
+    user: 'bob',
+    toUser: '',
+    kind: 'public',
+    avatar: 'av.gif',
+    color: '#000',
+    size: '12px',
+    family: 'verdana',
+    text: 'seen live',
+    ircFlag: '0',
+    lineBreakFlag: '0',
+    receivedAt: Date.now() - 60_000,
+  });
+  const calls = [];
+  const view = new Proxy({}, { get: (_, op) => (...args) => calls.push([`view.${op}`, ...args]) });
+  installEngineHook({ win, roomID: '1' }).attach({ history, view, replayed: [] });
+  win.receiveMesReq.responseXML = xml(um('1080', 'bob', 'seen live', '1700'), um('1081', 'carol', 'never seen', '1701'));
+  win.handleMessages();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(
+    calls.filter((c) => c[0] === 'view.place').map((c) => [c[1].id, c[1].source]),
+    [
+      ['1080', 'backlog'],
+      ['1081', 'backlog'],
+    ],
+  );
+  assert.deepEqual(
+    calls.filter((c) => c[0] === 'view.seen').map((c) => c[1]),
+    ['1080'],
+  );
+  assert.equal((await history.get('1080')).source, undefined);
+});
+
+test('with Chat history off a backlog line is never marked seen', async () => {
+  const win = withHistoryFlag(fakeEngine());
+  const history = createHistory(await openDb({ name: 'engine-hook-backlog-off' }));
+  const calls = [];
+  const view = new Proxy({}, { get: (_, op) => (...args) => calls.push([`view.${op}`, ...args]) });
+  installEngineHook({ win, roomID: '1' }).attach({ history, view, storing: () => false });
+  win.receiveMesReq.responseXML = xml(um('1090', 'bob', 'old', '1700'));
+  win.handleMessages();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.ok(calls.some((c) => c[0] === 'view.place' && c[1].id === '1090'));
+  assert.ok(!calls.some((c) => c[0] === 'view.seen'));
+});
+
 // TDF-0054: with Chat history off, messages the server sent from before the page loaded skip
 // the engine. The cutoff is the first poll reply's Date header, on the server's clock.
 
